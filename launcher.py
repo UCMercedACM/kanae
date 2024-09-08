@@ -4,15 +4,17 @@ import sys
 from pathlib import Path
 
 import uvicorn
-from core import ServerApp
-
-from utils.config import AppConfig
 from uvicorn.supervisors import Multiprocess
+
+from core import ServerApp
+from routes import router
+from utils.config import AppConfig
 
 config_path = Path(__file__).parent / "config.yml"
 config = AppConfig(config_path)
 
 app = ServerApp(config=config)
+app.include_router(router)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -36,9 +38,7 @@ if __name__ == "__main__":
         default=False,
         help="Runs no workers",
     )
-    parser.add_argument(
-        "-w", "--workers", default=os.cpu_count() or 1, type=int
-    )
+    parser.add_argument("-w", "--workers", default=os.cpu_count() or 1, type=int)
 
     args = parser.parse_args(sys.argv[1:])
     use_workers = not args.no_workers

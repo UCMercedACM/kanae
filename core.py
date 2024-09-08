@@ -1,17 +1,35 @@
 import asyncio
-from typing import Optional
+from contextlib import asynccontextmanager
+from typing import Literal, NamedTuple, Optional
 
+import asyncpg
 from fastapi import FastAPI
-from utils.config import AppConfig
-import firebase_admin
-from google.cloud import firestore
+from typing_extensions import Self
 
-description = """
-This app serves as an base template for internal FastAPI apps
+from utils.config import AppConfig
+
+
+class VersionInfo(NamedTuple):
+    major: int
+    minor: int
+    micro: int
+    releaselevel: Literal["main", "alpha", "beta", "final"]
+
+    def __str__(self) -> str:
+        return f"{self.major}.{self.minor}.{self.micro}-{self.releaselevel}"
+
+
+VERSION: VersionInfo = VersionInfo(major=0, minor=1, micro=0, releaselevel="final")
+
+NAME = "ACM @ UC Merced API"
+DESCRIPTION = """
+Internal backend server for ACM @ UC Merced
 """
 
 
 class ServerApp(FastAPI):
+    pool: asyncpg.Pool
+
     def __init__(
         self,
         *,
@@ -22,20 +40,17 @@ class ServerApp(FastAPI):
             loop or asyncio.get_event_loop_policy().get_event_loop()
         )
         super().__init__(
-            title="Example Template",
-            version="0.1.0",
-            description=description,
+            title=NAME,
+            version=str(VERSION),
+            description=DESCRIPTION,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
+            lifespan=self.lifespan,
         )
         self.config = config
-        self.add_event_handler("startup", func=self.startup)
-        self.add_event_handler("shutdown", func=self.shutdown)
 
-    async def startup(self) -> None:
-        self.state.app = firebase_admin.initialize_app()
-        self.state.db = firestore.AsyncClient()
-
-    async def shutdown(self) -> None:
-        print("stopping")
+    @asynccontextmanager
+    async def lifespan(self, app: Self):
+        async with asyncpg.create_pool(dsn=self.config["postgres_uri"]) as app.pool:
+            yield
