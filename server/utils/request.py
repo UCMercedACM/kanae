@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 if TYPE_CHECKING:
-    from core import ServerApp
+    from core import Kanae
 
 
 class RouteRequest(Request):
-    app: ServerApp
+    app: Kanae

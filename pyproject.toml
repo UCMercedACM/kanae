@@ -1,15 +1,9 @@
 [project]
-name = "chapter-website-server"
+name = "kanae"
 version = "0.1.0"
-description = "The internal backend server for UC Merced's ACM organzation"
+description = "Internal backend server for ACM @ UC Merced"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"
-
-[tool.isort]
-profile = 'black'
-combine_as_imports = true
-combine_star = true
-line_length = 80
 
 [tool.pyright]
 include = [

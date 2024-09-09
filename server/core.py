@@ -5,7 +5,7 @@ from typing import Literal, NamedTuple, Optional
 import asyncpg
 from fastapi import FastAPI
 from typing_extensions import Self
-from utils.config import ServerConfig
+from utils.config import KanaeConfig
 
 
 class VersionInfo(NamedTuple):
@@ -18,29 +18,29 @@ class VersionInfo(NamedTuple):
         return f"{self.major}.{self.minor}.{self.micro}-{self.releaselevel}"
 
 
-SERVER_NAME = "ACM @ UC Merced API"
-SERVER_DESCRIPTION = "Internal backend server for ACM @ UC Merced"
-SERVER_VERSION: VersionInfo = VersionInfo(
+KANAE_NAME = "Kanae - ACM @ UC Merced's API"
+KANAE_DESCRIPTION = "Internal backend server for ACM @ UC Merced"
+KANAE_VERSION: VersionInfo = VersionInfo(
     major=0, minor=1, micro=0, releaselevel="final"
 )
 
 
-class ServerApp(FastAPI):
+class Kanae(FastAPI):
     pool: asyncpg.Pool
 
     def __init__(
         self,
         *,
         loop: Optional[asyncio.AbstractEventLoop] = None,
-        config: ServerConfig,
+        config: KanaeConfig,
     ):
         self.loop: asyncio.AbstractEventLoop = (
             loop or asyncio.get_event_loop_policy().get_event_loop()
         )
         super().__init__(
-            title=SERVER_NAME,
-            version=str(SERVER_VERSION),
-            description=SERVER_DESCRIPTION,
+            title=KANAE_NAME,
+            version=str(KANAE_VERSION),
+            description=KANAE_DESCRIPTION,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,

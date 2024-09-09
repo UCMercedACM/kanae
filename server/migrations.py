@@ -10,10 +10,10 @@ from typing import Optional, TypeVar
 import asyncpg
 import click
 from typing_extensions import Self
-from utils.config import ServerConfig
+from utils.config import KanaeConfig
 
 path = Path(__file__).parent / "config.yml"
-config = ServerConfig(path)
+config = KanaeConfig(path)
 
 BE = TypeVar("BE", bound=BaseException)
 

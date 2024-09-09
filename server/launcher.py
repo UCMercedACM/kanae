@@ -4,15 +4,15 @@ import sys
 from pathlib import Path
 
 import uvicorn
-from core import ServerApp
+from core import Kanae
 from routes import router
-from utils.config import ServerConfig
+from utils.config import KanaeConfig
 from uvicorn.supervisors import Multiprocess
 
 config_path = Path(__file__).parent / "config.yml"
-config = ServerConfig(config_path)
+config = KanaeConfig(config_path)
 
-app = ServerApp(config=config)
+app = Kanae(config=config)
 app.include_router(router)
 
 if __name__ == "__main__":
