@@ -6,7 +6,7 @@ import yaml
 _T = TypeVar("_T")
 
 
-class AppConfig(Generic[_T]):
+class ServerConfig(Generic[_T]):
     def __init__(self, path: Path):
         self.path = path
         self._config: dict[str, Union[_T, Any]] = {}

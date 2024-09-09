@@ -6,11 +6,11 @@ from pathlib import Path
 import uvicorn
 from core import ServerApp
 from routes import router
-from utils.config import AppConfig
+from utils.config import ServerConfig
 from uvicorn.supervisors import Multiprocess
 
 config_path = Path(__file__).parent / "config.yml"
-config = AppConfig(config_path)
+config = ServerConfig(config_path)
 
 app = ServerApp(config=config)
 app.include_router(router)
@@ -20,13 +20,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "-H",
         "--host",
-        default=config["app"]["host"],
+        default=config["server"]["host"],
         help="The host to bind to. Defaults to value set in config",
     )
     parser.add_argument(
         "-p",
         "--port",
-        default=config["app"]["port"],
+        default=config["server"]["port"],
         help="The port to bind to. Defaults to value set in config",
         type=int,
     )
