@@ -18,12 +18,11 @@ class VersionInfo(NamedTuple):
         return f"{self.major}.{self.minor}.{self.micro}-{self.releaselevel}"
 
 
-VERSION: VersionInfo = VersionInfo(major=0, minor=1, micro=0, releaselevel="final")
-
-NAME = "ACM @ UC Merced API"
-DESCRIPTION = """
-Internal backend server for ACM @ UC Merced
-"""
+SERVER_NAME = "ACM @ UC Merced API"
+SERVER_DESCRIPTION = "Internal backend server for ACM @ UC Merced"
+SERVER_VERSION: VersionInfo = VersionInfo(
+    major=0, minor=1, micro=0, releaselevel="final"
+)
 
 
 class ServerApp(FastAPI):
@@ -39,9 +38,9 @@ class ServerApp(FastAPI):
             loop or asyncio.get_event_loop_policy().get_event_loop()
         )
         super().__init__(
-            title=NAME,
-            version=str(VERSION),
-            description=DESCRIPTION,
+            title=SERVER_NAME,
+            version=str(SERVER_VERSION),
+            description=SERVER_DESCRIPTION,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
