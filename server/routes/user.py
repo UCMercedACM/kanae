@@ -1,6 +1,5 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-
 from utils.request import RouteRequest
 
 

@@ -5,7 +5,6 @@ from typing import Literal, NamedTuple, Optional
 import asyncpg
 from fastapi import FastAPI
 from typing_extensions import Self
-
 from utils.config import AppConfig
 
 
