@@ -20,13 +20,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "-H",
         "--host",
-        default=config["server"]["host"],
+        default=config["kanae"]["host"],
         help="The host to bind to. Defaults to value set in config",
     )
     parser.add_argument(
         "-p",
         "--port",
-        default=config["server"]["port"],
+        default=config["kanae"]["port"],
         help="The port to bind to. Defaults to value set in config",
         type=int,
     )
