@@ -5,7 +5,7 @@ from typing import Literal, NamedTuple, Optional
 import asyncpg
 from fastapi import FastAPI
 from typing_extensions import Self
-from utils.config import AppConfig
+from utils.config import ServerConfig
 
 
 class VersionInfo(NamedTuple):
@@ -33,7 +33,7 @@ class ServerApp(FastAPI):
         self,
         *,
         loop: Optional[asyncio.AbstractEventLoop] = None,
-        config: AppConfig,
+        config: ServerConfig,
     ):
         self.loop: asyncio.AbstractEventLoop = (
             loop or asyncio.get_event_loop_policy().get_event_loop()
