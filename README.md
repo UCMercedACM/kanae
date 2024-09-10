@@ -1,6 +1,6 @@
 # Kanae
 
-[![CodeQL](https://github.com/UCMercedACM/kanae/actions/workflows/codeql.yml/badge.svg)](https://github.com/UCMercedACM/kanae/actions/workflows/codeql.yml) [![Lint](https://github.com/UCMercedACM/kanae/actions/workflows/lint.yml/badge.svg)](https://github.com/UCMercedACM/kanae/actions/workflows/lint.yml)
+[![CodeQL](https://github.com/UCMercedACM/kanae/actions/workflows/codeql.yml/badge.svg)](https://github.com/UCMercedACM/kanae/actions/workflows/codeql.yml) [![Lint](https://github.com/UCMercedACM/kanae/actions/workflows/lint.yml/badge.svg)](https://github.com/UCMercedACM/kanae/actions/workflows/lint.yml) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=UCMercedACM_kanae&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=UCMercedACM_kanae) [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=UCMercedACM_kanae&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=UCMercedACM_kanae)
 
 Association for Computing Machinery at UC Merced's backend web server
 
