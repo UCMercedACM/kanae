@@ -1,0 +1,37 @@
+# --------------------------------- #
+#    Kanae's Configuration file     #
+# --------------------------------- #
+# This holds the configuration for Kanae. This file is not settable during runtime.
+# If you wish to change the values, change and save, and restart your server
+
+# Entries pertaining to Kanae are located here
+kanae:
+
+  # Host that the server will use.
+  # Set to 0.0.0.0 if running in Docker
+  host: 127.0.0.1
+
+  # Port that the server binds to.
+  # Defaults to 8000
+  port: 8000
+
+
+  # Prometheus exporter for Kanae. The following keys are used in order to control
+  # the behavior of the Prometheus exporter
+  prometheus:
+
+    # Whether the Prometheus exporter is enabled or not
+    enabled: False
+
+    # The host that the Prometheus exporter will bind to. By default,
+    # it will always be set to 127.0.0.1
+    host: "127.0.0.1"
+
+    # The port used for the Prometheus exporter. By default,
+    # it will always be set to 9555
+    port: 9555
+
+# The PostgreSQL connection URI that is used to connect to the database
+# The URI must be valid, and components will need to be quoted.
+# See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
+postgres_uri: "postgresql://user:password@localhost:5432/user"
