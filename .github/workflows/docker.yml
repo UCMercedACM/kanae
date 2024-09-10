@@ -21,7 +21,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ghcr.io/${{ github.repository_owner }}/kanae
+            ghcr.io/ucmercedacm/kanae
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -47,7 +47,7 @@ jobs:
           context: .
           file: ./docker/Dockerfile
           push: true
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/kanae-build-cache:server
-          cache-to: type=registry,mode=max,ref=ghcr.io/${{ github.repository_owner }}/kanae-build-cache:server
+          cache-from: type=registry,ref=ghcr.io/ucmercedacm/kanae-build-cache:server
+          cache-to: type=registry,mode=max,ref=ghcr.io/ucmercedacm/kanae-build-cache:server
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
