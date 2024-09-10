@@ -19,4 +19,4 @@ Public data can be queried without authentication, but most of the endpoints are
 ## Contributing
 
 Contributions to Kanae are always welcomed. Although there is an dedicated development team solely focused on building the website, changes from others are always appreciated.
-These could be as small as changing documentation to adding new features. If you are interested to start the process, please consult the [contributing guidelines](./github/CONTRIBUTING.md) before you get started.
+These could be as small as changing documentation to adding new features. If you are interested to start the process, please consult the [contributing guidelines](.github/CONTRIBUTING.md) before you get started.
