@@ -1,14 +1,19 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from .config import KanaeConfig
 
 CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
+
+
+class PartialConfig(BaseModel, frozen=True):
+    redis_uri: str
+    ratelimits: list[str]
+    dev_mode: bool = False
 
 
 class KanaeRouter(APIRouter):
@@ -18,5 +23,18 @@ class KanaeRouter(APIRouter):
         super().__init__(**kwargs)
 
         # This isn't my favorite implementation, but will do for now - Noelle
-        self._redis_uri = KanaeConfig(CONFIG_PATH)["redis_uri"]
-        self.limiter = Limiter(key_func=get_remote_address, storage_uri=self._redis_uri)
+        self._config = self._load_config()
+        self.limiter = Limiter(
+            key_func=get_remote_address,
+            storage_uri=self._config.redis_uri,
+            default_limits=self._config.ratelimits,  # type: ignore
+            enabled=self._config.dev_mode,
+        )
+
+    def _load_config(self) -> PartialConfig:
+        config = KanaeConfig(CONFIG_PATH)
+        return PartialConfig(
+            redis_uri=config["redis_uri"],
+            ratelimits=config["kanae"]["ratelimit"],
+            dev_mode=config["kanae"]["dev_mode"],
+        )
