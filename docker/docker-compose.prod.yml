@@ -34,6 +34,13 @@ services:
       start_period: 5m
     restart: always
 
+  redis:
+    container_name: kanae_redis
+    image: redis:6.2-alpine
+    healthcheck:
+      test: redis-cli ping || exit 1
+    restart: always
+
   kanae-prometheus:
     container_name: kanae_prometheus
     ports:
