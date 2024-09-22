@@ -16,5 +16,7 @@ class KanaeRouter(APIRouter):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        # This isn't my favorite implementation, but will do for now - Noelle
         self._redis_uri = KanaeConfig(CONFIG_PATH)["redis_uri"]
         self.limiter = Limiter(key_func=get_remote_address, storage_uri=self._redis_uri)
