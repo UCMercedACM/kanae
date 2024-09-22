@@ -1,4 +1,3 @@
-from fastapi import APIRouter
 from pydantic import BaseModel
 from utils.request import RouteRequest
 from utils.router import KanaeRouter
@@ -13,6 +12,7 @@ class GetUser(BaseModel):
 
 
 router = KanaeRouter(prefix="/users", tags=["Users"])
+
 
 @router.get(
     "/get",

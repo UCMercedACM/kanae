@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Literal, NamedTuple, Optional, TYPE_CHECKING
+from typing import Literal, NamedTuple, Optional
 
 import asyncpg
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI
 from typing_extensions import Self
 from utils.config import KanaeConfig
 
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.errors import RateLimitExceeded
-    
 
 class VersionInfo(NamedTuple):
     major: int
@@ -54,9 +49,8 @@ class Kanae(FastAPI):
             lifespan=self.lifespan,
         )
         self.config = config
+
     @asynccontextmanager
     async def lifespan(self, app: Self):
         async with asyncpg.create_pool(dsn=self.config["postgres_uri"]) as app.pool:
             yield
-            
-    
