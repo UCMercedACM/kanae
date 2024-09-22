@@ -16,10 +16,9 @@ services:
 
   redis:
     container_name: kanae_redis
-    image: redis:6.2-alpine
+    image: redis:7-alpine
     healthcheck:
       test: redis-cli ping || exit 1
-    restart: always
     ports:
       - 6379:6379
 
