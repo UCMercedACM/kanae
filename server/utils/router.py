@@ -28,7 +28,7 @@ class KanaeRouter(APIRouter):
             key_func=get_remote_address,
             storage_uri=self._config.redis_uri,
             default_limits=self._config.ratelimits,  # type: ignore
-            enabled=self._config.dev_mode,
+            enabled=not self._config.dev_mode,
         )
 
     def _load_config(self) -> PartialConfig:
