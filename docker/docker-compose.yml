@@ -8,7 +8,7 @@ services:
       # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
       - ${CONFIG_LOCATION}:/kanae/server/config.yml
     ports:
-      - 9619:9619
+      - 8000:8000
     depends_on:
       - database
     # Safety script to fully wait until PostgreSQL is up
