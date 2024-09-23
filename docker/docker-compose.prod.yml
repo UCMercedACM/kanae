@@ -13,7 +13,7 @@ services:
       - database
       - redis
     # Safety script to fully wait until PostgreSQL is up
-    command: sh -c '/kanae/wait-for database:5432 -- echo "[Wait-for] PostgreSQL is fully up. Starting Kanae." && /kanae/start.sh'
+    command: sh -c '/kanae/wait-for database:5432 -- echo "[Wait-for] PostgreSQL is fully up. Waiting for Redis" && /kanae/wait-for redis:6379 -- echo "[Wait-for] Both PostgreSQL and Redis are fully ready. Starting up Kanae" && /kanae/start.sh'
     restart: always
 
   database:
