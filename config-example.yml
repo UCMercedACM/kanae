@@ -14,6 +14,11 @@ kanae:
   # Port that the server binds to.
   # Defaults to 8000
   port: 8000
+  
+  # Global ratelimit for Kanae
+  # Syntax is amount/minute. Ex: 1/minute
+  ratelimits:
+    - "10/second"
 
 
   # Prometheus exporter for Kanae. The following keys are used in order to control
@@ -35,3 +40,7 @@ kanae:
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
 postgres_uri: "postgresql://user:password@localhost:5432/user"
+
+# The Redis connection URI that is used
+# See https://github.com/redis/lettuce/wiki/Redis-URI-and-connection-details#uri-syntax for URI syntax
+redis_uri: "redis://localhost:6379/0"
