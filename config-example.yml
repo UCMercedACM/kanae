@@ -17,7 +17,8 @@ kanae:
   
   # Global ratelimit for Kanae
   # Syntax is amount/minute. Ex: 1/minute
-  ratelimit: "1/minute"
+  ratelimits:
+    - "10/second"
 
 
   # Prometheus exporter for Kanae. The following keys are used in order to control
