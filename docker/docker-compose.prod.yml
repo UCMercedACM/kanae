@@ -40,6 +40,8 @@ services:
     image: redis:7-alpine
     healthcheck:
       test: redis-cli ping || exit 1
+    ports:
+      - 6379:6379
     restart: always
 
   kanae-prometheus:
