@@ -35,6 +35,6 @@ class KanaeRouter(APIRouter):
         config = KanaeConfig(CONFIG_PATH)
         return PartialConfig(
             redis_uri=config["redis_uri"],
-            ratelimits=config["kanae"]["ratelimit"],
+            ratelimits=config["kanae"]["ratelimits"],
             dev_mode=config["kanae"]["dev_mode"],
         )
