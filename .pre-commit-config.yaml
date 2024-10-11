@@ -10,15 +10,13 @@ repos:
     -  id: bandit
        args: ["-c", "pyproject.toml"]
        name: Bandit
-       stages: [pre-commit]
        additional_dependencies: ["bandit[toml]"]
        
 -   repo: https://github.com/psf/black
-    rev: 24.8.0
+    rev: 24.10.0
     hooks:
     -   id: black
         name: Black
-        stages: [pre-commit]
         
 -   repo: https://github.com/PyCQA/autoflake
     rev: v2.3.1
@@ -27,16 +25,14 @@ repos:
         args: ["--in-place", "--remove-unused-variables",  "--recursive"]
         name: AutoFlake
         description: "Format with AutoFlake"
-        stages: [pre-commit]
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.8
+    rev: v0.6.9
     hooks:
       - id: ruff
         name: Ruff
         args: ["--fix", "--exit-non-zero-on-fix", "--config", "pyproject.toml"]
         description: "Fix with ruff"
-        stages: [pre-commit]
 
 -   repo: https://github.com/PyCQA/isort
     rev: 5.13.2
@@ -44,5 +40,4 @@ repos:
     -   id: isort
         name: ISort
         description: "Format with Isort"
-        stages: [pre-commit]
 
