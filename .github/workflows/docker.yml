@@ -9,9 +9,9 @@ jobs:
   Build-and-Push:
     runs-on: ubuntu-latest
 
-    # We want to filter out dependabot and pre-commit
+    # We want to filter out dependabot 
     # automated pushes to main
-    if: ${{ github.actor != 'dependabot[bot]'}} && ${{ github.actor != 'pre-commit-ci[bot]'}}
+    if: ${{ github.actor != 'dependabot[bot]'}}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
