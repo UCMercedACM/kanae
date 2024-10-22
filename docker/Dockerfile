@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.13-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -23,7 +23,7 @@ RUN adduser --disabled-password --gecos "" kanae \
 
 USER kanae
 
-ENV PATH="${PATH}:${HOME}/.local/bin"
+ENV PATH="${PATH}:/home/kanae/.local/bin"
 
 RUN pip install --user -r requirements.txt
 
