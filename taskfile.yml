@@ -1,0 +1,32 @@
+version: '3'
+
+tasks:
+  dev-up:
+    preconditions:
+      - test -f docker/docker-compose.dev.yml
+    cmds:
+      - docker compose -f docker/docker-compose.dev.yml up -d
+
+  dev-stop:
+    preconditions:
+      - test -f docker/docker-compose.dev.yml
+    cmds:
+      - docker compose -f docker/docker-compose.dev.yml stop
+
+  start:
+    preconditions:
+      -  test -f server/config.yml
+    cmds:
+      - python3 server/launcher.py --no-workers
+    silent: true
+  
+  check:
+    cmds:
+      - pyright server
+      - ruff check server --fix --exit-non-zero-on-fix --config pyproject.toml
+    silent: true
+
+  fmt:
+    cmds:
+      - ruff format server --config pyproject.toml
+    silent: true
