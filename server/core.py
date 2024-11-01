@@ -1,9 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Literal, NamedTuple, Optional
+from typing import Literal, NamedTuple, Optional, Generator
 
 import asyncpg
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from fastapi.responses import ORJSONResponse
 from typing_extensions import Self
 from utils.config import KanaeConfig
 
@@ -41,6 +42,8 @@ class Kanae(FastAPI):
             title=KANAE_NAME,
             version=str(KANAE_VERSION),
             description=KANAE_DESCRIPTION,
+            dependencies=[Depends(self.get_db)],
+            default_response_class=ORJSONResponse,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
@@ -52,3 +55,6 @@ class Kanae(FastAPI):
     async def lifespan(self, app: Self):
         async with asyncpg.create_pool(dsn=self.config["postgres_uri"]) as app.pool:
             yield
+
+    def get_db(self) -> Generator[asyncpg.Pool, None, None]:
+        yield self.pool
