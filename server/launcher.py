@@ -49,7 +49,7 @@ if __name__ == "__main__":
     worker_count = args.workers
 
     config = uvicorn.Config(
-        "launcher:app", port=args.port, host=args.host, access_log=True
+        "launcher:app", port=args.port, host=args.host, access_log=True, reload=True
     )
 
     server = uvicorn.Server(config)
