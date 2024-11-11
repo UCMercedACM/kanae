@@ -1,14 +1,11 @@
 from pydantic import BaseModel
 from utils.request import RouteRequest
 from utils.router import KanaeRouter
+from utils.errors import NotFoundMessage
 from typing import Optional, Literal
 import datetime
 
 router = KanaeRouter(tags=["Events"])
-
-
-class BasicStruct(BaseModel):
-    name: str
 
 
 class Events(BaseModel):
@@ -30,7 +27,11 @@ class Events(BaseModel):
     ]
 
 
-@router.get("/events", name="List events")
+@router.get(
+    "/events",
+    responses={200: {"model": Events}, 404: {"model": NotFoundMessage}},
+    name="List events",
+)
 async def events_list(request: RouteRequest) -> list[Events]:
     query = """
     SELECT name, description, start_at, end_at, location, alt_link, type
@@ -42,7 +43,7 @@ async def events_list(request: RouteRequest) -> list[Events]:
 
 
 @router.post("/events/create", name="Create Events")
-async def events_create(request: RouteRequest, req: Events):
+async def events_create(request: RouteRequest, req: Events) -> Events:
     query = """
     INSERT INTO events (name, description, start_at, end_at, location, alt_link, type)
     VALUES ($1, $2, $3, $4, $5, $6, $7);
