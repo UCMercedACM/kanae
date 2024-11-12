@@ -13,24 +13,40 @@ class Members(BaseModel):
 
 
 
+# Endpoint for getting members by their id
 @router.get("/members/{id}", name="Get Members")
-async def get_members(request: RouteRequest, id: uuid.UUID):
+async def get_members(request: RouteRequest, id: uuid.UUID) -> Members:
     query = """
             SELECT name
             FROM members
+            WHERE id = $1
             """
     
-    members = await request.app.pool.fetchrow(query, id)
+    member = await request.app.pool.fetchrow(query, id)
 
-    if not members:
+    if not member:
         raise NotFoundException()
     
-    return Members(**dict(members))
+    return Members(**dict(member))
+
+
+
+# Endpoint for deleting members by thier id
+@router.delete("/members/{id}", name="Delete Members")
+async def delete_members(request: RouteRequest, id: uuid.UUID, req: Members) -> Members:
+    query = """
+            DELETE
+            FROM members
+            WHERE id = $1
+            """
+    
+    member = await request.app.pool.execute(query, id)
+
+    if not member:
+        raise NotFoundException()
+    
+    return req
 
 
 
 # TODO: Update member by id
-
-
-
-# TODO: Delete member by id
