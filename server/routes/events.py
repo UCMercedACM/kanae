@@ -36,6 +36,7 @@ async def list_events(
     name: Annotated[Optional[str], Query(min_length=3)] = None,
     limit: Annotated[int, Query(gt=0, le=100)] = 50,
 ) -> list[Events]:
+    """Search a list of events"""
     query = """
     SELECT id, name, description, start_at, end_at, location, type
     FROM events
@@ -67,6 +68,7 @@ class EventsWithID(Events):
     responses={200: {"model": EventsWithID}, 404: {"model": NotFoundMessage}},
 )
 async def get_event(request: RouteRequest, id: uuid.UUID) -> Events:
+    """Retrieve event details via ID"""
     query = """
     SELECT name, description, start_at, end_at, location, type
     FROM events
@@ -82,6 +84,7 @@ async def get_event(request: RouteRequest, id: uuid.UUID) -> Events:
 # TODO: Enforce status codes if the event is unique, etc
 @router.post("/events/create")
 async def create_events(request: RouteRequest, req: Events) -> Events:
+    """Create a new event"""
     query = """
     INSERT INTO events (name, description, start_at, end_at, location, type)
     VALUES ($1, $2, $3, $4, $5, $6);
