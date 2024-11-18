@@ -90,16 +90,13 @@ class Kanae(FastAPI):
                 title=self.title,
                 version=self.version,
                 openapi_version=self.openapi_version,
-                summary=self.summary,
                 description=self.description,
                 terms_of_service=self.terms_of_service,
                 contact=self.contact,
                 license_info=self.license_info,
                 routes=self.routes,
-                webhooks=self.webhooks.routes,
                 tags=self.openapi_tags,
                 servers=self.servers,
-                separate_input_output_schemas=self.separate_input_output_schemas,
             )
             for path in self.openapi_schema["paths"].values():
                 for method in path.values():
