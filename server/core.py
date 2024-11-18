@@ -35,7 +35,7 @@ class Kanae(FastAPI):
         super().__init__(
             title=__title__,
             description=__description__,
-            vesrion=__version__,
+            version=__version__,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
