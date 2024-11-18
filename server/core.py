@@ -4,7 +4,7 @@ import asyncio
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Generator, Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Generator, Optional
 
 import asyncpg
 from fastapi import FastAPI, status
@@ -17,22 +17,14 @@ from utils.config import KanaeConfig
 if TYPE_CHECKING:
     from utils.request import RouteRequest
 
+__title__ = "Kanae"
+__description__ = """
+Kanae is ACM @ UC Merced's API.
 
-class VersionInfo(NamedTuple):
-    major: int
-    minor: int
-    micro: int
-    releaselevel: Literal["main", "alpha", "beta", "final"]
-
-    def __str__(self) -> str:
-        return f"{self.major}.{self.minor}.{self.micro}-{self.releaselevel}"
-
-
-KANAE_NAME = "Kanae - ACM @ UC Merced's API"
-KANAE_DESCRIPTION = "Internal backend server for ACM @ UC Merced"
-KANAE_VERSION: VersionInfo = VersionInfo(
-    major=0, minor=1, micro=0, releaselevel="final"
-)
+This document details the API as it is right now. 
+Changes can be made without notification, but announcements will be made for major changes. 
+"""
+__version__ = "0.1.0a"
 
 
 class Kanae(FastAPI):
@@ -48,9 +40,9 @@ class Kanae(FastAPI):
             loop or asyncio.get_event_loop_policy().get_event_loop()
         )
         super().__init__(
-            title=KANAE_NAME,
-            version=str(KANAE_VERSION),
-            description=KANAE_DESCRIPTION,
+            title=__title__,
+            description=__description__,
+            version=__version__,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
