@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
-from typing import Literal, NamedTuple, Optional, Generator, TYPE_CHECKING, Any
-
-from itertools import chain
 from collections import OrderedDict
+from contextlib import asynccontextmanager
+from itertools import chain
+from typing import TYPE_CHECKING, Any, Generator, Literal, NamedTuple, Optional
+
 import asyncpg
 from fastapi import FastAPI, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 from typing_extensions import Self
 from utils.config import KanaeConfig
-from fastapi.openapi.utils import get_openapi
 
 if TYPE_CHECKING:
     from utils.request import RouteRequest
