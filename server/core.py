@@ -14,10 +14,17 @@ from fastapi.responses import ORJSONResponse
 from typing_extensions import Self
 from utils.config import KanaeConfig
 
-from server import __description__, __title__, __version__
-
 if TYPE_CHECKING:
     from utils.request import RouteRequest
+
+__title__ = "Kanae"
+__description__ = """
+Kanae is ACM @ UC Merced's API.
+
+This document details the API as it is right now. 
+Changes can be made without notification, but announcements will be made for major changes. 
+"""
+__version__ = "0.1.0a"
 
 
 class Kanae(FastAPI):
