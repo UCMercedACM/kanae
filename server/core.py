@@ -7,7 +7,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, Generator, Optional
 
 import asyncpg
-from fastapi import FastAPI, status
+from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
@@ -43,6 +43,8 @@ class Kanae(FastAPI):
             title=__title__,
             description=__description__,
             version=__version__,
+            dependencies=[Depends(self.get_db)],
+            default_response_class=ORJSONResponse,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
