@@ -51,22 +51,6 @@ class Kanae(FastAPI):
             lifespan=self.lifespan,
         )
         self.config = config
-        self.add_exception_handler(
-            RequestValidationError,
-            self.request_validation_error_handler,  # type: ignore
-        )
-
-    ### Exception Handlers
-
-    async def request_validation_error_handler(
-        self, request: RouteRequest, exc: RequestValidationError
-    ) -> ORJSONResponse:
-        errors = ", ".join(
-            OrderedDict.fromkeys(
-                chain.from_iterable(exception["loc"] for exception in exc.errors())
-            ).keys()
-        )
-        return ORJSONResponse(content=f"Field required at: {errors}", status_code=422)
 
     ### Server-related utilities
 

@@ -9,6 +9,6 @@ class NotFoundMessage(BaseModel, frozen=True):
 
 
 class NotFoundException(HTTPException):
-    def __init__(self):
+    def __init__(self, detail: str = HTTP_404_DETAIL):
         self.status_code = 404
-        self.detail = HTTP_404_DETAIL
+        self.detail = detail
