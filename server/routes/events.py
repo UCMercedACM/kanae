@@ -102,6 +102,7 @@ async def edit_event(
     id: uuid.UUID,
     req: Union[ModifiedEvent, ModifiedEventWithDatetime],
 ):
+    """Updates the specified event"""
     query = """
     UPDATE events
     SET 
@@ -143,6 +144,7 @@ class DeleteResponse(BaseModel, frozen=True):
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
 async def delete_event(request: RouteRequest, id: uuid.UUID) -> DeleteResponse:
+    """Deletes the specified event"""
     query = """
     DELETE FROM events
     WHERE id = $1;
@@ -157,7 +159,7 @@ async def delete_event(request: RouteRequest, id: uuid.UUID) -> DeleteResponse:
 # Depends on auth and scopes
 @router.post("/events/create", responses={200: {"model": EventsWithID}})
 async def create_events(request: RouteRequest, req: Events) -> EventsWithID:
-    """Create a new event"""
+    """Creates a new event given the provided data"""
     query = """
     INSERT INTO events (name, description, start_at, end_at, location, type)
     VALUES ($1, $2, $3, $4, $5, $6)
