@@ -1,12 +1,11 @@
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Any, Generator, Optional
+from typing import Any, Generator, Optional, Self
 
 import asyncpg
 from fastapi import Depends, FastAPI, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
-from typing_extensions import Self
 from utils.config import KanaeConfig
 
 __title__ = "Kanae"
