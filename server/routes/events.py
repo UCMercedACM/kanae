@@ -1,12 +1,12 @@
-from pydantic import BaseModel
-from typing import Annotated, Union
-from utils.request import RouteRequest
-from utils.router import KanaeRouter
-from typing import Optional, Literal
-from utils.errors import NotFoundException, NotFoundMessage
-from fastapi import Query
 import datetime
 import uuid
+from typing import Annotated, Literal, Optional, Union
+
+from fastapi import Query
+from pydantic import BaseModel
+from utils.errors import NotFoundException, NotFoundMessage
+from utils.request import RouteRequest
+from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Events"])
 
@@ -61,7 +61,7 @@ async def list_events(
 
 class EventsWithID(Events):
     id: uuid.UUID
-    
+
 
 @router.get(
     "/events/{id}",
@@ -80,18 +80,28 @@ async def get_event(request: RouteRequest, id: uuid.UUID) -> Events:
         raise NotFoundException
     return Events(**dict(rows))
 
+
 class ModifiedEvent(BaseModel):
     name: str
     description: str
     location: str
-    
+
+
 class ModifiedEventWithDatetime(ModifiedEvent):
     start_at: datetime.datetime
     end_at: datetime.datetime
-    
+
+
 # Depends on auth and scopes
-@router.put("/events/{id}", responses={200: {"model": EventsWithID}, 404: {"model": NotFoundMessage}})
-async def edit_event(request: RouteRequest, id: uuid.UUID, req: Union[ModifiedEvent, ModifiedEventWithDatetime]):
+@router.put(
+    "/events/{id}",
+    responses={200: {"model": EventsWithID}, 404: {"model": NotFoundMessage}},
+)
+async def edit_event(
+    request: RouteRequest,
+    id: uuid.UUID,
+    req: Union[ModifiedEvent, ModifiedEventWithDatetime],
+):
     query = """
     UPDATE events
     SET 
@@ -101,7 +111,7 @@ async def edit_event(request: RouteRequest, id: uuid.UUID, req: Union[ModifiedEv
     WHERE id = $1
     RETURNING *;
     """
-    
+
     if isinstance(req, ModifiedEventWithDatetime):
         query = """
         UPDATE events
@@ -114,29 +124,35 @@ async def edit_event(request: RouteRequest, id: uuid.UUID, req: Union[ModifiedEv
         WHERE id = $1
         RETURNING *;
         """
-    
+
     rows = await request.app.pool.fetchrow(query, id, *req.model_dump().values())
     if not rows:
-        raise NotFoundException(detail="Resource cannot be updated") # Not sure if this is correct by RFC 9110 standards
+        raise NotFoundException(
+            detail="Resource cannot be updated"
+        )  # Not sure if this is correct by RFC 9110 standards
     return EventsWithID(**dict(rows))
-    
-    
+
+
 class DeleteResponse(BaseModel, frozen=True):
     message: str = "ok"
-    
+
+
 # Depends on auth and scopes
-@router.delete("/events/{id}",
-               responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}})
+@router.delete(
+    "/events/{id}",
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+)
 async def delete_event(request: RouteRequest, id: uuid.UUID) -> DeleteResponse:
     query = """
     DELETE FROM events
     WHERE id = $1;
     """
-    
+
     status = await request.app.pool.execute(query, id)
     if status[-1] == "0":
         raise NotFoundException
     return DeleteResponse()
+
 
 # Depends on auth and scopes
 @router.post("/events/create", responses={200: {"model": EventsWithID}})
@@ -150,8 +166,8 @@ async def create_events(request: RouteRequest, req: Events) -> EventsWithID:
     rows = await request.app.pool.fetchrow(query, *req.model_dump().values())
     return EventsWithID(**dict(rows))
 
+
 # We need the member endpoints to be finished in order to implement this
 # Depends on auth
 @router.post("/events/join")
-async def join_event(request: RouteRequest):
-    ...
+async def join_event(request: RouteRequest): ...

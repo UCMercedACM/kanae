@@ -1,5 +1,5 @@
-from pydantic import BaseModel
 from fastapi import HTTPException
+from pydantic import BaseModel
 
 HTTP_404_DETAIL = "Resource not found"
 

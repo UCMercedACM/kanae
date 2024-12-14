@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
 from contextlib import asynccontextmanager
-from itertools import chain
 from typing import TYPE_CHECKING, Any, Generator, Optional
 
 import asyncpg
 from fastapi import Depends, FastAPI, status
-from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 from typing_extensions import Self
 from utils.config import KanaeConfig
 
 if TYPE_CHECKING:
-    from utils.request import RouteRequest
+    pass
 
 __title__ = "Kanae"
 __description__ = """
