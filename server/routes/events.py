@@ -94,6 +94,7 @@ class ModifiedEventWithDatetime(ModifiedEvent):
     "/events/{id}",
     responses={200: {"model": EventsWithID}, 404: {"model": NotFoundMessage}},
 )
+@router.limiter.limit("10/minute")
 async def edit_event(
     request: RouteRequest,
     id: uuid.UUID,
@@ -140,6 +141,7 @@ class DeleteResponse(BaseModel, frozen=True):
     "/events/{id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
+@router.limiter.limit("10/minute")
 async def delete_event(request: RouteRequest, id: uuid.UUID) -> DeleteResponse:
     """Deletes the specified event"""
     query = """
@@ -155,6 +157,7 @@ async def delete_event(request: RouteRequest, id: uuid.UUID) -> DeleteResponse:
 
 # Depends on auth and scopes
 @router.post("/events/create", responses={200: {"model": EventsWithID}})
+@router.limiter.limit("15/minute")
 async def create_events(request: RouteRequest, req: Events) -> EventsWithID:
     """Creates a new event given the provided data"""
     query = """
