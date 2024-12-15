@@ -2,9 +2,10 @@ import datetime
 import uuid
 from typing import Annotated, Literal, Optional, Union
 
-from fastapi import Query
+from fastapi import Depends, Query
 from pydantic import BaseModel
 from utils.errors import NotFoundException, NotFoundMessage
+from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.router import KanaeRouter
 
@@ -29,38 +30,34 @@ class Events(BaseModel):
     ]
 
 
-# TODO: Pagination the responses
+class EventsWithID(Events):
+    id: uuid.UUID
+
+
 @router.get("/events")
 async def list_events(
     request: RouteRequest,
     name: Annotated[Optional[str], Query(min_length=3)] = None,
-    limit: Annotated[int, Query(gt=0, le=100)] = 50,
-) -> list[Events]:
+    *,
+    params: Annotated[KanaeParams, Depends()],
+) -> KanaePages[EventsWithID]:
     """Search a list of events"""
     query = """
-    SELECT id, name, description, start_at, end_at, location, type
+    SELECT name, description, start_at, end_at, location, type, id
     FROM events
     ORDER BY start_at DESC
-    LIMIT $1;
     """
 
     if name:
         query = """
-        SELECT id, name, description, start_at, end_at, location, type
+        SELECT name, description, start_at, end_at, location, type, id
         FROM events
         WHERE name % $1
         ORDER BY similarity(name, $1) DESC
-        LIMIT 10;
         """
 
-    arg = name if name else limit
-    rows = await request.app.pool.fetch(query, arg)
-
-    return [Events(**record) for record in rows]
-
-
-class EventsWithID(Events):
-    id: uuid.UUID
+    args = (name) if name else ()
+    return await paginate(request.app.pool, query, *args, params=params)
 
 
 @router.get(

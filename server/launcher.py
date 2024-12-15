@@ -5,6 +5,7 @@ from pathlib import Path
 
 import uvicorn
 from core import Kanae
+from fastapi_pagination import add_pagination
 from routes import router
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -16,6 +17,7 @@ config = KanaeConfig(config_path)
 
 app = Kanae(config=config)
 app.include_router(router)
+add_pagination(app)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 app.state.limiter = router.limiter
 
