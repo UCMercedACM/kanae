@@ -1,21 +1,12 @@
-from __future__ import annotations
-
 import asyncio
-from collections import OrderedDict
 from contextlib import asynccontextmanager
-from itertools import chain
-from typing import TYPE_CHECKING, Any, Generator, Optional
+from typing import Any, Generator, Optional, Self
 
 import asyncpg
-from fastapi import FastAPI, status
-from fastapi.exceptions import RequestValidationError
+from fastapi import Depends, FastAPI, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
-from typing_extensions import Self
 from utils.config import KanaeConfig
-
-if TYPE_CHECKING:
-    from utils.request import RouteRequest
 
 __title__ = "Kanae"
 __description__ = """
@@ -43,28 +34,14 @@ class Kanae(FastAPI):
             title=__title__,
             description=__description__,
             version=__version__,
+            dependencies=[Depends(self.get_db)],
+            default_response_class=ORJSONResponse,
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
             lifespan=self.lifespan,
         )
         self.config = config
-        self.add_exception_handler(
-            RequestValidationError,
-            self.request_validation_error_handler,  # type: ignore
-        )
-
-    ### Exception Handlers
-
-    async def request_validation_error_handler(
-        self, request: RouteRequest, exc: RequestValidationError
-    ) -> ORJSONResponse:
-        errors = ", ".join(
-            OrderedDict.fromkeys(
-                chain.from_iterable(exception["loc"] for exception in exc.errors())
-            ).keys()
-        )
-        return ORJSONResponse(content=f"Field required at: {errors}", status_code=422)
 
     ### Server-related utilities
 
