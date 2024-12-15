@@ -4,6 +4,6 @@ asyncpg>=0.29.0,<1
 click>=8.1.7,<9
 typing-extensions>=4.12.2,<5
 slowapi>=0.1.9,<1
-redis>=5.0.8,<6.0.0
+redis[hiredis]>=5.0.8,<6.0.0
 orjson>=3.10.10,<4
 fastapi-pagination>=0.12.32,<1
