@@ -14,6 +14,10 @@ kanae:
   # Port that the server binds to.
   # Defaults to 8000
   port: 8000
+
+  # Whether the development mode should be enabled or not
+  # This should be disabled during production
+  dev_mode: False
   
   # Global ratelimit for Kanae
   # Syntax is amount/minute. Ex: 1/minute
