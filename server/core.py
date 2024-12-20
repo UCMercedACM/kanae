@@ -89,12 +89,12 @@ class Kanae(FastAPI):
                                     third_party_id="google",
                                     clients=[
                                         ProviderClientConfig(
-                                            client_id=config["providers"]["google"][
-                                                "client_id"
-                                            ],
-                                            client_secret=config["providers"]["google"][
-                                                "client_secret"
-                                            ],
+                                            client_id=config["auth"]["providers"][
+                                                "google"
+                                            ]["client_id"],
+                                            client_secret=config["auth"]["providers"][
+                                                "google"
+                                            ]["client_secret"],
                                         ),
                                     ],
                                 ),
@@ -104,12 +104,12 @@ class Kanae(FastAPI):
                                     third_party_id="github",
                                     clients=[
                                         ProviderClientConfig(
-                                            client_id=config["providers"]["github"][
-                                                "client_id"
-                                            ],
-                                            client_secret=config["providers"]["github"][
-                                                "client_secret"
-                                            ],
+                                            client_id=config["auth"]["providers"][
+                                                "github"
+                                            ]["client_id"],
+                                            client_secret=config["auth"]["providers"][
+                                                "github"
+                                            ]["client_secret"],
                                         ),
                                     ],
                                 ),
