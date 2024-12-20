@@ -10,6 +10,18 @@ from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse, Response
 from fastapi.utils import is_body_allowed_for_status_code
+from supertokens_python import (
+    InputAppInfo,
+    SupertokensConfig,
+    init as supertokens_init,
+)
+from supertokens_python.recipe import passwordless, session, thirdparty
+from supertokens_python.recipe.passwordless import ContactEmailOnlyConfig
+from supertokens_python.recipe.thirdparty.provider import (
+    ProviderClientConfig,
+    ProviderConfig,
+    ProviderInput,
+)
 from utils.config import KanaeConfig
 from utils.errors import (
     HTTPExceptionMessage,
@@ -19,6 +31,7 @@ from utils.errors import (
 
 if TYPE_CHECKING:
     from utils.request import RouteRequest
+
 
 __title__ = "Kanae"
 __description__ = """
@@ -53,6 +66,62 @@ class Kanae(FastAPI):
             redoc_url="/docs",
             docs_url=None,
             lifespan=self.lifespan,
+        )
+        supertokens_init(
+            app_info=InputAppInfo(
+                app_name="ucmacm-website",
+                api_domain=config["auth"]["api_domain"],
+                website_domain=config["auth"]["website_domain"],
+                api_base_path="/api-auth",
+                website_base_path="/auth",
+            ),
+            supertokens_config=SupertokensConfig(
+                connection_uri=config["auth"]["connection_uri"]
+            ),
+            framework="fastapi",
+            recipe_list=[
+                session.init(),
+                thirdparty.init(
+                    sign_in_and_up_feature=thirdparty.SignInAndUpFeature(
+                        providers=[
+                            ProviderInput(
+                                config=ProviderConfig(
+                                    third_party_id="google",
+                                    clients=[
+                                        ProviderClientConfig(
+                                            client_id=config["providers"]["google"][
+                                                "client_id"
+                                            ],
+                                            client_secret=config["providers"]["google"][
+                                                "client_secret"
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ),
+                            ProviderInput(
+                                config=ProviderConfig(
+                                    third_party_id="github",
+                                    clients=[
+                                        ProviderClientConfig(
+                                            client_id=config["providers"]["github"][
+                                                "client_id"
+                                            ],
+                                            client_secret=config["providers"]["github"][
+                                                "client_secret"
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ]
+                    )
+                ),
+                passwordless.init(
+                    flow_type="USER_INPUT_CODE", contact_config=ContactEmailOnlyConfig()
+                ),
+            ],
+            mode="asgi",
         )
         self.config = config
         self.add_exception_handler(
