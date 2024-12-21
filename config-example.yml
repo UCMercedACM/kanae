@@ -73,17 +73,6 @@ auth:
 
       # OAuth2 client secret
       client_secret: ""
-
-    # Login using GitHub accounts
-    # Setup instructions: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app
-    # Auth callback is <domain>/auth/callback/github
-    github:
-
-      # Client ID
-      client_id: ""
-
-      # Client secret
-      client_secret: ""
   
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.

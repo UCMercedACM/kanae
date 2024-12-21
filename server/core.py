@@ -15,8 +15,7 @@ from supertokens_python import (
     SupertokensConfig,
     init as supertokens_init,
 )
-from supertokens_python.recipe import passwordless, session, thirdparty
-from supertokens_python.recipe.passwordless import ContactEmailOnlyConfig
+from supertokens_python.recipe import emailpassword, session, thirdparty
 from supertokens_python.recipe.thirdparty.provider import (
     ProviderClientConfig,
     ProviderConfig,
@@ -99,28 +98,11 @@ class Kanae(FastAPI):
                                         ),
                                     ],
                                 ),
-                            ),
-                            ProviderInput(
-                                config=ProviderConfig(
-                                    third_party_id="github",
-                                    clients=[
-                                        ProviderClientConfig(
-                                            client_id=config["auth"]["providers"][
-                                                "github"
-                                            ]["client_id"],
-                                            client_secret=config["auth"]["providers"][
-                                                "github"
-                                            ]["client_secret"],
-                                        ),
-                                    ],
-                                ),
-                            ),
+                            )
                         ]
                     )
                 ),
-                passwordless.init(
-                    flow_type="USER_INPUT_CODE", contact_config=ContactEmailOnlyConfig()
-                ),
+                emailpassword.init(),
             ],
             mode="asgi",
         )
