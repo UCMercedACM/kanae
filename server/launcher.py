@@ -21,18 +21,16 @@ config = KanaeConfig(config_path)
 app = Kanae(config=config)
 app.add_middleware(get_middleware())
 app.include_router(router)
-
+add_pagination(app)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
+app.state.limiter = router.limiter
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[config["auth"]["api_domain"]],
+    allow_origins=[config["auth"]["website_domain"]],
     allow_credentials=True,
     allow_methods=["GET", "PUT", "POST", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Content-Type"] + get_all_cors_headers(),
 )
-
-add_pagination(app)
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
-app.state.limiter = router.limiter
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
