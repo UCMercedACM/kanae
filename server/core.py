@@ -230,7 +230,7 @@ class Kanae(FastAPI):
                 await self._first_time_tp_sign_up(result)
                 return result
 
-            raise Exception("Cannot sign up as email already exists")
+            raise RuntimeError("Cannot sign up as email already exists")
 
         original_implementation.sign_in_up = sign_in_up
 
