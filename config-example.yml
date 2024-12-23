@@ -9,7 +9,7 @@ kanae:
 
   # Host that the server will use.
   # Set to 0.0.0.0 if running in Docker
-  host: 127.0.0.1
+  host: "localhost"
 
   # Port that the server binds to.
   # Defaults to 8000
@@ -40,6 +40,53 @@ kanae:
     # it will always be set to 9555
     port: 9555
 
+# These are used by SuperTokens for our backend auth
+auth:
+
+  # Name of the app. Defaults to ucmacm-website
+  name: "ucmacm-website"
+
+  # Domain (includes https://) of the backend server (aka the domain for Kanae)
+  # If you are testing, leave this to be http://localhost:8000 
+  # MUST be replaced in production
+  api_domain: "http://localhost:8000"
+
+  # Domain (include https://) of the frontend website
+  # If you are testing, leave this to be http://localhost:5173 and have the frontend up
+  # MUST be replaced in production
+  website_domain: "http://localhost:5173"
+
+  # The backend SuperToken managed or core instance.
+  # https://try.supertokens.com can be used for demo purposes, but we will be replacing it with a developer version
+  connection_uri: ""
+
+  # API key used for SuperTokens
+  # Used on the hosted version
+  api_key: ""
+
+
+  # Social login providers (e.g. Google, Github, etc)
+  providers:
+    
+    # OAuth2 login using Google accounts
+    # Follow the setup instructions here: https://support.google.com/cloud/answer/6158849?hl=en
+    # Auth callback is http://localhost:5173/auth/callback/google
+    google:
+
+      # OAuth2 client id
+      client_id: ""
+
+      # OAuth2 client secret
+      client_secret: ""
+
+      # OAuth2 scopes
+      # Currently these are the ones needed:
+      # - https://www.googleapis.com/auth/userinfo.profile
+      # - https://www.googleapis.com/auth/userinfo.email
+      scopes:
+        - "https://www.googleapis.com/auth/userinfo.profile"
+        - "https://www.googleapis.com/auth/userinfo.email"
+  
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
