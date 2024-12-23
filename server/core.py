@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, Optional, Self
+from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Unpack
 
 import asyncpg
 from fastapi import Depends, FastAPI, status
@@ -15,11 +15,14 @@ from supertokens_python import (
     SupertokensConfig,
     init as supertokens_init,
 )
+from supertokens_python.auth_utils import LinkingToSessionUserFailedError
 from supertokens_python.recipe import emailpassword, session, thirdparty
 from supertokens_python.recipe.thirdparty.provider import (
+    Provider,
     ProviderClientConfig,
     ProviderConfig,
     ProviderInput,
+    RedirectUriInfo,
 )
 from utils.config import KanaeConfig
 from utils.errors import (
@@ -40,6 +43,41 @@ This document details the API as it is right now.
 Changes can be made without notification, but announcements will be made for major changes. 
 """
 __version__ = "0.1.0a"
+
+
+from typing import Dict, Union
+
+from supertokens_python.asyncio import list_users_by_account_info
+from supertokens_python.recipe import dashboard
+from supertokens_python.recipe.emailpassword.interfaces import (
+    EmailAlreadyExistsError,
+    RecipeInterface as EmailPasswordRecipeInterface,
+    SignUpOkResult as EmailPasswordSignUpOkResult,
+)
+from supertokens_python.recipe.session.interfaces import SessionContainer
+from supertokens_python.recipe.thirdparty.interfaces import (
+    APIInterface,
+    APIOptions,
+    RecipeInterface as ThirdPartyRecipeInterface,
+    SignInUpNotAllowed as ThirdPartySignInUpNotAllowed,
+    SignInUpOkResult as ThirdPartySignInUpOkResult,
+)
+from supertokens_python.recipe.thirdparty.types import (
+    RawUserInfoFromProvider,
+    ThirdPartyInfo,
+)
+from supertokens_python.types import AccountInfo, GeneralErrorResponse
+
+ThirdPartyResultType = Union[
+    LinkingToSessionUserFailedError,
+    ThirdPartySignInUpOkResult,
+    ThirdPartySignInUpNotAllowed,
+]
+EmailResultType = Union[
+    LinkingToSessionUserFailedError,
+    EmailPasswordSignUpOkResult,
+    EmailAlreadyExistsError,
+]
 
 
 class Kanae(FastAPI):
@@ -71,7 +109,7 @@ class Kanae(FastAPI):
                 app_name="ucmacm-website",
                 api_domain=config["auth"]["api_domain"],
                 website_domain=config["auth"]["website_domain"],
-                api_base_path="/api-auth",
+                api_base_path="/auth",
                 website_base_path="/auth",
             ),
             supertokens_config=SupertokensConfig(
@@ -95,14 +133,25 @@ class Kanae(FastAPI):
                                             client_secret=config["auth"]["providers"][
                                                 "google"
                                             ]["client_secret"],
+                                            scope=config["auth"]["providers"]["google"][
+                                                "scopes"
+                                            ],
                                         ),
                                     ],
                                 ),
                             )
                         ]
+                    ),
+                    override=thirdparty.InputOverrideConfig(
+                        functions=self.third_party_override
+                    ),
+                ),
+                emailpassword.init(
+                    override=emailpassword.InputOverrideConfig(
+                        functions=self.emailpassword_override
                     )
                 ),
-                emailpassword.init(),
+                dashboard.init(),
             ],
             mode="asgi",
         )
@@ -115,6 +164,190 @@ class Kanae(FastAPI):
             RequestValidationError,
             self.request_validation_error_handler,  # type: ignore
         )
+
+    # SuperTokens recipes overrides
+
+    # This is taken from the docs and modified
+    def third_party_override(
+        self, original_implementation: ThirdPartyRecipeInterface
+    ) -> ThirdPartyRecipeInterface:
+        original_sign_in_up = original_implementation.sign_in_up
+
+        async def sign_in_up(
+            third_party_id: str,
+            third_party_user_id: str,
+            email: str,
+            is_verified: bool,
+            oauth_tokens: dict[str, Any],
+            raw_user_info_from_provider: RawUserInfoFromProvider,
+            session: Optional[SessionContainer],
+            should_try_linking_with_session_user: Union[bool, None],
+            tenant_id: str,
+            user_context: dict[str, Any],
+        ):
+            existing_users = await list_users_by_account_info(
+                tenant_id, AccountInfo(email=email)
+            )
+            if len(existing_users) == 0:
+                result = await original_sign_in_up(
+                    third_party_id,
+                    third_party_user_id,
+                    email,
+                    is_verified,
+                    oauth_tokens,
+                    raw_user_info_from_provider,
+                    session,
+                    should_try_linking_with_session_user,
+                    tenant_id,
+                    user_context,
+                )
+                await self._first_time_tp_sign_up(result)
+                return result
+
+            if any(
+                any(
+                    lm.recipe_id == "thirdparty"
+                    and lm.has_same_third_party_info_as(
+                        ThirdPartyInfo(third_party_user_id, third_party_id)
+                    )
+                    for lm in user.login_methods
+                )
+                for user in existing_users
+            ):
+                result = await original_sign_in_up(
+                    third_party_id,
+                    third_party_user_id,
+                    email,
+                    is_verified,
+                    oauth_tokens,
+                    raw_user_info_from_provider,
+                    session,
+                    should_try_linking_with_session_user,
+                    tenant_id,
+                    user_context,
+                )
+                await self._first_time_tp_sign_up(result)
+                return result
+
+            raise Exception("Cannot sign up as email already exists")
+
+        original_implementation.sign_in_up = sign_in_up
+
+        return original_implementation
+
+    def emailpassword_override(
+        self,
+        original_implementation: EmailPasswordRecipeInterface,
+    ) -> EmailPasswordRecipeInterface:
+        original_email_password_sign_up = original_implementation.sign_up
+
+        async def emailpassword_sign_up(
+            email: str,
+            password: str,
+            tenant_id: str,
+            session: Union[SessionContainer, None],
+            should_try_linking_with_session_user: Union[bool, None],
+            user_context: Dict[str, Any],
+        ):
+            existing_users = await list_users_by_account_info(
+                tenant_id, AccountInfo(email=email)
+            )
+
+            if len(existing_users) == 0:
+                # this means this email is new so we allow sign up
+                result = await original_email_password_sign_up(
+                    email,
+                    password,
+                    tenant_id,
+                    session,
+                    should_try_linking_with_session_user,
+                    user_context,
+                )
+
+                if isinstance(result, EmailPasswordSignUpOkResult):
+                    await self._set_first_time_member(result.user.id, email, email)
+
+                return result
+
+            return EmailAlreadyExistsError()
+
+        original_implementation.sign_up = emailpassword_sign_up
+
+        return original_implementation
+
+    def apis_override(self, original_implementation: APIInterface) -> APIInterface:
+        original_sign_in_up_post = original_implementation.sign_in_up_post
+
+        async def sign_in_up_post(
+            provider: Provider,
+            redirect_uri_info: Optional[RedirectUriInfo],
+            oauth_tokens: Optional[Dict[str, Any]],
+            session: Optional[SessionContainer],
+            should_try_linking_with_session_user: Union[bool, None],
+            tenant_id: str,
+            api_options: APIOptions,
+            user_context: Dict[str, Any],
+        ):
+            try:
+                return await original_sign_in_up_post(
+                    provider,
+                    redirect_uri_info,
+                    oauth_tokens,
+                    session,
+                    should_try_linking_with_session_user,
+                    tenant_id,
+                    api_options,
+                    user_context,
+                )
+            except Exception as e:
+                if str(e) == "Cannot sign up as email already exists":
+                    return GeneralErrorResponse(
+                        "Seems like you already have an account with another social login provider. Please use that instead."
+                    )
+                raise e
+
+        original_implementation.sign_in_up_post = sign_in_up_post
+        return original_implementation
+
+    async def _first_time_tp_sign_up(
+        self, result: ThirdPartyResultType
+    ) -> Union[ThirdPartyResultType, GeneralErrorResponse]:
+        if isinstance(result, ThirdPartySignInUpOkResult):
+            user_info = result.raw_user_info_from_provider.from_user_info_api
+            if (
+                user_info
+                and result.created_new_recipe_user
+                and len(result.user.login_methods) == 1
+            ):
+                await self._set_first_time_member(
+                    result.user.id, user_info["name"], user_info["email"]
+                )
+
+        return result
+
+    async def _set_first_time_member(
+        self, id: str, *args: Unpack[tuple[str, str]]
+    ) -> Union[ThirdPartyResultType, EmailResultType, GeneralErrorResponse, None]:
+        query = """
+        INSERT INTO members (id, name, email)
+        VALUES ($1, $2, $3);
+        """
+        async with self.pool.acquire() as connection:
+            tr = connection.transaction()
+            await tr.start()
+            try:
+                await connection.execute(query, id, *args)
+            except asyncpg.UniqueViolationError:
+                await tr.rollback()
+                return LinkingToSessionUserFailedError(
+                    "RECIPE_USER_ID_ALREADY_LINKED_WITH_ANOTHER_PRIMARY_USER_ID_ERROR"
+                )
+            except Exception as e:
+                await tr.rollback()
+                return GeneralErrorResponse(str(e))
+            else:
+                await tr.commit()
+                return
 
     ### Exception Handlers
 
