@@ -18,12 +18,10 @@ from supertokens_python import (
 from supertokens_python.asyncio import list_users_by_account_info
 from supertokens_python.auth_utils import LinkingToSessionUserFailedError
 from supertokens_python.recipe import dashboard, emailpassword, session, thirdparty
-from supertokens_python.recipe.emailpassword.interfaces import (
-    EmailAlreadyExistsError,
-    RecipeInterface as EmailPasswordRecipeInterface,
-    SignUpOkResult as EmailPasswordSignUpOkResult,
-)
 from supertokens_python.recipe.session.interfaces import SessionContainer
+
+# ruff: isort: off
+# isort is turned off here to clarify the different imports of interfaces and providers
 from supertokens_python.recipe.thirdparty.interfaces import (
     APIInterface,
     APIOptions,
@@ -38,11 +36,13 @@ from supertokens_python.recipe.thirdparty.provider import (
     ProviderInput,
     RedirectUriInfo,
 )
-from supertokens_python.recipe.thirdparty.types import (
-    RawUserInfoFromProvider,
-    ThirdPartyInfo,
+from supertokens_python.recipe.emailpassword.interfaces import (
+    EmailAlreadyExistsError,
+    RecipeInterface as EmailPasswordRecipeInterface,
+    SignUpOkResult as EmailPasswordSignUpOkResult,
 )
-from supertokens_python.types import AccountInfo, GeneralErrorResponse
+# ruff: isort: on
+
 from utils.config import KanaeConfig
 from utils.errors import (
     HTTPExceptionMessage,
@@ -51,6 +51,11 @@ from utils.errors import (
 )
 
 if TYPE_CHECKING:
+    from supertokens_python.recipe.thirdparty.types import (
+        RawUserInfoFromProvider,
+        ThirdPartyInfo,
+    )
+    from supertokens_python.types import AccountInfo, GeneralErrorResponse
     from utils.request import RouteRequest
 
 
