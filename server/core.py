@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Unpack
+from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
 
 import asyncpg
 from fastapi import Depends, FastAPI, status
@@ -15,8 +15,22 @@ from supertokens_python import (
     SupertokensConfig,
     init as supertokens_init,
 )
+from supertokens_python.asyncio import list_users_by_account_info
 from supertokens_python.auth_utils import LinkingToSessionUserFailedError
-from supertokens_python.recipe import emailpassword, session, thirdparty
+from supertokens_python.recipe import dashboard, emailpassword, session, thirdparty
+from supertokens_python.recipe.emailpassword.interfaces import (
+    EmailAlreadyExistsError,
+    RecipeInterface as EmailPasswordRecipeInterface,
+    SignUpOkResult as EmailPasswordSignUpOkResult,
+)
+from supertokens_python.recipe.session.interfaces import SessionContainer
+from supertokens_python.recipe.thirdparty.interfaces import (
+    APIInterface,
+    APIOptions,
+    RecipeInterface as ThirdPartyRecipeInterface,
+    SignInUpNotAllowed as ThirdPartySignInUpNotAllowed,
+    SignInUpOkResult as ThirdPartySignInUpOkResult,
+)
 from supertokens_python.recipe.thirdparty.provider import (
     Provider,
     ProviderClientConfig,
@@ -24,6 +38,11 @@ from supertokens_python.recipe.thirdparty.provider import (
     ProviderInput,
     RedirectUriInfo,
 )
+from supertokens_python.recipe.thirdparty.types import (
+    RawUserInfoFromProvider,
+    ThirdPartyInfo,
+)
+from supertokens_python.types import AccountInfo, GeneralErrorResponse
 from utils.config import KanaeConfig
 from utils.errors import (
     HTTPExceptionMessage,
@@ -44,29 +63,6 @@ Changes can be made without notification, but announcements will be made for maj
 """
 __version__ = "0.1.0a"
 
-
-from typing import Dict, Union
-
-from supertokens_python.asyncio import list_users_by_account_info
-from supertokens_python.recipe import dashboard
-from supertokens_python.recipe.emailpassword.interfaces import (
-    EmailAlreadyExistsError,
-    RecipeInterface as EmailPasswordRecipeInterface,
-    SignUpOkResult as EmailPasswordSignUpOkResult,
-)
-from supertokens_python.recipe.session.interfaces import SessionContainer
-from supertokens_python.recipe.thirdparty.interfaces import (
-    APIInterface,
-    APIOptions,
-    RecipeInterface as ThirdPartyRecipeInterface,
-    SignInUpNotAllowed as ThirdPartySignInUpNotAllowed,
-    SignInUpOkResult as ThirdPartySignInUpOkResult,
-)
-from supertokens_python.recipe.thirdparty.types import (
-    RawUserInfoFromProvider,
-    ThirdPartyInfo,
-)
-from supertokens_python.types import AccountInfo, GeneralErrorResponse
 
 ThirdPartyResultType = Union[
     LinkingToSessionUserFailedError,
@@ -247,7 +243,7 @@ class Kanae(FastAPI):
             tenant_id: str,
             session: Union[SessionContainer, None],
             should_try_linking_with_session_user: Union[bool, None],
-            user_context: Dict[str, Any],
+            user_context: dict[str, Any],
         ):
             existing_users = await list_users_by_account_info(
                 tenant_id, AccountInfo(email=email)
@@ -281,12 +277,12 @@ class Kanae(FastAPI):
         async def sign_in_up_post(
             provider: Provider,
             redirect_uri_info: Optional[RedirectUriInfo],
-            oauth_tokens: Optional[Dict[str, Any]],
+            oauth_tokens: Optional[dict[str, Any]],
             session: Optional[SessionContainer],
             should_try_linking_with_session_user: Union[bool, None],
             tenant_id: str,
             api_options: APIOptions,
-            user_context: Dict[str, Any],
+            user_context: dict[str, Any],
         ):
             try:
                 return await original_sign_in_up_post(
