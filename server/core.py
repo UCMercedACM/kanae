@@ -20,7 +20,7 @@ from supertokens_python.auth_utils import LinkingToSessionUserFailedError
 from supertokens_python.recipe import dashboard, emailpassword, session, thirdparty
 from supertokens_python.recipe.session.interfaces import SessionContainer
 
-# ruff: isort: off
+# isort: off
 # isort is turned off here to clarify the different imports of interfaces and providers
 from supertokens_python.recipe.thirdparty.interfaces import (
     APIInterface,
@@ -41,7 +41,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
     RecipeInterface as EmailPasswordRecipeInterface,
     SignUpOkResult as EmailPasswordSignUpOkResult,
 )
-# ruff: isort: on
+# isort: on
 
 from utils.config import KanaeConfig
 from utils.errors import (
