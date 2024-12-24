@@ -50,3 +50,19 @@ async def delete_members(request: RouteRequest, id: uuid.UUID, req: Members) -> 
 
 
 # TODO: Update member by id
+@router.put("/memers/{id}", name="Update Members")
+async def update_members(request: RouteRequest, id: uuid.UUID, req: Members) -> Members:
+    query = """
+            UPDATE members
+            SET
+            name = $2
+            WHERE id = $1
+            RETURNING *
+            """
+    
+    member = await request.app.pool.fetchrow(query, id, name)
+
+    if not member:
+        raise NotFoundException()
+    
+    return Members(**dict(member))
