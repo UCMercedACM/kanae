@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS events (
     start_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
     end_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
     location TEXT,
-    alt_link TEXT DEFAULT '',
     type event_type DEFAULT 'misc',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );

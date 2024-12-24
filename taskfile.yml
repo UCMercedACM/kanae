@@ -14,10 +14,8 @@ tasks:
       - docker compose -f docker/docker-compose.dev.yml stop
 
   start:
-    preconditions:
-      -  test -f server/config.yml
     cmds:
-      - python3 server/launcher.py --no-workers
+      - uvicorn launcher:app --app-dir=server --reload
     silent: true
   
   check:
