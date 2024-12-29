@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         "sig_arch",
         "sig_graph",
     ]
+
 router = KanaeRouter(tags=["Projects"])
 
 
