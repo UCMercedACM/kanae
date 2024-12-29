@@ -4,7 +4,9 @@ from typing import Annotated, Literal, Optional
 
 from fastapi import Depends, Query
 from pydantic import BaseModel
-from utils.errors import BadRequestException
+from supertokens_python.recipe.session import SessionContainer
+from supertokens_python.recipe.session.framework.fastapi import verify_session
+from utils.errors import BadRequestException, NotFoundException, NotFoundMessage
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.router import KanaeRouter
@@ -12,7 +14,7 @@ from utils.router import KanaeRouter
 router = KanaeRouter(tags=["Projects"])
 
 
-class ProjectMembers(BaseModel, frozen=True):
+class ProjectMember(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
 
@@ -22,7 +24,7 @@ class Projects(BaseModel):
     name: str
     description: str
     link: str
-    members: list[ProjectMembers]
+    members: list[ProjectMember]
     type: Literal[
         "independent",
         "sig_ai",
@@ -46,6 +48,7 @@ async def list_projects(
     *,
     params: Annotated[KanaeParams, Depends()],
 ) -> KanaePages[Projects]:
+    """Search and filter a list of projects"""
     if since and until:
         raise BadRequestException(
             "Cannot specify both parameters. Must be only one be specified."
@@ -79,8 +82,8 @@ async def list_projects(
 
     query = f"""
     SELECT 
-        projects.id, projects.name, projects.description, projects.link, 
-        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name)) AS members, 
+        projects.id, projects.name, projects.description, projects.link
+        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', members.role)) AS members, 
         projects.type, projects.active, projects.founded_at
     FROM projects
     LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
@@ -89,3 +92,109 @@ async def list_projects(
     """
 
     return await paginate(request.app.pool, query, *args, params=params)
+
+
+@router.get(
+    "/projects/{id}",
+    responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
+)
+async def get_project(request: RouteRequest, id: uuid.UUID) -> Projects:
+    """Retrieve project details via ID"""
+    query = """
+    SELECT 
+        projects.id, projects.name, projects.description, projects.link
+        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name)) AS members, 
+        projects.type, projects.active, projects.founded_at
+    FROM projects
+    LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
+    LEFT OUTER JOIN members ON project_members.member_id = members.id
+    WHERE projects.id = $1
+    GROUP BY projects.id;
+    """
+    rows = await request.app.pool.fetchrow(query, id)
+    if not rows:
+        raise NotFoundException
+    return Projects(**dict(rows))
+
+
+class ModifiedProject(BaseModel):
+    name: str
+    description: str
+    link: str
+
+
+# Depends on scopes - Requires project lead and/or admin scopes
+@router.put(
+    "/projects/{id}",
+    responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
+)
+async def edit_event(
+    request: RouteRequest,
+    id: uuid.UUID,
+    req: ModifiedProject,
+    session: SessionContainer = Depends(verify_session),
+):
+    """Updates the specified project"""
+
+    # todo: add query for admins
+    query = """
+    UPDATE projects
+    SET 
+        name = $3,
+        description = $4,
+        link = $5
+    LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
+    LEFT OUTER JOIN members ON project_members.member_id = members.id
+    WHERE 
+        id = $1 
+        AND $2 IN (members.id) 
+        AND EXISTS (
+            SELECT role 
+            FROM members 
+            WHERE members.id = $2 AND members.role = 'lead'
+        )
+    RETURNING *;
+    """
+
+    rows = await request.app.pool.fetchrow(
+        query, id, session.get_user_id(), *req.model_dump().values()
+    )
+
+    if not rows:
+        raise NotFoundException(detail="Resource cannot be updated")
+    return Projects(**dict(rows))
+
+
+class DeleteResponse(BaseModel, frozen=True):
+    message: str = "ok"
+
+
+# Depends on scopes. Only leads/admins should be able to delete them.
+@router.delete(
+    "/events/{id}",
+    responses={200: {"model": DeleteResponse}, 400: {"model": NotFoundMessage}},
+)
+async def delete_event(
+    request: RouteRequest,
+    id: uuid.UUID,
+    session: SessionContainer = Depends(verify_session),
+):
+    """Deletes the specified project"""
+    # todo: add query for admins
+
+    query = """
+    DELETE FROM projects
+    LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
+    LEFT OUTER JOIN members ON project_members.member_id = members.id
+    WHERE 
+        id = $1 
+        AND EXISTS (
+            SELECT role 
+            FROM members 
+            WHERE members.id = $2 AND members.role = 'lead'
+        )
+    """
+    status = await request.app.pool.execute(query, id, session.get_user_id())
+    if status[-1] == "0":
+        raise NotFoundException
+    return DeleteResponse()

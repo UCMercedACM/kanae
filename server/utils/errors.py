@@ -16,7 +16,7 @@ class NotFoundException(HTTPException):
 
 class BadRequestException(HTTPException):
     def __init__(self, detail: str):
-        self.status_code = 400
+        self.status_code = 40
         self.detail = detail
 
 

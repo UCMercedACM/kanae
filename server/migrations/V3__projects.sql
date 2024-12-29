@@ -13,6 +13,15 @@ CREATE TYPE project_type AS ENUM (
     'sig_graph'
 );
 
+CREATE TYPE project_role AS ENUM (
+    'unaffiliated',
+    'member',
+    'former',
+    'lead'
+);
+
+ALTER TABLE IF EXISTS members ADD COLUMN IF NOT EXISTS role project_role DEFAULT 'unaffiliated';
+
 -- Projects by themselves, are basically the same type of relationship compared to events
 -- They are many-to-many
 -- Ex. A member can be in multiples projects (e.g. Website, UniFoodi, Fishtank, etc), and a project can have multiple members
