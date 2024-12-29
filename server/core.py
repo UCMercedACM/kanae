@@ -81,6 +81,7 @@ EmailResultType = Union[
     EmailAlreadyExistsError,
 ]
 
+
 async def init(conn: asyncpg.Connection):
     # Refer to https://github.com/MagicStack/asyncpg/issues/140#issuecomment-301477123
     def _encode_jsonb(value):
@@ -96,7 +97,8 @@ async def init(conn: asyncpg.Connection):
         decoder=_decode_jsonb,
         format="binary",
     )
-    
+
+
 class Kanae(FastAPI):
     pool: asyncpg.Pool
 
@@ -384,9 +386,7 @@ class Kanae(FastAPI):
     ) -> ORJSONResponse:
         message = RequestValidationErrorMessage(
             errors=[
-                RequestValidationErrorDetails(
-                    detail=exception["msg"], context="yee"
-                )
+                RequestValidationErrorDetails(detail=exception["msg"], context="yee")
                 for exception in exc.errors()
             ]
         )
@@ -399,7 +399,9 @@ class Kanae(FastAPI):
 
     @asynccontextmanager
     async def lifespan(self, app: Self):
-        async with asyncpg.create_pool(dsn=self.config["postgres_uri"], init=init) as app.pool:
+        async with asyncpg.create_pool(
+            dsn=self.config["postgres_uri"], init=init
+        ) as app.pool:
             yield
 
     def get_db(self) -> Generator[asyncpg.Pool, None, None]:

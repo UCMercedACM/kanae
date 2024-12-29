@@ -10,35 +10,48 @@ from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Projects"])
 
+
 class ProjectMembers(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
+
+
 class Projects(BaseModel):
     id: uuid.UUID
     name: str
     description: str
     link: str
     members: list[ProjectMembers]
-    type: Literal["independent", "sig_ai", "sig_swe", "sig_cyber", "sig_data", "sig_arch", "sig_graph"]
+    type: Literal[
+        "independent",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+    ]
     active: bool
     founded_at: datetime.datetime
 
-def _inject_args(since: Optional[datetime.datetime], until: Optional[datetime.datetime], active: Optional[bool], args: list) -> list:
-    if since:
-        args.extend((since, active))
-    elif until:
-        args.extend((until, active))
-    return args
-    
+
 #  name: Annotated[Optional[str], Query(min_length=3)], since: Optional[datetime.datetime], until: Optional[datetime.datetime]
 @router.get("/projects")
-async def list_projects(request: RouteRequest, name: Annotated[Optional[str], Query(min_length=3)] = None, since: Optional[datetime.datetime] = None, until: Optional[datetime.datetime] = None, active: Optional[bool] = True):
+async def list_projects(
+    request: RouteRequest,
+    name: Annotated[Optional[str], Query(min_length=3)] = None,
+    since: Optional[datetime.datetime] = None,
+    until: Optional[datetime.datetime] = None,
+    active: Optional[bool] = True,
+):
     if since and until:
-        raise BadRequestException("Cannot specify both parameters. Must be only one be specified.")
-    
+        raise BadRequestException(
+            "Cannot specify both parameters. Must be only one be specified."
+        )
+
     constraint = ""
     args = []
-    
+
     # There is probably a more optimized way of doing this - Noelle
     if name and (since or until):
         time_constraint = ""
@@ -57,9 +70,7 @@ async def list_projects(request: RouteRequest, name: Annotated[Optional[str], Qu
         elif until:
             constraint = "WHERE projects.founded_at <= $1 AND projects.active = $2 GROUP BY projects.id"
             args.extend((until, active))
-        
 
-        
     query = f"""
     SELECT 
         projects.id, projects.name, projects.description, projects.link, 
@@ -73,10 +84,6 @@ async def list_projects(request: RouteRequest, name: Annotated[Optional[str], Qu
 
     print(query)
     print(args)
-        
-    
-        
-        
-    
+
     records = await request.app.pool.fetch(query, *args)
     return [Projects(**dict(project)) for project in records]
