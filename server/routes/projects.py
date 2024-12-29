@@ -1,16 +1,34 @@
+from __future__ import annotations
+
 import datetime
 import uuid
-from typing import Annotated, Literal, Optional
+from typing import TYPE_CHECKING, Annotated, Literal, Optional
 
-from fastapi import Depends, Query
+import asyncpg
+from fastapi import Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
-from utils.errors import BadRequestException, NotFoundException, NotFoundMessage
+from utils.errors import (
+    BadRequestException,
+    HTTPExceptionMessage,
+    NotFoundException,
+    NotFoundMessage,
+)
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.router import KanaeRouter
 
+if TYPE_CHECKING:
+    ProjectType = Literal[
+        "independent",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+    ]
 router = KanaeRouter(tags=["Projects"])
 
 
@@ -25,15 +43,17 @@ class Projects(BaseModel):
     description: str
     link: str
     members: list[ProjectMember]
-    type: Literal[
-        "independent",
-        "sig_ai",
-        "sig_swe",
-        "sig_cyber",
-        "sig_data",
-        "sig_arch",
-        "sig_graph",
-    ]
+    type: ProjectType
+    active: bool
+    founded_at: datetime.datetime
+
+
+class PartialProjects(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str
+    link: str
+    type: ProjectType
     active: bool
     founded_at: datetime.datetime
 
@@ -82,12 +102,12 @@ async def list_projects(
 
     query = f"""
     SELECT 
-        projects.id, projects.name, projects.description, projects.link
+        projects.id, projects.name, projects.description, projects.link,
         jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', members.role)) AS members, 
         projects.type, projects.active, projects.founded_at
     FROM projects
-    LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
-    LEFT OUTER JOIN members ON project_members.member_id = members.id
+    INNER JOIN project_members ON project_members.project_id = projects.id
+    INNER JOIN members ON project_members.member_id = members.id
     {constraint}
     """
 
@@ -102,12 +122,12 @@ async def get_project(request: RouteRequest, id: uuid.UUID) -> Projects:
     """Retrieve project details via ID"""
     query = """
     SELECT 
-        projects.id, projects.name, projects.description, projects.link
+        projects.id, projects.name, projects.description, projects.link,
         jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name)) AS members, 
         projects.type, projects.active, projects.founded_at
     FROM projects
-    LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
-    LEFT OUTER JOIN members ON project_members.member_id = members.id
+    INNER JOIN project_members ON project_members.project_id = projects.id
+    INNER JOIN members ON project_members.member_id = members.id
     WHERE projects.id = $1
     GROUP BY projects.id;
     """
@@ -143,8 +163,8 @@ async def edit_event(
         name = $3,
         description = $4,
         link = $5
-    LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
-    LEFT OUTER JOIN members ON project_members.member_id = members.id
+    INNER JOIN project_members ON project_members.project_id = projects.id
+    INNER JOIN members ON project_members.member_id = members.id
     WHERE 
         id = $1 
         AND $2 IN (members.id) 
@@ -184,8 +204,8 @@ async def delete_event(
 
     query = """
     DELETE FROM projects
-    LEFT OUTER JOIN project_members ON project_members.project_id = projects.id
-    LEFT OUTER JOIN members ON project_members.member_id = members.id
+    INNER JOIN project_members ON project_members.project_id = projects.id
+    INNER JOIN members ON project_members.member_id = members.id
     WHERE 
         id = $1 
         AND EXISTS (
@@ -198,3 +218,87 @@ async def delete_event(
     if status[-1] == "0":
         raise NotFoundException
     return DeleteResponse()
+
+
+class CreateProject(BaseModel):
+    name: str
+    description: str
+    link: str
+    type: ProjectType
+    active: bool
+    founded_at: datetime.datetime
+
+
+@router.post("/events/create", responses={200: {"model": PartialProjects}})
+async def create_project(
+    request: RouteRequest,
+    req: CreateProject,
+    session: SessionContainer = Depends(verify_session),
+) -> PartialProjects:
+    """Creates a new project given the provided data"""
+    query = """
+    INSERT INTO projects (name, description, link, type, active, founded_at)
+    VALES ($1, $2, $3, $4, $5, $6)
+    RETURNING *;
+    """
+    rows = await request.app.pool.fetchrow(query, *req.model_dump().values())
+    return PartialProjects(**dict(rows))
+
+
+# todo: add role with member
+# todo: add bulk join endpoint
+# todo: add undocumented role upgrade endpoint
+
+
+class JoinResponse(BaseModel):
+    message: str
+
+
+@router.post(
+    "/events/{id}/join",
+    responses={200: {"model": JoinResponse}, 409: {"model": HTTPExceptionMessage}},
+)
+async def join_project(
+    request: RouteRequest,
+    id: uuid.UUID,
+    session: SessionContainer = Depends(verify_session),
+):
+    # The member is authenticated already, aka meaning that there is an existing member in our database
+    query = """
+    INSERT INTO project_members (project_id, member_id)
+    VALUES ($1, $2);
+    """
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
+        try:
+            await connection.execute(query, id, session.get_user_id())
+        except asyncpg.UniqueViolationError:
+            await tr.rollback()
+            return HTTPException(
+                detail="Authenticated member has already joined the requested project",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        else:
+            await tr.commit()
+            return JoinResponse(message="ok")
+
+
+@router.get("/events/me", responses={200: {"model": PartialProjects}})
+async def get_my_projects(
+    request: RouteRequest, session: SessionContainer = Depends(verify_session)
+) -> list[PartialProjects]:
+    """Get all projects associated with the authenticated user"""
+    query = """
+    SELECT 
+        projects.id, projects.name, projects.description, projects.link,
+        projects.type, projects.active, projects.founded_at
+    FROM projects
+    INNER JOIN project_members ON project_members.project_id = projects.id
+    INNER JOIN members ON project_members.member_id = members.id
+    WHERE members.id = $1
+    GROUP BY projects.id;
+    """
+
+    records = await request.app.pool.fetch(query, session.get_user_id())
+    return [PartialProjects(**dict(row)) for row in records]
