@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS projects (
     description TEXT,
     link TEXT,
     type project_type DEFAULT 'independent',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+    active BOOL DEFAULT TRUE,
+    founded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
 -- A project also is associated with a set of "tags"

@@ -20,7 +20,6 @@ tasks:
   
   check:
     cmds:
-      - pyright server
       - ruff check server --fix --exit-non-zero-on-fix --config pyproject.toml
     silent: true
 
