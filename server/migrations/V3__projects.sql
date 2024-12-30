@@ -17,7 +17,8 @@ CREATE TYPE project_role AS ENUM (
     'unaffiliated',
     'member',
     'former',
-    'lead'
+    'lead',
+    'manager'
 );
 
 ALTER TABLE IF EXISTS members ADD COLUMN IF NOT EXISTS role project_role DEFAULT 'unaffiliated';

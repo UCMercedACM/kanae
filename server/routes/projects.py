@@ -172,7 +172,10 @@ async def edit_event(
         AND EXISTS (
             SELECT role 
             FROM members 
-            WHERE members.id = $2 AND members.role = 'lead'
+            WHERE 
+                members.id = $2
+                AND members.role = 'lead'
+                OR members.role = 'manager' 
         )
     RETURNING *;
     """
@@ -192,7 +195,7 @@ class DeleteResponse(BaseModel, frozen=True):
 
 # Depends on scopes. Only leads/admins should be able to delete them.
 @router.delete(
-    "/events/{id}",
+    "/projects/{id}",
     responses={200: {"model": DeleteResponse}, 400: {"model": NotFoundMessage}},
 )
 async def delete_event(
@@ -205,17 +208,9 @@ async def delete_event(
 
     query = """
     DELETE FROM projects
-    INNER JOIN project_members ON project_members.project_id = projects.id
-    INNER JOIN members ON project_members.member_id = members.id
-    WHERE 
-        id = $1 
-        AND EXISTS (
-            SELECT role 
-            FROM members 
-            WHERE members.id = $2 AND members.role = 'lead'
-        )
+    WHERE id = $1 
     """
-    status = await request.app.pool.execute(query, id, session.get_user_id())
+    status = await request.app.pool.execute(query, id)
     if status[-1] == "0":
         raise NotFoundException
     return DeleteResponse()
@@ -230,7 +225,7 @@ class CreateProject(BaseModel):
     founded_at: datetime.datetime
 
 
-@router.post("/events/create", responses={200: {"model": PartialProjects}})
+@router.post("/projects/create", responses={200: {"model": PartialProjects}})
 async def create_project(
     request: RouteRequest,
     req: CreateProject,
@@ -246,7 +241,6 @@ async def create_project(
     return PartialProjects(**dict(rows))
 
 
-# todo: add role with member
 # todo: add bulk join endpoint
 # todo: add undocumented role upgrade endpoint
 
@@ -256,7 +250,7 @@ class JoinResponse(BaseModel):
 
 
 @router.post(
-    "/events/{id}/join",
+    "/projects/{id}/join",
     responses={200: {"model": JoinResponse}, 409: {"model": HTTPExceptionMessage}},
 )
 async def join_project(
@@ -266,8 +260,14 @@ async def join_project(
 ):
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
-    INSERT INTO project_members (project_id, member_id)
-    VALUES ($1, $2);
+    WITH insert_project_members AS (
+        INSERT INTO project_members (project_id, member_id)
+        VALUES ($1, $2)
+        RETURNING member_id
+    )
+    UPDATE members
+    SET project_role = 'member'
+    WHERE id = (SELECT member_id FROM insert_project_members);
     """
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
@@ -285,7 +285,34 @@ async def join_project(
             return JoinResponse(message="ok")
 
 
-@router.get("/events/me", responses={200: {"model": PartialProjects}})
+@router.delete(
+    "/projects/{id}/leave",
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+)
+async def leave_project(
+    request: RouteRequest,
+    id: uuid.UUID,
+    session: SessionContainer = Depends(verify_session),
+):
+    query = """
+    DELETE FROM project_members
+    WHERE project_id = $1 AND member_id = $2;
+    """
+    async with request.app.pool.acquire() as connection:
+        status = await connection.execute(query, id, session.get_user_id())
+        if status[-1] == "0":
+            raise NotFoundException
+
+        update_role_query = """
+        UPDATE members
+        SET project_role = 'unaffiliated'
+        WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM project_members WHERE member_id = $1);
+        """
+        await connection.execute(update_role_query, session.get_user_id())
+        return DeleteResponse()
+
+
+@router.get("/projects/me", responses={200: {"model": PartialProjects}})
 async def get_my_projects(
     request: RouteRequest, session: SessionContainer = Depends(verify_session)
 ) -> list[PartialProjects]:
