@@ -159,23 +159,25 @@ async def edit_event(
 
     # todo: add query for admins
     query = """
+    WITH project_member AS (
+        SELECT members.id, members.role
+        FROM projects
+        INNER JOIN project_members ON project_members.project_id = projects.id
+        INNER JOIN members ON project_members.member_id = members.id
+        WHERE projects.id = $1
+    )
     UPDATE projects
-    SET 
+    SET
         name = $3,
         description = $4,
         link = $5
-    INNER JOIN project_members ON project_members.project_id = projects.id
-    INNER JOIN members ON project_members.member_id = members.id
-    WHERE 
-        id = $1 
-        AND $2 IN (members.id) 
+    WHERE
+        id = $1
+        AND EXISTS (SELECT 1 FROM project_member WHERE project_member.id = $2)
         AND EXISTS (
-            SELECT role 
-            FROM members 
-            WHERE 
-                members.id = $2
-                AND members.role = 'lead'
-                OR members.role = 'manager' 
+            SELECT 1 
+            FROM members
+            WHERE members.id = $2 AND members.project_role = 'lead'
         )
     RETURNING *;
     """
@@ -193,7 +195,7 @@ class DeleteResponse(BaseModel, frozen=True):
     message: str = "ok"
 
 
-# Depends on scopes. Only leads/admins should be able to delete them.
+# Depends on scopes. Only admins should be able to delete them.
 @router.delete(
     "/projects/{id}",
     responses={200: {"model": DeleteResponse}, 400: {"model": NotFoundMessage}},
@@ -225,6 +227,7 @@ class CreateProject(BaseModel):
     founded_at: datetime.datetime
 
 
+# Depends on roles, admins can only use this endpoint
 @router.post("/projects/create", responses={200: {"model": PartialProjects}})
 async def create_project(
     request: RouteRequest,
@@ -234,15 +237,11 @@ async def create_project(
     """Creates a new project given the provided data"""
     query = """
     INSERT INTO projects (name, description, link, type, active, founded_at)
-    VALES ($1, $2, $3, $4, $5, $6)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING *;
     """
     rows = await request.app.pool.fetchrow(query, *req.model_dump().values())
     return PartialProjects(**dict(rows))
-
-
-# todo: add bulk join endpoint
-# todo: add undocumented role upgrade endpoint
 
 
 class JoinResponse(BaseModel):
@@ -257,7 +256,7 @@ async def join_project(
     request: RouteRequest,
     id: uuid.UUID,
     session: SessionContainer = Depends(verify_session),
-):
+) -> JoinResponse:
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
     WITH insert_project_members AS (
@@ -276,7 +275,56 @@ async def join_project(
             await connection.execute(query, id, session.get_user_id())
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            return HTTPException(
+            raise HTTPException(
+                detail="Authenticated member has already joined the requested project",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        else:
+            await tr.commit()
+            return JoinResponse(message="ok")
+
+
+class BulkJoinMember(BaseModel):
+    id: uuid.UUID
+
+
+# Depends on admin roles
+@router.post(
+    "/projects/{id}/bulk-join",
+    responses={
+        200: {"model": JoinResponse},
+        400: {"model": HTTPExceptionMessage},
+        409: {"model": HTTPExceptionMessage},
+    },
+)
+async def bulk_join_project(
+    request: RouteRequest,
+    id: uuid.UUID,
+    req: list[BulkJoinMember],
+    session: SessionContainer = Depends(verify_session),
+) -> JoinResponse:
+    if len(req) > 10:
+        raise BadRequestException("Must be less than 10 members")
+
+    # The member is authenticated already, aka meaning that there is an existing member in our database
+    query = """
+    WITH insert_project_members AS (
+        INSERT INTO project_members (project_id, member_id)
+        VALUES ($1, $2)
+        RETURNING member_id
+    )
+    UPDATE members
+    SET project_role = 'member'
+    WHERE id = (SELECT member_id FROM insert_project_members);
+    """
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
+        try:
+            await connection.executemany(query, id, [entry.id for entry in req])
+        except asyncpg.UniqueViolationError:
+            await tr.rollback()
+            raise HTTPException(
                 detail="Authenticated member has already joined the requested project",
                 status_code=status.HTTP_409_CONFLICT,
             )
@@ -293,7 +341,7 @@ async def leave_project(
     request: RouteRequest,
     id: uuid.UUID,
     session: SessionContainer = Depends(verify_session),
-):
+) -> DeleteResponse:
     query = """
     DELETE FROM project_members
     WHERE project_id = $1 AND member_id = $2;
@@ -310,6 +358,39 @@ async def leave_project(
         """
         await connection.execute(update_role_query, session.get_user_id())
         return DeleteResponse()
+
+
+class UpgradeMemberRole(BaseModel):
+    id: uuid.UUID
+    role: Literal["former", "lead"]
+
+
+@router.put(
+    "/projects/{id}/member/modify",
+    include_in_schema=False,
+    responses={200: {"model": DeleteResponse}},
+)
+async def modify_member(
+    request: RouteRequest,
+    id: uuid.UUID,
+    req: UpgradeMemberRole,
+    session: SessionContainer = Depends(verify_session),
+):
+    """Undocumented route to just upgrade/demote member role in projects"""
+    query = """
+    WITH upgrade_member AS (
+        SELECT members.id
+        FROM projects
+        INNER JOIN project_members ON project_members.project_id = projects.id
+        INNER JOIN members ON project_members.member_id = members.id
+        WHERE projects.id = $1
+    )
+    UPDATE members
+    SET project_role = $3
+    WHERE members.id = $2 AND EXISTS (SELECT 1 FROM upgrade_member WHERE upgrade_member.id = $2);
+    """
+    await request.app.pool.execute(query, id, req.id, req.role)
+    return DeleteResponse()
 
 
 @router.get("/projects/me", responses={200: {"model": PartialProjects}})
