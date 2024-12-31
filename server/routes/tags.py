@@ -79,6 +79,7 @@ class ModifiedTag(BaseModel):
     "/tags/{id}",
     responses={200: {"model": Tags}, 404: {"model": NotFoundMessage}},
 )
+@router.limiter.limit("5/minute")
 async def edit_tag(request: RouteRequest, id: int, req: ModifiedTag) -> Tags:
     """Modify specified tag"""
     query = """
@@ -99,6 +100,7 @@ async def edit_tag(request: RouteRequest, id: int, req: ModifiedTag) -> Tags:
     "/tags/{id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
+@router.limiter.limit("5/minute")
 async def delete_tag(
     request: RouteRequest,
     id: int,
@@ -117,6 +119,7 @@ async def delete_tag(
 
 
 @router.post("/tags/create", responses={200: {"model": Tags}})
+@router.limiter.limit("5/minute")
 async def create_tags(
     request: RouteRequest,
     req: ModifiedTag,
@@ -133,6 +136,7 @@ async def create_tags(
 
 
 @router.post("/tags/bulk-create", responses={200: {"model": list[Tags]}})
+@router.limiter.limit("1/minute")
 async def bulk_create_tags(
     request: RouteRequest,
     req: list[ModifiedTag],

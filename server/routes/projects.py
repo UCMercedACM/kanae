@@ -157,7 +157,8 @@ class ModifiedProject(BaseModel):
     "/projects/{id}",
     responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
 )
-async def edit_event(
+@router.limiter.limit("3/minute")
+async def edit_project(
     request: RouteRequest,
     id: uuid.UUID,
     req: ModifiedProject,
@@ -204,7 +205,8 @@ async def edit_event(
     "/projects/{id}",
     responses={200: {"model": DeleteResponse}, 400: {"model": NotFoundMessage}},
 )
-async def delete_event(
+@router.limiter.limit("3/minute")
+async def delete_project(
     request: RouteRequest,
     id: uuid.UUID,
     session: SessionContainer = Depends(verify_session),
@@ -243,6 +245,7 @@ class CreateProject(BaseModel):
     "/projects/create",
     responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionMessage}},
 )
+@router.limiter.limit("5/minute")
 async def create_project(
     request: RouteRequest,
     req: CreateProject,
@@ -299,6 +302,7 @@ class JoinResponse(BaseModel):
     "/projects/{id}/join",
     responses={200: {"model": JoinResponse}, 409: {"model": HTTPExceptionMessage}},
 )
+@router.limiter.limit("5/minute")
 async def join_project(
     request: RouteRequest,
     id: uuid.UUID,
@@ -344,6 +348,7 @@ class BulkJoinMember(BaseModel):
         409: {"model": HTTPExceptionMessage},
     },
 )
+@router.limiter.limit("1/minute")
 async def bulk_join_project(
     request: RouteRequest,
     id: uuid.UUID,
@@ -384,6 +389,7 @@ async def bulk_join_project(
     "/projects/{id}/leave",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
+@router.limiter.limit("5/minute")
 async def leave_project(
     request: RouteRequest,
     id: uuid.UUID,
@@ -417,6 +423,7 @@ class UpgradeMemberRole(BaseModel):
     include_in_schema=False,
     responses={200: {"model": DeleteResponse}},
 )
+@router.limiter.limit("3/minute")
 async def modify_member(
     request: RouteRequest,
     id: uuid.UUID,
@@ -441,6 +448,7 @@ async def modify_member(
 
 
 @router.get("/projects/me", responses={200: {"model": PartialProjects}})
+@router.limiter.limit("15/minute")
 async def get_my_projects(
     request: RouteRequest, session: SessionContainer = Depends(verify_session)
 ) -> list[PartialProjects]:
