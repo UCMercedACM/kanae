@@ -386,7 +386,9 @@ class Kanae(FastAPI):
     ) -> ORJSONResponse:
         message = RequestValidationErrorMessage(
             errors=[
-                RequestValidationErrorDetails(detail=exception["msg"], context="yee")
+                RequestValidationErrorDetails(
+                    detail=exception["msg"], context=exception["ctx"]["error"]
+                )
                 for exception in exc.errors()
             ]
         )

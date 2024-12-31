@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import TYPE_CHECKING, Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional
 
 import asyncpg
 from fastapi import Depends, HTTPException, Query, status
@@ -17,18 +17,8 @@ from utils.errors import (
 )
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
+from utils.responses import DeleteResponse
 from utils.router import KanaeRouter
-
-if TYPE_CHECKING:
-    ProjectType = Literal[
-        "independent",
-        "sig_ai",
-        "sig_swe",
-        "sig_cyber",
-        "sig_data",
-        "sig_arch",
-        "sig_graph",
-    ]
 
 router = KanaeRouter(tags=["Projects"])
 
@@ -44,7 +34,15 @@ class Projects(BaseModel):
     description: str
     link: str
     members: list[ProjectMember]
-    type: ProjectType
+    type: Literal[
+        "independent",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+    ]
     active: bool
     founded_at: datetime.datetime
 
@@ -54,7 +52,15 @@ class PartialProjects(BaseModel):
     name: str
     description: str
     link: str
-    type: ProjectType
+    type: Literal[
+        "independent",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+    ]
     active: bool
     founded_at: datetime.datetime
 
@@ -191,10 +197,6 @@ async def edit_event(
     return Projects(**dict(rows))
 
 
-class DeleteResponse(BaseModel, frozen=True):
-    message: str = "ok"
-
-
 # Depends on scopes. Only admins should be able to delete them.
 @router.delete(
     "/projects/{id}",
@@ -206,8 +208,6 @@ async def delete_event(
     session: SessionContainer = Depends(verify_session),
 ):
     """Deletes the specified project"""
-    # todo: add query for admins
-
     query = """
     DELETE FROM projects
     WHERE id = $1 
@@ -222,7 +222,15 @@ class CreateProject(BaseModel):
     name: str
     description: str
     link: str
-    type: ProjectType
+    type: Literal[
+        "independent",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+    ]
     active: bool
     founded_at: datetime.datetime
 
@@ -412,137 +420,3 @@ async def get_my_projects(
 
     records = await request.app.pool.fetch(query, session.get_user_id())
     return [PartialProjects(**dict(row)) for row in records]
-
-
-class ProjectTags(BaseModel):
-    id: uuid.UUID
-    title: str
-    description: str
-
-
-@router.get("/projects/tags")
-async def get_project_tags(
-    request: RouteRequest,
-    title: Annotated[Optional[str], Query(min_length=3)],
-    *,
-    params: Annotated[KanaeParams, Depends()],
-) -> KanaePages[ProjectTags]:
-    """Get all tags that can be used in projects or sort for a list of tags"""
-    query = """
-    SELECT id, title, description
-    FROM tags
-    ORDER BY title DESC
-    """
-
-    if title:
-        query = """
-        SELECT id, title, description
-        FROM projects
-        WHERE title % $1
-        ORDER BY similarity(title, $1) DESC
-        """
-
-    args = (title) if title else ()
-    return await paginate(request.app.pool, query, *args, params=params)
-
-
-@router.get(
-    "/projects/tags/{id}",
-    responses={200: {"model": ProjectTags}, 404: {"model": NotFoundMessage}},
-)
-async def get_project_tag_by_id(request: RouteRequest, id: uuid.UUID) -> ProjectTags:
-    """Get tag via ID"""
-    query = """
-    SELECT id, title, description
-    FROM projects
-    WHERE id = $1;
-    """
-
-    rows = await request.app.pool.fetchrow(query, id)
-    if not rows:
-        raise NotFoundException
-    return ProjectTags(**dict(rows))
-
-
-class ModifyProjectTag(BaseModel):
-    title: str
-    description: str
-
-
-@router.put(
-    "/projects/tags/{id}",
-    responses={200: {"model": ProjectTags}, 404: {"model": NotFoundMessage}},
-)
-async def edit_project_tag(
-    request: RouteRequest,
-    id: uuid.UUID,
-    req: ModifiedProject,
-    session: SessionContainer = Depends(verify_session),
-) -> ProjectTags:
-    """Modify specified project tag"""
-    query = """
-    UPDATE tags
-    SET
-        title = $2
-        description = $3
-    WHERE id = $1
-    RETURNING *;
-    """
-    rows = await request.app.pool.fetchrow(query, id, *req.model_dump().values())
-    if not rows:
-        raise NotFoundException(detail="Resource cannot be updated")
-    return ProjectTags(**dict(rows))
-
-
-@router.delete(
-    "/projects/tags/{id}",
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
-)
-async def delete_project_tag(
-    request: RouteRequest,
-    id: uuid.UUID,
-    session: SessionContainer = Depends(verify_session),
-) -> DeleteResponse:
-    """Remove specified project tag"""
-    query = """
-    DELETE FROM tags
-    WHERE id = $1;
-    """
-
-    query_status = await request.app.pool.execute(query, id)
-    if query_status[-1] == "0":
-        raise NotFoundException
-    return DeleteResponse()
-
-
-@router.post("/projects/tags/create", responses={200: {"model": ProjectTags}})
-async def create_project_tags(
-    request: RouteRequest,
-    req: ModifyProjectTag,
-    session: SessionContainer = Depends(verify_session),
-) -> ProjectTags:
-    """Create project tag"""
-    query = """
-    INSERT INTO tags (title, description)
-    VALUES ($1, $2)
-    RETURNING *;
-    """
-    rows = await request.app.pool.fetchrow(query, *req.model_dump().values())
-    return ProjectTags(**dict(rows))
-
-
-@router.post("/projects/tags/bulk-create", responses={200: {"model": DeleteResponse}})
-async def bulk_create_project_tags(
-    request: RouteRequest,
-    req: list[ModifyProjectTag],
-    session: SessionContainer = Depends(verify_session),
-) -> DeleteResponse:
-    """Bulk-create project tags"""
-    query = """
-    INSERT INTO tags (title, description)
-    VALUES ($1, $2)
-    """
-    await request.app.pool.executemany(
-        query, [(tag.title, tag.description) for tag in req]
-    )
-    return DeleteResponse()
