@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
 
 import asyncpg
+import orjson
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -79,6 +80,23 @@ EmailResultType = Union[
     EmailPasswordSignUpOkResult,
     EmailAlreadyExistsError,
 ]
+
+
+async def init(conn: asyncpg.Connection):
+    # Refer to https://github.com/MagicStack/asyncpg/issues/140#issuecomment-301477123
+    def _encode_jsonb(value):
+        return b"\x01" + orjson.dumps(value)
+
+    def _decode_jsonb(value):
+        return orjson.loads(value[1:].decode("utf-8"))
+
+    await conn.set_type_codec(
+        "jsonb",
+        schema="pg_catalog",
+        encoder=_encode_jsonb,
+        decoder=_decode_jsonb,
+        format="binary",
+    )
 
 
 class Kanae(FastAPI):
@@ -383,7 +401,9 @@ class Kanae(FastAPI):
 
     @asynccontextmanager
     async def lifespan(self, app: Self):
-        async with asyncpg.create_pool(dsn=self.config["postgres_uri"]) as app.pool:
+        async with asyncpg.create_pool(
+            dsn=self.config["postgres_uri"], init=init
+        ) as app.pool:
             yield
 
     def get_db(self) -> Generator[asyncpg.Pool, None, None]:
