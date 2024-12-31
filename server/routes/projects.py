@@ -43,6 +43,7 @@ class Projects(BaseModel):
         "sig_arch",
         "sig_graph",
     ]
+    tags: Optional[list[str]]
     active: bool
     founded_at: datetime.datetime
 
@@ -61,6 +62,7 @@ class PartialProjects(BaseModel):
         "sig_arch",
         "sig_graph",
     ]
+    tags: Optional[list[str]]
     active: bool
     founded_at: datetime.datetime
 
@@ -231,13 +233,16 @@ class CreateProject(BaseModel):
         "sig_arch",
         "sig_graph",
     ]
+    tags: Optional[list[str]] = None
     active: bool
     founded_at: datetime.datetime
 
 
-# todo: add tags along with projects
 # Depends on roles, admins can only use this endpoint
-@router.post("/projects/create", responses={200: {"model": PartialProjects}})
+@router.post(
+    "/projects/create",
+    responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionMessage}},
+)
 async def create_project(
     request: RouteRequest,
     req: CreateProject,
@@ -249,8 +254,41 @@ async def create_project(
     VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING *;
     """
-    rows = await request.app.pool.fetchrow(query, *req.model_dump().values())
-    return PartialProjects(**dict(rows))
+
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+
+        project_rows = await connection.fetchrow(
+            query, *req.model_dump(exclude={"tags"}).values()
+        )
+
+        if req.tags:
+            subquery = """
+            INSERT INTO project_tags (project_id, tag_id)
+            VALUES ($1, (SELECT id FROM tags WHERE title = $2));
+            """
+
+            await tr.start()
+
+            try:
+                await request.app.pool.fetchmany(
+                    subquery, [(project_rows["id"], tags.lower()) for tags in req.tags]
+                )
+            except asyncpg.NotNullViolationError:
+                await tr.rollback()
+
+                # Remove the newly created entry, somewhat like a rollback
+                await connection.execute(
+                    "DELETE FROM projects WHERE id = $1;", project_rows["id"]
+                )
+                raise HTTPException(
+                    detail="The tag(s) specified is invalid. Please check the current tags available.",
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+            else:
+                await tr.commit()
+
+        return PartialProjects(**dict(project_rows), tags=req.tags)
 
 
 class JoinResponse(BaseModel):
