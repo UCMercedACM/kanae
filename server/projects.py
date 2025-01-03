@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import datetime
 import uuid
 from typing import Annotated, Literal, Optional
@@ -43,7 +41,7 @@ class Projects(BaseModel):
         "sig_arch",
         "sig_graph",
     ]
-    tags: Optional[list[str]]
+    tags: Optional[list[str]] = None
     active: bool
     founded_at: datetime.datetime
 
@@ -62,7 +60,7 @@ class PartialProjects(BaseModel):
         "sig_arch",
         "sig_graph",
     ]
-    tags: Optional[list[str]]
+    tags: Optional[list[str]] = None
     active: bool
     founded_at: datetime.datetime
 

@@ -15,7 +15,7 @@ tasks:
 
   start:
     cmds:
-      - uvicorn launcher:app --app-dir=server --reload
+      - uvicorn launcher:app --app-dir=server --log-level=trace --reload
     silent: true
   
   check:
