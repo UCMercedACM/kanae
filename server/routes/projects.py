@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import datetime
 import uuid
 from typing import Annotated, Literal, Optional
@@ -162,7 +160,7 @@ async def edit_project(
     request: RouteRequest,
     id: uuid.UUID,
     req: ModifiedProject,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ):
     """Updates the specified project"""
 
@@ -209,7 +207,7 @@ async def edit_project(
 async def delete_project(
     request: RouteRequest,
     id: uuid.UUID,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ):
     """Deletes the specified project"""
     query = """
@@ -249,7 +247,7 @@ class CreateProject(BaseModel):
 async def create_project(
     request: RouteRequest,
     req: CreateProject,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> PartialProjects:
     """Creates a new project given the provided data"""
     query = """
@@ -306,7 +304,7 @@ class JoinResponse(BaseModel):
 async def join_project(
     request: RouteRequest,
     id: uuid.UUID,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> JoinResponse:
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
@@ -353,7 +351,7 @@ async def bulk_join_project(
     request: RouteRequest,
     id: uuid.UUID,
     req: list[BulkJoinMember],
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> JoinResponse:
     if len(req) > 10:
         raise BadRequestException("Must be less than 10 members")
@@ -393,7 +391,7 @@ async def bulk_join_project(
 async def leave_project(
     request: RouteRequest,
     id: uuid.UUID,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     query = """
     DELETE FROM project_members
@@ -428,7 +426,7 @@ async def modify_member(
     request: RouteRequest,
     id: uuid.UUID,
     req: UpgradeMemberRole,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ):
     """Undocumented route to just upgrade/demote member role in projects"""
     query = """
@@ -450,7 +448,8 @@ async def modify_member(
 @router.get("/projects/me", responses={200: {"model": PartialProjects}})
 @router.limiter.limit("15/minute")
 async def get_my_projects(
-    request: RouteRequest, session: SessionContainer = Depends(verify_session)
+    request: RouteRequest,
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> list[PartialProjects]:
     """Get all projects associated with the authenticated user"""
     query = """

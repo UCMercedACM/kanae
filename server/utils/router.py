@@ -10,21 +10,19 @@ from .config import KanaeConfig
 CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
 
 
-class PartialConfig(BaseModel, frozen=True):
+class PartialConfig(BaseModel):
     redis_uri: str
     ratelimits: list[str]
     dev_mode: bool = False
 
 
 class KanaeRouter(APIRouter):
-    limiter: Limiter
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
         # This isn't my favorite implementation, but will do for now - Noelle
         self._config = self._load_config()
-        self.limiter = Limiter(
+        self.limiter: Limiter = Limiter(
             key_func=get_remote_address,
             storage_uri=self._config.redis_uri,
             default_limits=self._config.ratelimits,  # type: ignore
