@@ -10,7 +10,7 @@ from .config import KanaeConfig
 CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
 
 
-class PartialConfig(BaseModel):
+class PartialConfig(BaseModel, frozen=True):
     redis_uri: str
     ratelimits: list[str]
     dev_mode: bool = False
