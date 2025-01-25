@@ -110,7 +110,7 @@ async def edit_event(
     request: RouteRequest,
     id: uuid.UUID,
     req: Union[ModifiedEvent, ModifiedEventWithDatetime],
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> EventsWithID:
     """Updates the specified event"""
     query = """
@@ -159,7 +159,7 @@ class DeleteResponse(BaseModel, frozen=True):
 async def delete_event(
     request: RouteRequest,
     id: uuid.UUID,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Deletes the specified event"""
     query = """
@@ -179,7 +179,7 @@ async def delete_event(
 async def create_events(
     request: RouteRequest,
     req: EventsWithCreatorID,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> EventsWithAllID:
     """Creates a new event given the provided data"""
     query = """
@@ -197,5 +197,6 @@ async def create_events(
 # Depends on auth
 @router.post("/events/join")
 async def join_event(
-    request: RouteRequest, session: SessionContainer = Depends(verify_session)
+    request: RouteRequest,
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ): ...

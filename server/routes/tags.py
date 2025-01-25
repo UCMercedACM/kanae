@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Annotated, Optional
 
 from fastapi import Depends, Query
@@ -21,10 +19,6 @@ class Tags(BaseModel):
     id: int
     title: str
     description: str
-
-
-class PartialTags(BaseModel):
-    title: str
 
 
 @router.get("/tags")
@@ -104,7 +98,7 @@ async def edit_tag(request: RouteRequest, id: int, req: ModifiedTag) -> Tags:
 async def delete_tag(
     request: RouteRequest,
     id: int,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Remove specified tag"""
     query = """
@@ -123,7 +117,7 @@ async def delete_tag(
 async def create_tags(
     request: RouteRequest,
     req: ModifiedTag,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> Tags:
     """Create tag"""
     query = """
@@ -140,7 +134,7 @@ async def create_tags(
 async def bulk_create_tags(
     request: RouteRequest,
     req: list[ModifiedTag],
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> list[Tags]:
     """Bulk-create tags"""
     query = """
