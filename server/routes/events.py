@@ -195,7 +195,8 @@ async def create_events(
 
 # We need the member endpoints to be finished in order to implement this
 # Depends on auth
-# @router.post("/events/join")
-# async def join_event(
-#     request: RouteRequest, session: Annotated[SessionContainer, Depends(verify_session())]
-# ): ...
+@router.post("/events/join")
+async def join_event(
+    request: RouteRequest,
+    session: Annotated[SessionContainer, Depends(verify_session())],
+): ...
