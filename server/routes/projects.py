@@ -223,7 +223,7 @@ async def edit_project(
 
 @router.delete(
     "/projects/{id}",
-    responses={200: {"model": DeleteResponse}, 400: {"model": NotFoundMessage}},
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
 @has_admin_role()
 @router.limiter.limit("3/minute")
@@ -364,7 +364,6 @@ class BulkJoinMember(BaseModel):
     "/projects/{id}/bulk-join",
     responses={
         200: {"model": JoinResponse},
-        400: {"model": HTTPExceptionMessage},
         409: {"model": HTTPExceptionMessage},
     },
 )

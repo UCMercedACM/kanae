@@ -398,11 +398,13 @@ class Kanae(FastAPI):
     ) -> ORJSONResponse:
         message = RequestValidationErrorMessage(
             errors=[
-                RequestValidationErrorDetails(detail=exception["msg"], context="")
+                RequestValidationErrorDetails(
+                    detail=exception["msg"],
+                    context=exception["ctx"]["error"] if exception.get("ctx") else None,
+                )
                 for exception in exc.errors()
             ]
         )
-
         return ORJSONResponse(
             content=message.model_dump(), status_code=status.HTTP_400_BAD_REQUEST
         )

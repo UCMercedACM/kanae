@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import HTTPException
 from pydantic import BaseModel
 
@@ -22,7 +24,7 @@ class BadRequestException(HTTPException):
 
 class RequestValidationErrorDetails(BaseModel, frozen=True):
     detail: str
-    context: str
+    context: Optional[str]
 
 
 class RequestValidationErrorMessage(BaseModel, frozen=True):
