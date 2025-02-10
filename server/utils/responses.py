@@ -7,3 +7,7 @@ class DeleteResponse(BaseModel):
 
 class JoinResponse(BaseModel):
     message: str = "Successfully joined"
+
+
+class VerifyFailedResponse(BaseModel):
+    message: str = "Failed to verify, entirely invalid hash"

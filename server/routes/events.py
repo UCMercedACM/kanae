@@ -16,7 +16,7 @@ from typing_extensions import Self
 from utils.errors import HTTPExceptionMessage, NotFoundException, NotFoundMessage
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses import JoinResponse
+from utils.responses import JoinResponse, VerifyFailedResponse
 from utils.roles import has_any_role
 from utils.router import KanaeRouter
 
@@ -279,7 +279,6 @@ async def create_events(
             return EventsWithAllID(**dict(rows))
 
 
-# TODO: add ratelimiting
 @router.post(
     "/events/{id}/join",
     responses={
@@ -288,6 +287,7 @@ async def create_events(
         409: {"model": HTTPExceptionMessage},
     },
 )
+@router.limiter.limit("5/minute")
 async def join_event(
     request: RouteRequest,
     id: uuid.UUID,
@@ -339,9 +339,11 @@ class VerifyRequest(BaseModel):
         return self
 
 
-# TODO: add 403 model for when the hash is invald.
-# TODO: add ratelimiting
-@router.post("/events/{id}/verify", responses={200: {"model": VerifiedResponse}})
+@router.post(
+    "/events/{id}/verify",
+    responses={200: {"model": VerifiedResponse}, 403: {"model": VerifyFailedResponse}},
+)
+@router.limiter.limit("5/second")
 async def verify_attendance(
     request: RouteRequest,
     id: uuid.UUID,
