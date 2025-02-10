@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
+from supertokens_python.recipe.userroles import UserRoleClaim
 from utils.errors import (
     BadRequestException,
     HTTPExceptionMessage,
@@ -16,6 +17,7 @@ from utils.errors import (
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.responses import DeleteResponse
+from utils.roles import has_admin_role, has_any_role
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Projects"])
@@ -107,6 +109,7 @@ async def list_projects(
             args.extend((until, active))
         constraint = f"WHERE {time_constraint} GROUP BY projects.id"
 
+    # ruff: noqa: S608
     query = f"""
     SELECT 
         projects.id, projects.name, projects.description, projects.link,
@@ -150,11 +153,11 @@ class ModifiedProject(BaseModel):
     link: str
 
 
-# Depends on scopes - Requires project lead and/or admin scopes
 @router.put(
     "/projects/{id}",
     responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
 )
+@has_any_role("admin", "leads")
 @router.limiter.limit("3/minute")
 async def edit_project(
     request: RouteRequest,
@@ -164,7 +167,6 @@ async def edit_project(
 ):
     """Updates the specified project"""
 
-    # todo: add query for admins
     query = """
     WITH project_member AS (
         SELECT members.id, members.role
@@ -189,20 +191,41 @@ async def edit_project(
     RETURNING *;
     """
 
-    rows = await request.app.pool.fetchrow(
-        query, id, session.get_user_id(), *req.model_dump().values()
-    )
+    roles = await session.get_claim_value(UserRoleClaim)
+
+    if roles and "admin" in roles:
+        # Effectively admins can override projects
+        query = """
+        WITH project_member AS (
+            SELECT members.id, members.role
+            FROM projects
+            INNER JOIN project_members ON project_members.project_id = projects.id
+            INNER JOIN members ON project_members.member_id = members.id
+            WHERE projects.id = $1
+        )
+        UPDATE projects
+        SET
+            name = $2,
+            description = $3,
+            link = $4
+        WHERE
+            id = $1
+        RETURNING *;
+        """
+
+    args = (id) if roles and "admin" in roles else (id, session.get_user_id())
+    rows = await request.app.pool.fetchrow(query, *args, *req.model_dump().values())
 
     if not rows:
         raise NotFoundException(detail="Resource cannot be updated")
     return Projects(**dict(rows))
 
 
-# Depends on scopes. Only admins should be able to delete them.
 @router.delete(
     "/projects/{id}",
     responses={200: {"model": DeleteResponse}, 400: {"model": NotFoundMessage}},
 )
+@has_admin_role()
 @router.limiter.limit("3/minute")
 async def delete_project(
     request: RouteRequest,
@@ -238,11 +261,11 @@ class CreateProject(BaseModel):
     founded_at: datetime.datetime
 
 
-# Depends on roles, admins can only use this endpoint
 @router.post(
     "/projects/create",
     responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionMessage}},
 )
+@has_admin_role()
 @router.limiter.limit("5/minute")
 async def create_project(
     request: RouteRequest,
@@ -337,7 +360,6 @@ class BulkJoinMember(BaseModel):
     id: uuid.UUID
 
 
-# Depends on admin roles
 @router.post(
     "/projects/{id}/bulk-join",
     responses={
@@ -346,6 +368,7 @@ class BulkJoinMember(BaseModel):
         409: {"model": HTTPExceptionMessage},
     },
 )
+@has_any_role("admin", "leads")
 @router.limiter.limit("1/minute")
 async def bulk_join_project(
     request: RouteRequest,
@@ -421,6 +444,7 @@ class UpgradeMemberRole(BaseModel):
     include_in_schema=False,
     responses={200: {"model": DeleteResponse}},
 )
+@has_admin_role()
 @router.limiter.limit("3/minute")
 async def modify_member(
     request: RouteRequest,

@@ -10,6 +10,7 @@ from utils.errors import (
 )
 from utils.request import RouteRequest
 from utils.responses import DeleteResponse
+from utils.roles import has_admin_role
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Tags"])
@@ -73,8 +74,14 @@ class ModifiedTag(BaseModel):
     "/tags/{id}",
     responses={200: {"model": Tags}, 404: {"model": NotFoundMessage}},
 )
+@has_admin_role()
 @router.limiter.limit("5/minute")
-async def edit_tag(request: RouteRequest, id: int, req: ModifiedTag) -> Tags:
+async def edit_tag(
+    request: RouteRequest,
+    id: int,
+    req: ModifiedTag,
+    session: Annotated[SessionContainer, Depends(verify_session())],
+) -> Tags:
     """Modify specified tag"""
     query = """
     UPDATE tags
@@ -94,6 +101,7 @@ async def edit_tag(request: RouteRequest, id: int, req: ModifiedTag) -> Tags:
     "/tags/{id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
+@has_admin_role()
 @router.limiter.limit("5/minute")
 async def delete_tag(
     request: RouteRequest,
@@ -113,6 +121,7 @@ async def delete_tag(
 
 
 @router.post("/tags/create", responses={200: {"model": Tags}})
+@has_admin_role()
 @router.limiter.limit("5/minute")
 async def create_tags(
     request: RouteRequest,
@@ -130,6 +139,7 @@ async def create_tags(
 
 
 @router.post("/tags/bulk-create", responses={200: {"model": list[Tags]}})
+@has_admin_role()
 @router.limiter.limit("1/minute")
 async def bulk_create_tags(
     request: RouteRequest,

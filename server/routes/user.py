@@ -20,7 +20,6 @@ router = KanaeRouter(prefix="/users", tags=["Users"])
     responses={200: {"model": GetUser}, 404: {"model": NotFound}},
     name="Get users",
 )
-@router.limiter.limit("1/minute")
 async def get_users(request: RouteRequest) -> GetUser:
     query = "SELECT 1;"
     status = await request.app.pool.execute(query)

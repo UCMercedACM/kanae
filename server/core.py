@@ -18,7 +18,14 @@ from supertokens_python import (
 )
 from supertokens_python.asyncio import list_users_by_account_info
 from supertokens_python.auth_utils import LinkingToSessionUserFailedError
-from supertokens_python.recipe import dashboard, emailpassword, session, thirdparty
+from supertokens_python.exceptions import GeneralError
+from supertokens_python.recipe import (
+    dashboard,
+    emailpassword,
+    session,
+    thirdparty,
+    userroles,
+)
 from supertokens_python.recipe.session.interfaces import SessionContainer
 
 # isort: off
@@ -171,6 +178,7 @@ class Kanae(FastAPI):
                     )
                 ),
                 dashboard.init(),
+                userroles.init(),
             ],
             mode="asgi",
         )
@@ -182,6 +190,10 @@ class Kanae(FastAPI):
         self.add_exception_handler(
             RequestValidationError,
             self.request_validation_error_handler,  # type: ignore
+        )
+        self.add_exception_handler(
+            GeneralError,
+            self.general_error_handler,  # type: ignore
         )
 
     # SuperTokens recipes overrides
@@ -386,15 +398,20 @@ class Kanae(FastAPI):
     ) -> ORJSONResponse:
         message = RequestValidationErrorMessage(
             errors=[
-                RequestValidationErrorDetails(
-                    detail=exception["msg"], context=exception["ctx"]["error"]
-                )
+                RequestValidationErrorDetails(detail=exception["msg"], context="")
                 for exception in exc.errors()
             ]
         )
 
         return ORJSONResponse(
             content=message.model_dump(), status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    async def general_error_handler(
+        self, request: RouteRequest, exc: GeneralError
+    ) -> ORJSONResponse:
+        return ORJSONResponse(
+            content={"error": str(exc)}, status_code=status.HTTP_400_BAD_REQUEST
         )
 
     ### Server-related utilities

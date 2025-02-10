@@ -9,6 +9,7 @@ from supertokens_python.recipe.session.framework.fastapi import verify_session
 from utils.errors import NotFoundException, NotFoundMessage
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
+from utils.roles import has_any_role
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Events"])
@@ -100,11 +101,11 @@ class ModifiedEventWithDatetime(ModifiedEvent):
     end_at: datetime.datetime
 
 
-# Depends on scopes
 @router.put(
     "/events/{id}",
     responses={200: {"model": EventsWithID}, 404: {"model": NotFoundMessage}},
 )
+@has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def edit_event(
     request: RouteRequest,
@@ -150,11 +151,11 @@ class DeleteResponse(BaseModel, frozen=True):
     message: str = "ok"
 
 
-# Depends on scopes
 @router.delete(
     "/events/{id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
+@has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def delete_event(
     request: RouteRequest,
@@ -173,8 +174,8 @@ async def delete_event(
     return DeleteResponse()
 
 
-# Depends on scopes
 @router.post("/events/create", responses={200: {"model": EventsWithAllID}})
+@has_any_role("admin", "leads")
 @router.limiter.limit("15/minute")
 async def create_events(
     request: RouteRequest,
