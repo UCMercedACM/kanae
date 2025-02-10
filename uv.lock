@@ -1,6 +1,9 @@
 version = 1
 requires-python = ">=3.9, <4.0"
 
+[options]
+prerelease-mode = "allow"
+
 [[package]]
 name = "kanae"
 version = "0.1.0"

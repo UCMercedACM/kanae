@@ -51,6 +51,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 )
 # isort: on
 
+from argon2 import PasswordHasher
 from utils.config import KanaeConfig
 from utils.errors import (
     HTTPExceptionMessage,
@@ -183,6 +184,7 @@ class Kanae(FastAPI):
             mode="asgi",
         )
         self.config = config
+        self.ph = PasswordHasher()
         self.add_exception_handler(
             HTTPException,
             self.http_exception_handler,  # type: ignore
