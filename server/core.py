@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
 
 import asyncpg
 import orjson
+from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
@@ -52,7 +53,6 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 )
 # isort: on
 
-from argon2 import PasswordHasher
 from utils.config import KanaeConfig
 from utils.errors import (
     HTTPExceptionMessage,
