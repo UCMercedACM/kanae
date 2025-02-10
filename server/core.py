@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
 
 import asyncpg
+import orjson
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -17,7 +18,14 @@ from supertokens_python import (
 )
 from supertokens_python.asyncio import list_users_by_account_info
 from supertokens_python.auth_utils import LinkingToSessionUserFailedError
-from supertokens_python.recipe import dashboard, emailpassword, session, thirdparty
+from supertokens_python.exceptions import GeneralError
+from supertokens_python.recipe import (
+    dashboard,
+    emailpassword,
+    session,
+    thirdparty,
+    userroles,
+)
 from supertokens_python.recipe.session.interfaces import SessionContainer
 
 # isort: off
@@ -79,6 +87,23 @@ EmailResultType = Union[
     EmailPasswordSignUpOkResult,
     EmailAlreadyExistsError,
 ]
+
+
+async def init(conn: asyncpg.Connection):
+    # Refer to https://github.com/MagicStack/asyncpg/issues/140#issuecomment-301477123
+    def _encode_jsonb(value):
+        return b"\x01" + orjson.dumps(value)
+
+    def _decode_jsonb(value):
+        return orjson.loads(value[1:].decode("utf-8"))
+
+    await conn.set_type_codec(
+        "jsonb",
+        schema="pg_catalog",
+        encoder=_encode_jsonb,
+        decoder=_decode_jsonb,
+        format="binary",
+    )
 
 
 class Kanae(FastAPI):
@@ -153,6 +178,7 @@ class Kanae(FastAPI):
                     )
                 ),
                 dashboard.init(),
+                userroles.init(),
             ],
             mode="asgi",
         )
@@ -164,6 +190,10 @@ class Kanae(FastAPI):
         self.add_exception_handler(
             RequestValidationError,
             self.request_validation_error_handler,  # type: ignore
+        )
+        self.add_exception_handler(
+            GeneralError,
+            self.general_error_handler,  # type: ignore
         )
 
     # SuperTokens recipes overrides
@@ -369,21 +399,30 @@ class Kanae(FastAPI):
         message = RequestValidationErrorMessage(
             errors=[
                 RequestValidationErrorDetails(
-                    detail=exception["msg"], context=exception["ctx"]["error"]
+                    detail=exception["msg"],
+                    context=exception["ctx"]["error"] if exception.get("ctx") else None,
                 )
                 for exception in exc.errors()
             ]
         )
-
         return ORJSONResponse(
             content=message.model_dump(), status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    async def general_error_handler(
+        self, request: RouteRequest, exc: GeneralError
+    ) -> ORJSONResponse:
+        return ORJSONResponse(
+            content={"error": str(exc)}, status_code=status.HTTP_400_BAD_REQUEST
         )
 
     ### Server-related utilities
 
     @asynccontextmanager
     async def lifespan(self, app: Self):
-        async with asyncpg.create_pool(dsn=self.config["postgres_uri"]) as app.pool:
+        async with asyncpg.create_pool(
+            dsn=self.config["postgres_uri"], init=init
+        ) as app.pool:
             yield
 
     def get_db(self) -> Generator[asyncpg.Pool, None, None]:

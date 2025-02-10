@@ -9,6 +9,7 @@ from supertokens_python.recipe.session.framework.fastapi import verify_session
 from utils.errors import NotFoundException, NotFoundMessage
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
+from utils.roles import has_any_role
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Events"])
@@ -100,17 +101,17 @@ class ModifiedEventWithDatetime(ModifiedEvent):
     end_at: datetime.datetime
 
 
-# Depends on scopes
 @router.put(
     "/events/{id}",
     responses={200: {"model": EventsWithID}, 404: {"model": NotFoundMessage}},
 )
+@has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def edit_event(
     request: RouteRequest,
     id: uuid.UUID,
     req: Union[ModifiedEvent, ModifiedEventWithDatetime],
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> EventsWithID:
     """Updates the specified event"""
     query = """
@@ -150,16 +151,16 @@ class DeleteResponse(BaseModel, frozen=True):
     message: str = "ok"
 
 
-# Depends on scopes
 @router.delete(
     "/events/{id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
 )
+@has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def delete_event(
     request: RouteRequest,
     id: uuid.UUID,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Deletes the specified event"""
     query = """
@@ -173,13 +174,13 @@ async def delete_event(
     return DeleteResponse()
 
 
-# Depends on scopes
 @router.post("/events/create", responses={200: {"model": EventsWithAllID}})
+@has_any_role("admin", "leads")
 @router.limiter.limit("15/minute")
 async def create_events(
     request: RouteRequest,
     req: EventsWithCreatorID,
-    session: SessionContainer = Depends(verify_session),
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> EventsWithAllID:
     """Creates a new event given the provided data"""
     query = """
@@ -197,5 +198,6 @@ async def create_events(
 # Depends on auth
 @router.post("/events/join")
 async def join_event(
-    request: RouteRequest, session: SessionContainer = Depends(verify_session)
+    request: RouteRequest,
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ): ...

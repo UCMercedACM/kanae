@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import HTTPException
 from pydantic import BaseModel
 
@@ -14,9 +16,15 @@ class NotFoundException(HTTPException):
         self.detail = detail
 
 
+class BadRequestException(HTTPException):
+    def __init__(self, detail: str):
+        self.status_code = 400
+        self.detail = detail
+
+
 class RequestValidationErrorDetails(BaseModel, frozen=True):
     detail: str
-    context: str
+    context: Optional[str]
 
 
 class RequestValidationErrorMessage(BaseModel, frozen=True):
