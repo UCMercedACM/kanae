@@ -14,7 +14,6 @@ class GetUser(BaseModel):
 router = KanaeRouter(prefix="/users", tags=["Users"])
 
 
-# @has_role()
 @router.get(
     "/get",
     response_model=GetUser,

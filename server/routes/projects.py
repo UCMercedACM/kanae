@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
+from supertokens_python.recipe.userroles import UserRoleClaim
 from utils.errors import (
     BadRequestException,
     HTTPExceptionMessage,
@@ -166,7 +167,6 @@ async def edit_project(
 ):
     """Updates the specified project"""
 
-    # todo: add query for admins
     query = """
     WITH project_member AS (
         SELECT members.id, members.role
@@ -191,9 +191,30 @@ async def edit_project(
     RETURNING *;
     """
 
-    rows = await request.app.pool.fetchrow(
-        query, id, session.get_user_id(), *req.model_dump().values()
-    )
+    roles = await session.get_claim_value(UserRoleClaim)
+
+    if roles and "admin" in roles:
+        # Effectively admins can override projects
+        query = """
+        WITH project_member AS (
+            SELECT members.id, members.role
+            FROM projects
+            INNER JOIN project_members ON project_members.project_id = projects.id
+            INNER JOIN members ON project_members.member_id = members.id
+            WHERE projects.id = $1
+        )
+        UPDATE projects
+        SET
+            name = $2,
+            description = $3,
+            link = $4
+        WHERE
+            id = $1
+        RETURNING *;
+        """
+
+    args = (id) if roles and "admin" in roles else (id, session.get_user_id())
+    rows = await request.app.pool.fetchrow(query, *args, *req.model_dump().values())
 
     if not rows:
         raise NotFoundException(detail="Resource cannot be updated")
