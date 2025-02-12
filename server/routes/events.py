@@ -283,6 +283,7 @@ async def create_events(
     "/events/{id}/join",
     responses={
         200: {"model": JoinResponse},
+        403: {"model": HTTPExceptionMessage},
         404: {"model": NotFoundMessage},
         409: {"model": HTTPExceptionMessage},
     },
@@ -309,7 +310,15 @@ async def join_event(
         if not rows:
             raise NotFoundException("Should not happen")
 
-        # TODO: Check to make sure that you can't join an event after the end time.
+        utcnow = datetime.datetime.now(datetime.timezone.utc)
+
+        # TODO: Add timezone support (put it in a new column within the events table)
+        if utcnow > rows["end_at"]:
+            raise HTTPException(
+                detail="The event has ended. You can't join an finished event.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
         await tr.start()
 
         try:
@@ -360,6 +369,8 @@ async def verify_attendance(
 
     full_hash = compile_params(request.app.ph._parameters) + possible_hash
 
+    # TODO: Add buffer times to when you can verify an event code
+    # TODO: Add timezone support so we don't have to used utcnow a ton of time
     # should raise a error directly, which would need to be handled.
     if request.app.ph.verify(full_hash, str(id)):
         verify_query = """
