@@ -7,6 +7,8 @@ import asyncpg
 import base62
 from argon2 import Parameters
 from argon2.low_level import Type
+from dateutil import tz
+from dateutil.relativedelta import relativedelta
 from fastapi import Depends, Query, status
 from fastapi.exceptions import HTTPException
 from pydantic import BaseModel, model_validator
@@ -53,6 +55,24 @@ def compile_params(params: Parameters) -> str:
     return f"${'$'.join(parts)}$"
 
 
+class EventTimezone:
+    __slots__ = "pool"
+
+    def __init__(self, *, pool: asyncpg.Pool):
+        self.pool = pool
+
+    async def get_raw_timezone(self, id: uuid.UUID) -> str:
+        query = "SELECT timezone FROM events WHERE id = $1;"
+        row = await self.pool.fetchrow(query, id)
+        if not row:
+            return "UTC"
+        return row["timezone"]
+
+    async def get_tzinfo(self, id: uuid.UUID) -> datetime.tzinfo:
+        raw_tz = await self.get_raw_timezone(id)
+        return tz.gettz(raw_tz) or datetime.timezone.utc
+
+
 class Events(BaseModel):
     name: str
     description: str
@@ -69,6 +89,7 @@ class Events(BaseModel):
         "social",
         "misc",
     ]
+    timezone: str
 
 
 class EventsWithCreatorID(Events):
@@ -93,14 +114,14 @@ async def list_events(
 ) -> KanaePages[EventsWithAllID]:
     """Search a list of events"""
     query = """
-    SELECT name, description, start_at, end_at, location, type, creator_id, id
+    SELECT name, description, start_at, end_at, location, type, timezone, creator_id, id
     FROM events
     ORDER BY start_at DESC
     """
 
     if name:
         query = """
-        SELECT name, description, start_at, end_at, location, type, creator_id, id
+        SELECT name, description, start_at, end_at, location, type, timezone, creator_id, id
         FROM events
         WHERE name % $1
         ORDER BY similarity(name, $1) DESC
@@ -117,7 +138,7 @@ async def list_events(
 async def get_event(request: RouteRequest, id: uuid.UUID) -> EventsWithCreatorID:
     """Retrieve event details via ID"""
     query = """
-    SELECT name, description, start_at, end_at, location, type, creator_id
+    SELECT name, description, start_at, end_at, location, type, timezone, creator_id
     FROM events
     WHERE id = $1;
     """
@@ -125,7 +146,10 @@ async def get_event(request: RouteRequest, id: uuid.UUID) -> EventsWithCreatorID
     rows = await request.app.pool.fetchrow(query, id)
     if not rows:
         raise NotFoundException
-    return EventsWithCreatorID(**dict(rows))
+    event_tz = EventTimezone(pool=request.app.pool)
+    return EventsWithCreatorID(
+        **dict(rows), timezone=await event_tz.get_raw_timezone(id)
+    )
 
 
 class ModifiedEvent(BaseModel):
@@ -137,6 +161,7 @@ class ModifiedEvent(BaseModel):
 class ModifiedEventWithDatetime(ModifiedEvent):
     start_at: datetime.datetime
     end_at: datetime.datetime
+    timezone: str
 
 
 @router.put(
@@ -170,7 +195,8 @@ async def edit_event(
             description = $4,
             location = $5,
             start_at = $6,
-            end_at = $7
+            end_at = $7,
+            timezone = $8
         WHERE id = $1 AND creator_id = $2
         RETURNING *;
         """
@@ -239,8 +265,8 @@ async def create_events(
 ) -> EventsWithAllID:
     """Creates a new event given the provided data"""
     query = """
-    INSERT INTO events (name, description, start_at, end_at, location, type, creator_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO events (name, description, start_at, end_at, location, type, creator_id, timezone)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING *;
     """
     attendance_query = """
@@ -310,10 +336,10 @@ async def join_event(
         if not rows:
             raise NotFoundException("Should not happen")
 
-        utcnow = datetime.datetime.now(datetime.timezone.utc)
+        zone = EventTimezone(pool=request.app.pool)
 
-        # TODO: Add timezone support (put it in a new column within the events table)
-        if utcnow > rows["end_at"]:
+        now = datetime.datetime.now(await zone.get_tzinfo(id))
+        if now > rows["end_at"]:
             raise HTTPException(
                 detail="The event has ended. You can't join an finished event.",
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -348,9 +374,14 @@ class VerifyRequest(BaseModel):
         return self
 
 
+# Would this have the classic retry behavior of Twitter/X? Need to test
 @router.post(
     "/events/{id}/verify",
-    responses={200: {"model": VerifiedResponse}, 403: {"model": VerifyFailedResponse}},
+    responses={
+        200: {"model": VerifiedResponse},
+        403: {"model": VerifyFailedResponse},
+        404: {"model": HTTPExceptionMessage},
+    },
 )
 @router.limiter.limit("5/second")
 async def verify_attendance(
@@ -360,17 +391,29 @@ async def verify_attendance(
     session: Annotated[SessionContainer, Depends(verify_session())],
 ):
     """Verify an authenticated user's attendance to the requested event"""
-    query = "SELECT attendance_hash FROM events WHERE substring(attendance_code for 8) = $1;"
-    possible_hash = await request.app.pool.fetchval(query, req.code)
-    if not possible_hash:
+    query = "SELECT start_at, end_at, attendance_hash FROM events WHERE substring(attendance_code for 8) = $1;"
+    record = await request.app.pool.fetchrow(query, req.code)
+    if not record:
         raise NotFoundException(
             detail="Apparently there is no attendance hash... Hmmmm.... this should never happen"
         )
 
-    full_hash = compile_params(request.app.ph._parameters) + possible_hash
+    full_hash = compile_params(request.app.ph._parameters) + record["attendance_hash"]
 
-    # TODO: Add buffer times to when you can verify an event code
-    # TODO: Add timezone support so we don't have to used utcnow a ton of time
+    zone = EventTimezone(pool=request.app.pool)
+
+    now = datetime.datetime.now(await zone.get_tzinfo(id))
+
+    # As of now, the buffer times for registering would be:
+    # - between the start and end at times
+    # - one our before the event
+    buffer = record["start_at"] + relativedelta(hours=-1)
+    if not (now >= record["start_at"] and now <= record["end_at"]) or (now <= buffer):
+        raise HTTPException(
+            detail="You must verify your hash either during the event or one hour beforehand. Please try again.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
     # should raise a error directly, which would need to be handled.
     if request.app.ph.verify(full_hash, str(id)):
         verify_query = """
