@@ -16,7 +16,7 @@ from utils.errors import (
 )
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses import DeleteResponse
+from utils.responses import DeleteResponse, JoinResponse
 from utils.roles import has_admin_role, has_any_role
 from utils.router import KanaeRouter
 
@@ -313,10 +313,6 @@ async def create_project(
                 await tr.commit()
 
         return PartialProjects(**dict(project_rows), tags=req.tags)
-
-
-class JoinResponse(BaseModel):
-    message: str
 
 
 @router.post(
