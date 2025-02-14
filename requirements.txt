@@ -8,3 +8,5 @@ redis[hiredis]>=5.0.8,<6.0.0
 orjson>=3.10.10,<4
 fastapi-pagination>=0.12.32,<1
 supertokens-python>=0.26.1,<1
+argon2-cffi>=23.1.0,<24
+pybase62>=1.0.0,<2

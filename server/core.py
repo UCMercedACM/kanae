@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
 
 import asyncpg
 import orjson
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -183,6 +185,7 @@ class Kanae(FastAPI):
             mode="asgi",
         )
         self.config = config
+        self.ph = PasswordHasher()
         self.add_exception_handler(
             HTTPException,
             self.http_exception_handler,  # type: ignore
@@ -194,6 +197,10 @@ class Kanae(FastAPI):
         self.add_exception_handler(
             GeneralError,
             self.general_error_handler,  # type: ignore
+        )
+        self.add_exception_handler(
+            VerificationError,
+            self.verification_error_handler,  # type: ignore
         )
 
     # SuperTokens recipes overrides
@@ -414,6 +421,14 @@ class Kanae(FastAPI):
     ) -> ORJSONResponse:
         return ORJSONResponse(
             content={"error": str(exc)}, status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    async def verification_error_handler(
+        self, request: RouteRequest, exc: VerificationError
+    ) -> ORJSONResponse:
+        return ORJSONResponse(
+            content={"error": "Failed to verify, entirely invalid hash"},
+            status_code=status.HTTP_403_FORBIDDEN,
         )
 
     ### Server-related utilities
