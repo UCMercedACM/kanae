@@ -9,11 +9,14 @@ services:
       - ${CONFIG_LOCATION}:/kanae/server/config.yml
     ports:
       - 8000:8000
+      - 9555:9555
     depends_on:
-      - database
-      - redis
-    # Safety script to fully wait until PostgreSQL is up
-    command: sh -c '/kanae/wait-for database:5432 -- echo "[Wait-for] PostgreSQL is fully up. Waiting for Redis" && /kanae/wait-for redis:6379 -- echo "[Wait-for] Both PostgreSQL and Redis are fully ready. Starting up Kanae" && /kanae/start.sh'
+      database:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
     restart: always
 
   database:
