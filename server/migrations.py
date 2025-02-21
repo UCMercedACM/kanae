@@ -70,7 +70,14 @@ class Revision:
 
 
 class Migrations:
-    def __init__(self, *, no_conn: bool = False, migrations_path: str = "migrations"):
+    def __init__(
+        self,
+        uri: Optional[str] = POSTGRES_URI,
+        *,
+        no_conn: bool = False,
+        migrations_path: str = "migrations",
+    ):
+        self.uri = uri
         self.no_conn = no_conn
         self.migrations_path = migrations_path
         self.root: Path = Path(__file__).parent
@@ -79,7 +86,7 @@ class Migrations:
 
     async def __aenter__(self) -> Self:
         if self.no_conn is False:
-            self.conn = await asyncpg.connect(POSTGRES_URI)
+            self.conn = await asyncpg.connect(self.uri or POSTGRES_URI)
             self.version = await self.get_latest_version()
         return self
 
@@ -163,6 +170,12 @@ class Migrations:
 
 async def create_migrations_table() -> None:
     conn = await asyncpg.connect(POSTGRES_URI)
+    await conn.execute(CREATE_MIGRATIONS_TABLE)
+    await conn.close()
+
+
+async def create_migrations_table_from_connection(uri: str) -> None:
+    conn = await asyncpg.connect(uri)
     await conn.execute(CREATE_MIGRATIONS_TABLE)
     await conn.close()
 
@@ -254,7 +267,7 @@ async def log(reverse):
     )
     for rev in revs:
         as_yellow = click.style(f"V{rev.version:>03}", fg="yellow")
-        click.echo(f'{as_yellow} {rev.description.replace("_", " ")}')
+        click.echo(f"{as_yellow} {rev.description.replace('_', ' ')}")
 
 
 if __name__ == "__main__":
