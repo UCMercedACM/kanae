@@ -150,6 +150,19 @@ class KanaeUvicornConfig(UvicornConfig):
         # WT_SESSION checks if this is Windows Terminal
         return is_a_tty and ("ANSICON" in os.environ or "WT_SESSION" in os.environ)
 
+    def _determine_formatter(
+        self, handler: Union[logging.StreamHandler, RotatingFileHandler]
+    ) -> logging.Formatter:
+        if isinstance(handler, logging.StreamHandler) and self._stream_supports_colour(
+            handler.stream
+        ):
+            return _ColourFormatter()
+
+        dt_fmt = "%Y-%m-%d %H:%M:%S"
+        return logging.Formatter(
+            "[{asctime}] [{levelname:<8}]{:^4}{message}", dt_fmt, style="{"
+        )
+
     ### Logging override
 
     def configure_logging(self) -> None:
@@ -164,6 +177,7 @@ class KanaeUvicornConfig(UvicornConfig):
         level = self._determine_level(self.log_level)
 
         handler = logging.StreamHandler()
+        handler.setFormatter(self._determine_formatter(handler))
 
         if self.access_log:
             file_handler = RotatingFileHandler(
@@ -178,18 +192,6 @@ class KanaeUvicornConfig(UvicornConfig):
 
             if not self._is_docker():
                 access_logger.addHandler(file_handler)
-
-        if isinstance(handler, logging.StreamHandler) and self._stream_supports_colour(
-            handler.stream
-        ):
-            formatter = _ColourFormatter()
-        else:
-            dt_fmt = "%Y-%m-%d %H:%M:%S"
-            formatter = logging.Formatter(
-                "[{asctime}] [{levelname:<8}]{:^4}{message}", dt_fmt, style="{"
-            )
-
-        handler.setFormatter(formatter)
 
         root.setLevel(level)
         root.addHandler(handler)
