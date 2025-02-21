@@ -12,7 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
 from supertokens_python import get_all_cors_headers
 from supertokens_python.framework.fastapi import get_middleware
-from utils.config import KanaeConfig
+from utils.config import KanaeConfig, KanaeUvicornConfig
 from uvicorn.supervisors import Multiprocess
 
 config_path = Path(__file__).parent / "config.yml"
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     use_workers = not args.no_workers
     worker_count = args.workers
 
-    config = uvicorn.Config(
+    config = KanaeUvicornConfig(
         "launcher:app", port=args.port, host=args.host, access_log=True
     )
 
