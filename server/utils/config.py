@@ -21,6 +21,11 @@ LOG_LEVELS: dict[str, int] = {
 }
 
 
+### Color Formatter for Logging
+
+
+# Directly pulled from discord.py
+# https://github.com/Rapptz/discord.py/blob/0e4f06103ee20d06fb6c0d64f75b1fc475905b95/discord/utils.py#L1306
 class _ColourFormatter(logging.Formatter):
     # ANSI codes are a bit weird to decipher if you're unfamiliar with them, so here's a refresher
     # It starts off with a format like \x1b[XXXm where XXX is a semicolon separated list of commands
@@ -64,6 +69,9 @@ class _ColourFormatter(logging.Formatter):
         return output
 
 
+### YAML based memory configuration
+
+
 class KanaeConfig(Generic[_T]):
     def __init__(self, path: Path):
         self.path = path
@@ -100,9 +108,14 @@ class KanaeConfig(Generic[_T]):
         return self._config
 
 
+### Overridden and Custom Uvicorn Configuration
+
+
 class KanaeUvicornConfig(UvicornConfig):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+    ### Private utilities
 
     def _determine_level(self, level: Optional[Union[str, int]]) -> int:
         # Force return info level
@@ -114,12 +127,14 @@ class KanaeUvicornConfig(UvicornConfig):
         else:
             return level
 
+    # Pulled from https://github.com/Rapptz/discord.py/blob/0e4f06103ee20d06fb6c0d64f75b1fc475905b95/discord/utils.py#L1285
     def _is_docker(self) -> bool:
         path = "/proc/self/cgroup"
         return os.path.exists("/.dockerenv") or (
             os.path.isfile(path) and any("docker" in line for line in open(path))
         )
 
+    # Pulled from https://github.com/Rapptz/discord.py/blob/0e4f06103ee20d06fb6c0d64f75b1fc475905b95/discord/utils.py#L1290
     def _stream_supports_colour(self, stream: Any) -> bool:
         is_a_tty = hasattr(stream, "isatty") and stream.isatty()
 
@@ -134,6 +149,8 @@ class KanaeUvicornConfig(UvicornConfig):
         # ANSICON checks for things like ConEmu
         # WT_SESSION checks if this is Windows Terminal
         return is_a_tty and ("ANSICON" in os.environ or "WT_SESSION" in os.environ)
+
+    ### Logging override
 
     def configure_logging(self) -> None:
         max_bytes = 32 * 1024 * 1024  # 32 MiB
