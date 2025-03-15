@@ -1,16 +1,15 @@
+import uuid
+
 from pydantic import BaseModel
+from utils.errors import NotFoundException
 from utils.request import RouteRequest
 from utils.router import KanaeRouter
-from utils.errors import NotFoundException
-import uuid
 
 router = KanaeRouter(tags=["Members"])
 
 
-
 class Members(BaseModel):
     name: str
-
 
 
 # Endpoint for getting members by their id
@@ -21,14 +20,13 @@ async def get_members(request: RouteRequest, id: uuid.UUID) -> Members:
             FROM members
             WHERE id = $1
             """
-    
+
     member = await request.app.pool.fetchrow(query, id)
 
     if not member:
         raise NotFoundException()
-    
-    return Members(**dict(member))
 
+    return Members(**dict(member))
 
 
 # Endpoint for deleting members by thier id
@@ -39,14 +37,13 @@ async def delete_members(request: RouteRequest, id: uuid.UUID, req: Members) -> 
             FROM members
             WHERE id = $1
             """
-    
+
     member = await request.app.pool.execute(query, id)
 
     if not member:
         raise NotFoundException()
-    
-    return req
 
+    return req
 
 
 # TODO: Update member by id
@@ -59,10 +56,10 @@ async def update_members(request: RouteRequest, id: uuid.UUID, req: Members) -> 
             WHERE id = $1
             RETURNING *
             """
-    
-    member = await request.app.pool.fetchrow(query, id, name)
+
+    member = await request.app.pool.fetchrow(query, id, req.name)
 
     if not member:
         raise NotFoundException()
-    
+
     return Members(**dict(member))
