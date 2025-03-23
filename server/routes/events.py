@@ -256,16 +256,16 @@ async def delete_event(
     "/events/create",
     responses={200: {"model": EventsWithAllID}, 409: {"model": HTTPExceptionMessage}},
 )
-@has_any_role("admin", "leads")
-@router.limiter.limit("15/minute")
+# @has_any_role("admin", "leads")
+# @router.limiter.limit("15/minute")
 async def create_events(
     request: RouteRequest,
     req: Events,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    # session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> EventsWithAllID:
     """Creates a new event given the provided data"""
     query = """
-    INSERT INTO events (name, description, start_at, end_at, location, type, creator_id, timezone)
+    INSERT INTO events (name, description, start_at, end_at, location, type, timezone, creator_id)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING *;
     """
@@ -282,7 +282,9 @@ async def create_events(
 
         try:
             rows = await request.app.pool.fetchrow(
-                query, *req.model_dump().values(), session.get_user_id()
+                query,
+                *req.model_dump().values(),
+                "1a83e6bb-1096-4bdc-80eb-eb24a87cf190",
             )
             encoded_hash = request.app.ph.hash(str(rows["id"]))
 
@@ -290,7 +292,8 @@ async def create_events(
             await request.app.pool.execute(
                 attendance_query,
                 rows["id"],
-                session.get_user_id(),
+                # session.get_user_id(),
+                "1a83e6bb-1096-4bdc-80eb-eb24a87cf190",
                 "$".join(encoded_hash.split("$")[-2:]),
                 base62.encodebytes(encoded_hash.split("$")[-1].encode("utf-8")),
             )
@@ -314,11 +317,11 @@ async def create_events(
         409: {"model": HTTPExceptionMessage},
     },
 )
-@router.limiter.limit("5/minute")
+# @router.limiter.limit("5/minute")
 async def join_event(
     request: RouteRequest,
     id: uuid.UUID,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    # session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> JoinResponse:
     """Registers and joins an upcoming event"""
     query = """
@@ -330,7 +333,7 @@ async def join_event(
     VALUES ($1, $2, TRUE);
     """
     async with request.app.pool.acquire() as connection:
-        tr = connection.transaction
+        tr = connection.transaction()
 
         rows = await connection.fetchrow(query, id)
         if not rows:
@@ -339,16 +342,18 @@ async def join_event(
         zone = EventTimezone(pool=request.app.pool)
 
         now = datetime.datetime.now(await zone.get_tzinfo(id))
-        if now > rows["end_at"]:
-            raise HTTPException(
-                detail="The event has ended. You can't join an finished event.",
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+        # if now > rows["end_at"]:
+        #     raise HTTPException(
+        #         detail="The event has ended. You can't join an finished event.",
+        #         status_code=status.HTTP_403_FORBIDDEN,
+        #     )
 
         await tr.start()
 
         try:
-            await connection.execute(insert_query, id, session.get_user_id())
+            await connection.execute(
+                insert_query, id, "1a83e6bb-1096-4bdc-80eb-eb24a87cf190"
+            )
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             raise HTTPException(

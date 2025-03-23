@@ -1,11 +1,13 @@
+import datetime
 import uuid
 
-from events import EventsWithID
-from projects import PartialProjects
 from pydantic import BaseModel
 from utils.errors import NotFoundException
 from utils.request import RouteRequest
 from utils.router import KanaeRouter
+
+from .events import EventsWithID
+from .projects import PartialProjects
 
 router = KanaeRouter(tags=["Members"])
 
@@ -20,6 +22,7 @@ class Member(BaseModel):
     email: str
     projects: list[PartialProjects]
     events: list[EventsWithID]
+    created_at: datetime.datetime
 
 
 class Members(BaseModel):
