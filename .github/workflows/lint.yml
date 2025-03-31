@@ -9,7 +9,8 @@ on:
       - main
 
 jobs:
-  Analyze:
+  Check:
+    name: Check ${{ matrix.version }}
     runs-on: ubuntu-24.04
 
     strategy:
@@ -28,7 +29,7 @@ jobs:
       
       - name: Install Tox
         run: |
-          pip install "tox>=4.18.1,<5"
+          pip install "tox>=4.25.0,<5"
 
       - name: Lint Codebase
         run: |

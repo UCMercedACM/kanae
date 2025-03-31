@@ -21,10 +21,16 @@ tasks:
   check:
     cmds:
       - pyright server
-      - ruff check server --fix --exit-non-zero-on-fix --config pyproject.toml
+      - ruff check server --fix --exit-non-zero-on-fix
+    silent: true
+
+  ruff-check: 
+    cmds:
+      - ruff check server --fix --exit-non-zero-on-fix
+      - ruff format server
     silent: true
 
   fmt:
     cmds:
-      - ruff format server --config pyproject.toml
+      - ruff format server
     silent: true
