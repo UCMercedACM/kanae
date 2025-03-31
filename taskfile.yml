@@ -29,8 +29,3 @@ tasks:
       - ruff check server --fix --exit-non-zero-on-fix
       - ruff format server
     silent: true
-
-  fmt:
-    cmds:
-      - ruff format server
-    silent: true
