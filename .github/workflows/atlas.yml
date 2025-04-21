@@ -13,13 +13,28 @@ permissions:
   pull-requests: write
 
 env:
-  DATABASE_URL: postgres://postgres:pass@localhost:5432/database?search_path=public&sslmode=disable
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?search_path=public&ssl_mode=disable
   MIGRATIONS_PLAN:
 
 jobs:
   plan:
     name: Plan
     runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout Repository
@@ -36,7 +51,7 @@ jobs:
         uses: ariga/atlas-action/schema/plan@v1
         with:
           env: dev
-          vars: '{"url": "postgres://localhost:5432/database?search_path=public"}'
+          vars: '{"url": "$DATABASE_URL"}'
 
       # - name: Push migration plan
       #   run: |
