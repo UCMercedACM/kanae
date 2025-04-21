@@ -29,6 +29,7 @@ jobs:
         uses: ariga/setup-atlas@v0
         with:
           cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+          
 
       - name: Plan migrations
         id: plan
@@ -38,6 +39,9 @@ jobs:
           from: file://server/schema.sql
           to: file://server/schema.sql
           vars: '{"url": "$DATABASE_URL"}'
+
+      - name: Push migration plan
+        run: atlas schema plan push --file ${{ steps.plan.outputs.plan }} --env dev --var url=$DATABASE_URL
           
 
       - name: Set plan to environment
