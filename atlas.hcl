@@ -14,6 +14,18 @@ env "dev" {
   dev = "docker://postgres/17/dev?search_path=public"
 }
 
+env "local" {
+  schema {
+    src = "file://server/schema.sql"
+    repo {
+      name = "kanae"
+    }
+  }
+  dev = "docker://postgres/17/dev?search_path=public"
+}
+
+
+
 env "prod" {
   schema {
     src = "file://server/schema.sql"

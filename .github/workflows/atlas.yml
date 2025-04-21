@@ -32,24 +32,19 @@ jobs:
           
 
       - name: Plan migrations
-        id: plan
+        id: migrations-plan
         uses: ariga/atlas-action/schema/plan@v1
         with:
           env: dev
-          from: file://server/schema.sql
-          to: file://server/schema.sql
           vars: '{"url": "$DATABASE_URL"}'
 
-      - name: Push migration plan
-        run: |
-          atlas schema plan push \
-          --env dev \
-          --file ${{ steps.plan.outputs.plan }} \
-          --var url="$DATABASE_URL"
+      # - name: Push migration plan
+      #   run: |
+      #     atlas schema plan push --file ${{ steps.migrations-plan.outputs.plan }}
           
 
-      - name: Set plan to environment
-        run: echo "{MIGRATIONS_PLAN}={${{ steps.plan.outputs.plan }}}" >> "$GITHUB_ENV"
+      # - name: Set plan to environment
+      #   run: echo "{MIGRATIONS_PLAN}={${{ steps.migrations-plan.outputs.plan }}}" >> "$GITHUB_ENV"
 
   lint:
     name: Lint
