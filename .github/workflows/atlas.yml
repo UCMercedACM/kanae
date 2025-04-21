@@ -31,7 +31,7 @@ jobs:
         with:
           env: dev
           from: file://server/schema.sql
-          vars: "{'url': $DATABASE_URL}"
+          vars: '{"url": "$DATABASE_URL"}'
 
   lint:
     name: Lint
