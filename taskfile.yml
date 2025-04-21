@@ -35,17 +35,9 @@ tasks:
       - ruff format server
     silent: true
 
-  schema-lint:
-    cmds:
-      - atlas schema lint --url file://server/schema.sql --env dev --var url=$DATABASE_URL
-
   schema-plan:
     cmds:
       - atlas schema plan --to file://server/schema.sql --env dev --var url=$DATABASE_URL
-
-  schema-push:
-    cmds:
-      - atlas schema push --env dev --var url=$DATABASE_URL kanae:dev
 
   schema-apply:
     cmds:
