@@ -1,5 +1,10 @@
 version: '3'
 
+dotenv: ['docker/.env']
+
+env:
+  DATABASE_URL: "postgres://{{.DB_USERNAME}}:{{.DB_PASSWORD}}@localhost:5432/{{.DB_DATABASE_NAME}}?search_path=public&sslmode=disable"
+
 tasks:
   dev-up:
     preconditions:
@@ -29,3 +34,11 @@ tasks:
       - ruff check server --fix --exit-non-zero-on-fix
       - ruff format server
     silent: true
+
+  schema-plan:
+    cmds:
+      - atlas schema plan --to file://server/schema.sql --env dev --var url=$DATABASE_URL
+
+  schema-apply:
+    cmds:
+      - atlas schema apply --env dev --var url=$DATABASE_URL
