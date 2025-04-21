@@ -36,7 +36,9 @@ jobs:
         with:
           env: dev
           from: file://server/schema.sql
+          to: file://server/schema.sql
           vars: '{"url": "$DATABASE_URL"}'
+          
 
       - name: Set plan to environment
         run: echo "{MIGRATIONS_PLAN}={${{ steps.plan.outputs.plan }}}" >> "$GITHUB_ENV"
@@ -80,7 +82,6 @@ jobs:
         with:
           env: dev
           vars: '{"url": "$DATABASE_URL"}'
-          plan: $PLAN_URL
 
       - name: Push schema
         uses: ariga/atlas-action/schema/push@v1
