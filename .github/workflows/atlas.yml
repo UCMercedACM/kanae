@@ -14,7 +14,7 @@ permissions:
 
 env:
   DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?search_path=public&sslmode=disable
-
+  
 jobs:
   plan:
     name: Plan
@@ -35,6 +35,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    if: ${{ github.event_name == 'pull_request' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
