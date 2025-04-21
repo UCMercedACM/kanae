@@ -45,7 +45,7 @@ jobs:
           atlas schema plan push \
           --env dev \
           --file ${{ steps.plan.outputs.plan }} \
-          --var url=$DATABASE_URL
+          --var url="$DATABASE_URL"
           
 
       - name: Set plan to environment
