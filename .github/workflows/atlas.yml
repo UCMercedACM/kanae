@@ -41,7 +41,11 @@ jobs:
           vars: '{"url": "$DATABASE_URL"}'
 
       - name: Push migration plan
-        run: atlas schema plan push --file ${{ steps.plan.outputs.plan }} --env dev --var url=$DATABASE_URL
+        run: |
+          atlas schema plan push \
+          --env dev \
+          --file ${{ steps.plan.outputs.plan }} \
+          --var url=$DATABASE_URL
           
 
       - name: Set plan to environment
