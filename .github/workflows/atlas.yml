@@ -49,10 +49,12 @@ jobs:
       - name: Plan migrations
         id: migrations-plan
         uses: ariga/atlas-action/schema/plan@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           env: dev
           vars: '{"url": "postgres://postgres:postgres@localhost:5432/postgres?search_path=public&sslmode=disable"}'
-
+          
       # - name: Push migration plan
       #   run: |
       #     atlas schema plan push --file ${{ steps.migrations-plan.outputs.plan }}
