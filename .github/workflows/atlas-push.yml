@@ -31,7 +31,7 @@ jobs:
           env: dev
           vars: '{"url": "$DATABASE_URL"}'
 
-      - name: Push plan
+      - name: Push schema
         uses: ariga/atlas-action/schema/push@v1
         with:
           env: dev
