@@ -1,4 +1,5 @@
-name: Atlas Plan and Lint
+name: Atlas
+
 on:
   pull_request:
     branches: [main]
