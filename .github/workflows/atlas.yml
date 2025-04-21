@@ -14,7 +14,7 @@ permissions:
 
 env:
   DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-  MIGRATIONS_PLAN: 
+  MIGRATIONS_PLAN: ''
 
 jobs:
   plan:
