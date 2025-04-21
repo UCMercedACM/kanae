@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT,
     email TEXT,
+    role project_role DEFAULT 'unaffiliated',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
