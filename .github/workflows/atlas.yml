@@ -51,7 +51,7 @@ jobs:
         uses: ariga/atlas-action/schema/plan@v1
         with:
           env: dev
-          vars: '{"url": "postgres://postgres:postgres@localhost:5432/postgres?search_path=public&ssl_mode=disable"}'
+          vars: '{"url": "postgres://postgres:postgres@localhost:5432/postgres?search_path=public&sslmode=disable"}'
 
       # - name: Push migration plan
       #   run: |
