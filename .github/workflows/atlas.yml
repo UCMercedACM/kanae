@@ -13,8 +13,7 @@ permissions:
   pull-requests: write
 
 env:
-  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?search_path=public&ssl_mode=disable
-  MIGRATIONS_PLAN:
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?search_path=public&sslmode=disable
 
 jobs:
   plan:
@@ -47,21 +46,12 @@ jobs:
           
 
       - name: Plan migrations
-        id: migrations-plan
         uses: ariga/atlas-action/schema/plan@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           env: dev
-          vars: '{"url": "postgres://postgres:postgres@localhost:5432/postgres?search_path=public&sslmode=disable"}'
-          
-      # - name: Push migration plan
-      #   run: |
-      #     atlas schema plan push --file ${{ steps.migrations-plan.outputs.plan }}
-          
-
-      # - name: Set plan to environment
-      #   run: echo "{MIGRATIONS_PLAN}={${{ steps.migrations-plan.outputs.plan }}}" >> "$GITHUB_ENV"
+          vars: '{"url": "${{ env.DATABASE_URL }}"}'
 
   lint:
     name: Lint
@@ -101,7 +91,7 @@ jobs:
         uses: ariga/atlas-action/schema/plan/approve@v1
         with:
           env: dev
-          vars: '{"url": "$DATABASE_URL"}'
+          vars: '{"url": "${{ env.DATABASE_URL }}"}'
 
       - name: Push schema
         uses: ariga/atlas-action/schema/push@v1
