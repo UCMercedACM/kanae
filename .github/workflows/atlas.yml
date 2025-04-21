@@ -1,6 +1,9 @@
 name: Atlas
 
 on:
+  push:
+    branches: [main]
+
   pull_request:
     branches: [main]
     paths: [server/schema.sql]
@@ -9,14 +12,14 @@ permissions:
   contents: read
   pull-requests: write
 
+env:
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+  MIGRATIONS_PLAN: 
 
 jobs:
   plan:
     name: Plan
     runs-on: ubuntu-24.04
-
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
 
     steps:
       - name: Checkout Repository
@@ -28,11 +31,15 @@ jobs:
           cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
 
       - name: Plan migrations
+        id: plan
         uses: ariga/atlas-action/schema/plan@v1
         with:
           env: dev
           from: file://server/schema.sql
           vars: '{"url": "$DATABASE_URL"}'
+
+      - name: Set plan to environment
+        run: echo "{MIGRATIONS_PLAN}={${{ steps.plan.outputs.plan }}}" >> "$GITHUB_ENV"
 
   lint:
     name: Lint
@@ -54,6 +61,32 @@ jobs:
           dev-url: docker://postgres/17/dev?search_path=public
 
 
+  approve-and-push:
+    name: Approve-and-Push
+    runs-on: ubuntu-24.04
+
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Atlas
+        uses: ariga/setup-atlas@v0
+        with:
+          cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+
+      - name: Approve plan
+        uses: ariga/atlas-action/schema/plan/approve@v1
+        with:
+          env: dev
+          vars: '{"url": "$DATABASE_URL"}'
+          plan: $PLAN_URL
+
+      - name: Push schema
+        uses: ariga/atlas-action/schema/push@v1
+        with:
+          env: dev
+          tag: edge
 
 
     
