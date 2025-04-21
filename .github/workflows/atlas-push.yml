@@ -1,0 +1,36 @@
+name: Atlas Approve and Push
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  approve-and-push:
+    name: Approve-and-Push
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Atlas
+        uses: ariga/setup-atlas@v0
+        with:
+          cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+
+      - name: Approve plan
+        uses: ariga/atlas-action/schema/plan/approve@v1
+        with:
+          env: dev
+
+      - name: Push plan
+        uses: ariga/atlas-action/schema/push@v1
+        with:
+          env: dev
+          tag: edge
+
+

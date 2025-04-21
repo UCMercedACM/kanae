@@ -1,0 +1,62 @@
+name: Atlas Plan and Lint
+on:
+  pull_request:
+    branches: [main]
+    paths: [server/schema.sql]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Atlas
+        uses: ariga/setup-atlas@v0
+        with:
+          cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+
+      - name: Plan migrations
+        uses: ariga/atlas-action/schema/plan@v1
+        with:
+          env: dev
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Atlas
+        uses: ariga/setup-atlas@v0
+        with:
+          cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+
+      - name: Lint migrations
+        uses: ariga/atlas-action/schema/lint@v1
+        with:
+          url: file://server/schema.sql
+          dev-url: docker://postgres/17/dev?search_path=public
+
+
+
+
+    
+
+      
+
+      
+      
+      
+      
+
+
+    
