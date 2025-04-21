@@ -13,7 +13,7 @@ permissions:
   pull-requests: write
 
 env:
-  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?search_path=public
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?search_path=public
   MIGRATIONS_PLAN:
 
 jobs:
