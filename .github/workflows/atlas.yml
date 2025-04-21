@@ -36,7 +36,7 @@ jobs:
         uses: ariga/atlas-action/schema/plan@v1
         with:
           env: dev
-          vars: '{"url": $DATABASE_URL}'
+          vars: '{"url": "postgres://localhost:5432/database?search_path=public"}'
 
       # - name: Push migration plan
       #   run: |
