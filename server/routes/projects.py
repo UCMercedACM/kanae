@@ -11,13 +11,12 @@ from supertokens_python.recipe.userroles import UserRoleClaim
 from utils.errors import BadRequestException, ConflictException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses import (
+from utils.responses.errors import (
     ConflictResponse,
-    DeleteResponse,
     HTTPExceptionResponse,
-    JoinResponse,
     NotFoundResponse,
 )
+from utils.responses.success import DeleteResponse, JoinResponse
 from utils.roles import has_admin_role, has_any_role
 from utils.router import KanaeRouter
 

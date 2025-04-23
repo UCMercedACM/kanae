@@ -37,13 +37,13 @@ from utils.errors import (
     UnauthorizedException,
 )
 from utils.request import RouteRequest
-from utils.responses import (
+from utils.responses.errors import (
     BadRequestResponse,
     ConflictResponse,
     NotFoundResponse,
-    SuccessResponse,
     UnauthorizedResponse,
 )
+from utils.responses.success import SuccessResponse
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Members"])

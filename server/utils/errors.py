@@ -1,6 +1,5 @@
 from fastapi import HTTPException
-
-HTTP_404_DETAIL = "Resource not found"
+from responses import HTTP_404_DETAIL
 
 
 class BaseHTTPException(HTTPException):
@@ -39,8 +38,6 @@ class NotFoundException(BaseHTTPException):
 
 
 # HTTP 409
-
-
 class ConflictException(BaseHTTPException):
     def __init__(self, detail: str):
         super().__init__(detail)

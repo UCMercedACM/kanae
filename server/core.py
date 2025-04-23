@@ -55,10 +55,10 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 # isort: on
 
 from utils.config import KanaeConfig
-from utils.errors import (
-    HTTPExceptionMessage,
+from utils.responses.errors import (
+    HTTPExceptionResponse,
     RequestValidationErrorDetails,
-    RequestValidationErrorMessage,
+    RequestValidationErrorResponse,
 )
 
 if TYPE_CHECKING:
@@ -127,7 +127,7 @@ class Kanae(FastAPI):
             version=__version__,
             dependencies=[Depends(self.get_db)],
             default_response_class=ORJSONResponse,
-            responses={400: {"model": RequestValidationErrorMessage}},
+            responses={400: {"model": RequestValidationErrorResponse}},
             loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
@@ -403,7 +403,7 @@ class Kanae(FastAPI):
         headers = getattr(exc, "headers", None)
         if not is_body_allowed_for_status_code(exc.status_code):
             return Response(status_code=exc.status_code, headers=headers)
-        message = HTTPExceptionMessage(detail=exc.detail)
+        message = HTTPExceptionResponse(detail=exc.detail)
         return ORJSONResponse(
             content=message.model_dump(), status_code=exc.status_code, headers=headers
         )
@@ -411,7 +411,7 @@ class Kanae(FastAPI):
     async def request_validation_error_handler(
         self, request: RouteRequest, exc: RequestValidationError
     ) -> ORJSONResponse:
-        message = RequestValidationErrorMessage(
+        message = RequestValidationErrorResponse(
             errors=[
                 RequestValidationErrorDetails(
                     detail=exception["msg"],

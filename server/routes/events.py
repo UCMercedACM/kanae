@@ -17,14 +17,13 @@ from typing_extensions import Self
 from utils.errors import ConflictException, ForbiddenException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses import (
+from utils.responses.errors import (
     ConflictResponse,
-    FailureResponse,
+    ErrorResponse,
     ForbiddenResponse,
-    JoinResponse,
     NotFoundResponse,
-    SuccessResponse,
 )
+from utils.responses.success import JoinResponse, SuccessResponse
 from utils.roles import has_any_role
 from utils.router import KanaeRouter
 
@@ -348,7 +347,7 @@ async def join_event(
             return JoinResponse()
 
 
-class VerifyFailedResponse(FailureResponse, frozen=True):
+class VerifyFailedResponse(ErrorResponse, frozen=True):
     message = "Failed to verify, entirely invalid hash"
 
 

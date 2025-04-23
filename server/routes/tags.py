@@ -8,7 +8,8 @@ from utils.errors import (
     NotFoundException,
 )
 from utils.request import RouteRequest
-from utils.responses import DeleteResponse, NotFoundResponse
+from utils.responses.errors import NotFoundResponse
+from utils.responses.success import DeleteResponse
 from utils.roles import has_admin_role
 from utils.router import KanaeRouter
 
