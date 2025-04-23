@@ -8,6 +8,7 @@ import asyncpg
 import orjson
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
+from email_validator import EmailNotValidError, validate_email
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -287,14 +288,19 @@ class Kanae(FastAPI):
             should_try_linking_with_session_user: Union[bool, None],
             user_context: dict[str, Any],
         ):
+            is_valid_email = validate_email(email, check_deliverability=True)
+            if isinstance(is_valid_email, EmailNotValidError):
+                raise EmailNotValidError("Email provided is not valid")
+
+            normalized_email = is_valid_email.normalized
             existing_users = await list_users_by_account_info(
-                tenant_id, AccountInfo(email=email)
+                tenant_id, AccountInfo(email=normalized_email)
             )
 
             if len(existing_users) == 0:
                 # this means this email is new so we allow sign up
                 result = await original_email_password_sign_up(
-                    email,
+                    normalized_email,
                     password,
                     tenant_id,
                     session,
@@ -303,7 +309,9 @@ class Kanae(FastAPI):
                 )
 
                 if isinstance(result, EmailPasswordSignUpOkResult):
-                    await self._set_first_time_member(result.user.id, email, email)
+                    await self._set_first_time_member(
+                        result.user.id, normalized_email, normalized_email
+                    )
 
                 return result
 
