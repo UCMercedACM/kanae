@@ -348,9 +348,7 @@ async def join_event(
         await tr.start()
 
         try:
-            await connection.execute(
-                insert_query, id, "1a83e6bb-1096-4bdc-80eb-eb24a87cf190"
-            )
+            await connection.execute(insert_query, id, session.get_user_id())
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             raise HTTPException(
