@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT,
     email TEXT,
-    role project_role DEFAULT 'unaffiliated',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
@@ -106,5 +105,7 @@ CREATE TABLE IF NOT EXISTS project_tags (
 CREATE TABLE IF NOT EXISTS project_members (
     project_id UUID REFERENCES projects (id) ON DELETE CASCADE ON UPDATE NO ACTION,
     member_id UUID REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    role project_role DEFAULT 'unaffiliated',
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
     PRIMARY KEY (project_id, member_id)
 );

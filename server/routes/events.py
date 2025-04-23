@@ -265,7 +265,7 @@ async def create_events(
 ) -> EventsWithAllID:
     """Creates a new event given the provided data"""
     query = """
-    INSERT INTO events (name, description, start_at, end_at, location, type, creator_id, timezone)
+    INSERT INTO events (name, description, start_at, end_at, location, type, timezone, creator_id)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING *;
     """
@@ -330,7 +330,7 @@ async def join_event(
     VALUES ($1, $2, TRUE);
     """
     async with request.app.pool.acquire() as connection:
-        tr = connection.transaction
+        tr = connection.transaction()
 
         rows = await connection.fetchrow(query, id)
         if not rows:

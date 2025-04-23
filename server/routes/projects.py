@@ -113,7 +113,7 @@ async def list_projects(
     query = f"""
     SELECT 
         projects.id, projects.name, projects.description, projects.link,
-        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', members.role)) AS members, 
+        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', project_members.role)) AS members, 
         projects.type, projects.active, projects.founded_at
     FROM projects
     INNER JOIN project_members ON project_members.project_id = projects.id
@@ -169,7 +169,7 @@ async def edit_project(
 
     query = """
     WITH project_member AS (
-        SELECT members.id, members.role
+        SELECT members.id, project_members.role
         FROM projects
         INNER JOIN project_members ON project_members.project_id = projects.id
         INNER JOIN members ON project_members.member_id = members.id
@@ -182,11 +182,11 @@ async def edit_project(
         link = $5
     WHERE
         id = $1
-        AND EXISTS (SELECT 1 FROM project_member WHERE project_member.id = $2)
+        AND EXISTS (SELECT 1 FROM project_member WHERE project_member.id = $2 AND project_member.role = 'lead')
         AND EXISTS (
             SELECT 1 
             FROM members
-            WHERE members.id = $2 AND members.project_role = 'lead'
+            WHERE members.id = $2
         )
     RETURNING *;
     """
@@ -213,7 +213,7 @@ async def edit_project(
         RETURNING *;
         """
 
-    args = (id) if roles and "admin" in roles else (id, session.get_user_id())
+    args = (id,) if roles and "admin" in roles else (id, session.get_user_id())
     rows = await request.app.pool.fetchrow(query, *args, *req.model_dump().values())
 
     if not rows:
@@ -327,14 +327,8 @@ async def join_project(
 ) -> JoinResponse:
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
-    WITH insert_project_members AS (
-        INSERT INTO project_members (project_id, member_id)
-        VALUES ($1, $2)
-        RETURNING member_id
-    )
-    UPDATE members
-    SET project_role = 'member'
-    WHERE id = (SELECT member_id FROM insert_project_members);
+    INSERT INTO project_members (project_id, member_id, role)
+    VALUES ($1, $2, 'member');
     """
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
@@ -376,14 +370,8 @@ async def bulk_join_project(
 
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
-    WITH insert_project_members AS (
-        INSERT INTO project_members (project_id, member_id)
-        VALUES ($1, $2)
-        RETURNING member_id
-    )
-    UPDATE members
-    SET project_role = 'member'
-    WHERE id = (SELECT member_id FROM insert_project_members);
+    INSERT INTO project_members (project_id, member_id, role)
+    VALUES ($1, $2, 'member');
     """
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
@@ -420,12 +408,6 @@ async def leave_project(
         if status[-1] == "0":
             raise NotFoundException
 
-        update_role_query = """
-        UPDATE members
-        SET project_role = 'unaffiliated'
-        WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM project_members WHERE member_id = $1);
-        """
-        await connection.execute(update_role_query, session.get_user_id())
         return DeleteResponse()
 
 
@@ -449,16 +431,9 @@ async def modify_member(
 ):
     """Undocumented route to just upgrade/demote member role in projects"""
     query = """
-    WITH upgrade_member AS (
-        SELECT members.id
-        FROM projects
-        INNER JOIN project_members ON project_members.project_id = projects.id
-        INNER JOIN members ON project_members.member_id = members.id
-        WHERE projects.id = $1
-    )
-    UPDATE members
-    SET project_role = $3
-    WHERE members.id = $2 AND EXISTS (SELECT 1 FROM upgrade_member WHERE upgrade_member.id = $2);
+    UPDATE project_members
+        SET role = $3
+    WHERE project_id = $1 AND member_id = $2; 
     """
     await request.app.pool.execute(query, id, req.id, req.role)
     return DeleteResponse()
