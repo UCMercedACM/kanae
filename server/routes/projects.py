@@ -28,7 +28,7 @@ class ProjectMember(BaseModel, frozen=True):
     name: str
 
 
-class Projects(BaseModel):
+class Projects(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
     description: str
@@ -147,7 +147,7 @@ async def get_project(request: RouteRequest, id: uuid.UUID) -> FullProjects:
     return FullProjects(**dict(rows))
 
 
-class ModifiedProject(BaseModel):
+class ModifiedProject(BaseModel, frozen=True):
     name: str
     description: str
     link: str
@@ -243,7 +243,7 @@ async def delete_project(
     return DeleteResponse()
 
 
-class CreateProject(BaseModel):
+class CreateProject(BaseModel, frozen=True):
     name: str
     description: str
     link: str
@@ -345,7 +345,7 @@ async def join_project(
             return JoinResponse(message="ok")
 
 
-class BulkJoinMember(BaseModel):
+class BulkJoinMember(BaseModel, frozen=True):
     id: uuid.UUID
 
 
@@ -409,7 +409,7 @@ async def leave_project(
         return DeleteResponse()
 
 
-class UpgradeMemberRole(BaseModel):
+class UpgradeMemberRole(BaseModel, frozen=True):
     id: uuid.UUID
     role: Literal["former", "lead"]
 

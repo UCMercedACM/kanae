@@ -23,7 +23,7 @@ from utils.responses.errors import (
     ForbiddenResponse,
     NotFoundResponse,
 )
-from utils.responses.success import JoinResponse, SuccessResponse
+from utils.responses.success import DeleteResponse, JoinResponse, SuccessResponse
 from utils.roles import has_any_role
 from utils.router import KanaeRouter
 
@@ -215,10 +215,6 @@ async def edit_event(
             )
 
         return Events(**dict(rows))
-
-
-class DeleteResponse(BaseModel, frozen=True):
-    message: str = "ok"
 
 
 @router.delete(

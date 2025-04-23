@@ -16,7 +16,7 @@ from utils.router import KanaeRouter
 router = KanaeRouter(tags=["Tags"])
 
 
-class Tags(BaseModel):
+class Tags(BaseModel, frozen=True):
     id: int
     title: str
     description: str
