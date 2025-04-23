@@ -1,0 +1,130 @@
+name: Atlas
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+    branches: [main]
+    paths: [server/schema.sql]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?search_path=public&sslmode=disable
+  
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Atlas
+        uses: ariga/setup-atlas@v0
+        with:
+          cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+          
+
+      - name: Plan migrations
+        uses: ariga/atlas-action/schema/plan@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          env: dev
+          vars: '{"url": "${{ env.DATABASE_URL }}"}'
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Atlas
+        uses: ariga/setup-atlas@v0
+        with:
+          cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+
+      - name: Lint migrations
+        uses: ariga/atlas-action/schema/lint@v1
+        with:
+          url: file://server/schema.sql
+          dev-url: docker://postgres/17/dev?search_path=public
+
+
+  approve-and-push:
+    name: Approve-and-Push
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Atlas
+        uses: ariga/setup-atlas@v0
+        with:
+          cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+
+      - name: Approve plan
+        uses: ariga/atlas-action/schema/plan/approve@v1
+        with:
+          env: dev
+          vars: '{"url": "${{ env.DATABASE_URL }}"}'
+
+      - name: Push schema
+        uses: ariga/atlas-action/schema/push@v1
+        with:
+          env: dev
+          vars: '{"url": "${{ env.DATABASE_URL }}"}'
+          tag: edge
+
+
+    
+
+      
+
+      
+      
+      
+      
+
+
+    

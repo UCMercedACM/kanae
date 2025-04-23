@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report broken or incorrect behaviour
+description: Report broken or incorrect behavior
 labels: [unconfirmed bug]
 body:
   - type: markdown

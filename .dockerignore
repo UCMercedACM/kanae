@@ -4,6 +4,10 @@
 # Logs
 **/*.log
 
+# Server configurations
+**/config.yml
+**/config.yaml
+
 # Cache files
 **/__pycache__
 **/*.py[cod]

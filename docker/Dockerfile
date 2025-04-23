@@ -4,18 +4,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-  bash \
   tini \
   && apt-get clean
 
 WORKDIR /kanae
 COPY /server /kanae/server/
-COPY /docker/start.sh /kanae/start.sh
 COPY /requirements.txt /kanae/requirements.txt
 
 RUN adduser --disabled-password --gecos "" kanae \
-  && chown -R kanae:kanae /kanae \
-  && chmod +x /kanae/start.sh
+  && chown -R kanae:kanae /kanae
 
 USER kanae
 
@@ -28,7 +25,7 @@ EXPOSE 9555
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-CMD ["/kanae/start.sh"]
+CMD ["python3", "/kanae/server/launcher.py", "--no-workers"]
 
 STOPSIGNAL SIGTERM
 
