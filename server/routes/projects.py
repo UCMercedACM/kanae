@@ -33,7 +33,6 @@ class Projects(BaseModel):
     name: str
     description: str
     link: str
-    members: list[ProjectMember]
     type: Literal[
         "independent",
         "sig_ai",
@@ -48,11 +47,12 @@ class Projects(BaseModel):
     founded_at: datetime.datetime
 
 
-class PartialProjects(BaseModel):
+class FullProjects(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
     description: str
     link: str
+    members: list[ProjectMember]
     type: Literal[
         "independent",
         "sig_ai",
@@ -62,7 +62,7 @@ class PartialProjects(BaseModel):
         "sig_arch",
         "sig_graph",
     ]
-    tags: Optional[list[str]]
+    tags: Optional[list[str]] = None
     active: bool
     founded_at: datetime.datetime
 
@@ -76,7 +76,7 @@ async def list_projects(
     active: Optional[bool] = True,
     *,
     params: Annotated[KanaeParams, Depends()],
-) -> KanaePages[Projects]:
+) -> KanaePages[FullProjects]:
     """Search and filter a list of projects"""
     if since and until:
         raise BadRequestException(
@@ -126,14 +126,14 @@ async def list_projects(
 
 @router.get(
     "/projects/{id}",
-    responses={200: {"model": Projects}, 404: {"model": NotFoundResponse}},
+    responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
 )
-async def get_project(request: RouteRequest, id: uuid.UUID) -> Projects:
+async def get_project(request: RouteRequest, id: uuid.UUID) -> FullProjects:
     """Retrieve project details via ID"""
     query = """
     SELECT 
         projects.id, projects.name, projects.description, projects.link,
-        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name)) AS members, 
+        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', project_members.role)) AS members, 
         projects.type, projects.active, projects.founded_at
     FROM projects
     INNER JOIN project_members ON project_members.project_id = projects.id
@@ -144,7 +144,7 @@ async def get_project(request: RouteRequest, id: uuid.UUID) -> Projects:
     rows = await request.app.pool.fetchrow(query, id)
     if not rows:
         raise NotFoundException
-    return Projects(**dict(rows))
+    return FullProjects(**dict(rows))
 
 
 class ModifiedProject(BaseModel):
@@ -155,7 +155,7 @@ class ModifiedProject(BaseModel):
 
 @router.put(
     "/projects/{id}",
-    responses={200: {"model": Projects}, 404: {"model": NotFoundResponse}},
+    responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("3/minute")
@@ -218,7 +218,7 @@ async def edit_project(
 
     if not rows:
         raise NotFoundException(detail="Resource cannot be updated")
-    return Projects(**dict(rows))
+    return FullProjects(**dict(rows))
 
 
 @router.delete(
@@ -263,7 +263,7 @@ class CreateProject(BaseModel):
 
 @router.post(
     "/projects/create",
-    responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionResponse}},
+    responses={200: {"model": Projects}, 422: {"model": HTTPExceptionResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
@@ -271,7 +271,7 @@ async def create_project(
     request: RouteRequest,
     req: CreateProject,
     session: Annotated[SessionContainer, Depends(verify_session())],
-) -> PartialProjects:
+) -> Projects:
     """Creates a new project given the provided data"""
     query = """
     INSERT INTO projects (name, description, link, type, active, founded_at)
@@ -312,7 +312,7 @@ async def create_project(
             else:
                 await tr.commit()
 
-        return PartialProjects(**dict(project_rows), tags=req.tags)
+        return Projects(**dict(project_rows), tags=req.tags)
 
 
 @router.post(
@@ -437,12 +437,12 @@ async def modify_member(
     return DeleteResponse()
 
 
-@router.get("/projects/me", responses={200: {"model": PartialProjects}})
+@router.get("/projects/me", responses={200: {"model": Projects}})
 @router.limiter.limit("15/minute")
 async def get_my_projects(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
-) -> list[PartialProjects]:
+) -> list[Projects]:
     """Get all projects associated with the authenticated user"""
     query = """
     SELECT 
@@ -456,4 +456,4 @@ async def get_my_projects(
     """
 
     records = await request.app.pool.fetch(query, session.get_user_id())
-    return [PartialProjects(**dict(row)) for row in records]
+    return [Projects(**dict(row)) for row in records]

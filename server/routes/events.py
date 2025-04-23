@@ -348,7 +348,7 @@ async def join_event(
 
 
 class VerifyFailedResponse(ErrorResponse, frozen=True):
-    message = "Failed to verify, entirely invalid hash"
+    message: str = "Failed to verify, entirely invalid hash"
 
 
 class VerifyRequest(BaseModel, frozen=True):

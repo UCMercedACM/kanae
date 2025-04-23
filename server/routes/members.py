@@ -1,6 +1,6 @@
 import datetime
 import uuid
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Optional, Union
 
 import asyncpg
 from email_validator import EmailNotValidError, validate_email
@@ -46,53 +46,18 @@ from utils.responses.errors import (
 from utils.responses.success import SuccessResponse
 from utils.router import KanaeRouter
 
+from .events import Events
+from .projects import Projects
+
 router = KanaeRouter(tags=["Members"])
-
-
-class ClientEvents(BaseModel, frozen=True):
-    id: uuid.UUID
-    name: str
-    description: str
-    start_at: datetime.datetime
-    end_at: datetime.datetime
-    location: str
-    type: Literal[
-        "general",
-        "sig_ai",
-        "sig_swe",
-        "sig_cyber",
-        "sig_data",
-        "sig_arch",
-        "social",
-        "misc",
-    ]
-    timezone: str
-
-
-class ClientProjects(BaseModel, frozen=True):
-    id: uuid.UUID
-    name: str
-    description: str
-    link: str
-    type: Literal[
-        "independent",
-        "sig_ai",
-        "sig_swe",
-        "sig_cyber",
-        "sig_data",
-        "sig_arch",
-        "sig_graph",
-    ]
-    active: bool
-    founded_at: datetime.datetime
 
 
 class ClientMember(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
     created_at: datetime.datetime
-    projects: list[ClientProjects]
-    events: list[ClientEvents]
+    projects: list[Projects]
+    events: list[Events]
 
 
 async def get_member_info(
@@ -160,13 +125,13 @@ async def get_member(request: RouteRequest, id: uuid.UUID) -> ClientMember:
     return await get_member_info(id, pool=request.app.pool)
 
 
-@router.get("/members/me/projects", responses={200: {"model": ClientProjects}})
+@router.get("/members/me/projects", responses={200: {"model": Projects}})
 @router.limiter.limit("10/minute")
 async def get_logged_projects(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
     since: Optional[datetime.datetime] = None,
-) -> list[ClientProjects]:
+) -> list[Projects]:
     """Obtains projects associated with the currently authenticated member, with options to sort"""
     args = [session.get_user_id()]
 
@@ -192,7 +157,7 @@ async def get_logged_projects(
         args.append(since)  # type: ignore
 
     rows = await request.app.pool.fetch(query, *args)
-    return [ClientProjects(**dict(record)) for record in rows]
+    return [Projects(**dict(record)) for record in rows]
 
 
 @router.get("/members/me/events")
@@ -202,7 +167,7 @@ async def get_logged_events(
     session: Annotated[SessionContainer, Depends(verify_session())],
     planned: Optional[bool] = None,
     attended: Optional[bool] = None,
-) -> list[ClientEvents]:
+) -> list[Events]:
     """Obtains events associated with the currently authenticated member.
 
     Note that using both `planned` and `attended` queries would result in events that have been planned and attended
@@ -232,7 +197,7 @@ async def get_logged_events(
     GROUP BY events.id;
     """
     rows = await request.app.pool.fetch(query, session.get_user_id())
-    return [ClientEvents(**dict(record)) for record in rows]
+    return [Events(**dict(record)) for record in rows]
 
 
 class ModifiedClient(BaseModel, frozen=True):
