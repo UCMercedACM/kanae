@@ -134,6 +134,7 @@ async def get_member_info(
     "/members/me",
     responses={200: {"model": ClientMember}, 404: {"model": NotFoundMessage}},
 )
+@router.limiter.limit("10/minute")
 async def get_logged_member(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
@@ -146,12 +147,14 @@ async def get_logged_member(
     "/members/{id}",
     responses={200: {"model": ClientMember}, 404: {"model": NotFoundMessage}},
 )
+@router.limiter.limit("10/minute")
 async def get_member(request: RouteRequest, id: uuid.UUID) -> ClientMember:
     """Obtain details pertaining to the specified user"""
     return await get_member_info(id, pool=request.app.pool)
 
 
 @router.get("/members/me/projects", responses={200: {"model": ClientProjects}})
+@router.limiter.limit("10/minute")
 async def get_logged_projects(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
@@ -186,6 +189,7 @@ async def get_logged_projects(
 
 
 @router.get("/members/me/events")
+@router.limiter.limit("10/minute")
 async def get_logged_events(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
@@ -245,6 +249,7 @@ class SuccessResponse(BaseModel, frozen=True):
         409: {"model": HTTPExceptionMessage},
     },
 )
+@router.limiter.limit("2 per 15 minutes")
 async def update_logged_member(
     request: RouteRequest,
     req: ModifiedClient,
