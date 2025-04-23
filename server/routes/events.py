@@ -282,9 +282,7 @@ async def create_events(
 
         try:
             rows = await request.app.pool.fetchrow(
-                query,
-                *req.model_dump().values(),
-                "69268f99-08ac-4ca9-8007-f94f8092e396",
+                query, *req.model_dump().values(), session.get_user_id()
             )
             encoded_hash = request.app.ph.hash(str(rows["id"]))
 
