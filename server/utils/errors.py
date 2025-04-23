@@ -1,5 +1,6 @@
 from fastapi import HTTPException
-from responses import HTTP_404_DETAIL
+
+from .responses import HTTP_404_DETAIL
 
 
 class BaseHTTPException(HTTPException):

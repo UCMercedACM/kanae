@@ -2,7 +2,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from responses import HTTP_404_DETAIL
+from . import HTTP_404_DETAIL
 
 
 ### Error responses
@@ -16,27 +16,27 @@ class ErrorResponse(BaseModel, frozen=True):
 
 # HTTP 400
 class BadRequestResponse(ErrorResponse, frozen=True):
-    pass
+    detail: str
 
 
 # HTTP 401
 class UnauthorizedResponse(ErrorResponse, frozen=True):
-    pass
+    detail: str
 
 
 # HTTP 403
 class ForbiddenResponse(ErrorResponse, frozen=True):
-    pass
+    detail: str
 
 
 # HTTP 404
 class NotFoundResponse(ErrorResponse, frozen=True):
-    detail = HTTP_404_DETAIL
+    detail: str = HTTP_404_DETAIL
 
 
 # HTTP 409
 class ConflictResponse(ErrorResponse, frozen=True):
-    pass
+    detail: str
 
 
 # HTTP 400/422
@@ -52,4 +52,4 @@ class RequestValidationErrorResponse(BaseModel, frozen=True):
 
 # Any status codes
 class HTTPExceptionResponse(ErrorResponse, frozen=True):
-    pass
+    detail: str
