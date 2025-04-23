@@ -9,16 +9,22 @@ from argon2 import Parameters
 from argon2.low_level import Type
 from dateutil import tz
 from dateutil.relativedelta import relativedelta
-from fastapi import Depends, Query, status
-from fastapi.exceptions import HTTPException
+from fastapi import Depends, Query
 from pydantic import BaseModel, model_validator
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from typing_extensions import Self
-from utils.errors import HTTPExceptionMessage, NotFoundException, NotFoundMessage
+from utils.errors import ConflictException, ForbiddenException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses import JoinResponse, VerifyFailedResponse
+from utils.responses import (
+    ConflictResponse,
+    FailureResponse,
+    ForbiddenResponse,
+    JoinResponse,
+    NotFoundResponse,
+    SuccessResponse,
+)
 from utils.roles import has_any_role
 from utils.router import KanaeRouter
 
@@ -73,7 +79,8 @@ class EventTimezone:
         return tz.gettz(raw_tz) or datetime.timezone.utc
 
 
-class Events(BaseModel):
+class Events(BaseModel, frozen=True):
+    id: uuid.UUID
     name: str
     description: str
     start_at: datetime.datetime
@@ -90,19 +97,7 @@ class Events(BaseModel):
         "misc",
     ]
     timezone: str
-
-
-class EventsWithCreatorID(Events):
     creator_id: uuid.UUID
-
-
-class EventsWithID(Events):
-    id: uuid.UUID
-
-
-class EventsWithAllID(Events):
-    creator_id: uuid.UUID
-    id: uuid.UUID
 
 
 @router.get("/events")
@@ -111,17 +106,17 @@ async def list_events(
     name: Annotated[Optional[str], Query(min_length=3)] = None,
     *,
     params: Annotated[KanaeParams, Depends()],
-) -> KanaePages[EventsWithAllID]:
+) -> KanaePages[Events]:
     """Search a list of events"""
     query = """
-    SELECT name, description, start_at, end_at, location, type, timezone, creator_id, id
+    SELECT id, name, description, start_at, end_at, location, type, timezone, creator_id
     FROM events
     ORDER BY start_at DESC
     """
 
     if name:
         query = """
-        SELECT name, description, start_at, end_at, location, type, timezone, creator_id, id
+        SELECT id,name, description, start_at, end_at, location, type, timezone, creator_id
         FROM events
         WHERE name % $1
         ORDER BY similarity(name, $1) DESC
@@ -133,12 +128,12 @@ async def list_events(
 
 @router.get(
     "/events/{id}",
-    responses={200: {"model": EventsWithCreatorID}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": Events}, 404: {"model": NotFoundResponse}},
 )
-async def get_event(request: RouteRequest, id: uuid.UUID) -> EventsWithCreatorID:
+async def get_event(request: RouteRequest, id: uuid.UUID) -> Events:
     """Retrieve event details via ID"""
     query = """
-    SELECT name, description, start_at, end_at, location, type, timezone, creator_id
+    SELECT id, name, description, start_at, end_at, location, type, timezone, creator_id
     FROM events
     WHERE id = $1;
     """
@@ -147,18 +142,16 @@ async def get_event(request: RouteRequest, id: uuid.UUID) -> EventsWithCreatorID
     if not rows:
         raise NotFoundException
     event_tz = EventTimezone(pool=request.app.pool)
-    return EventsWithCreatorID(
-        **dict(rows), timezone=await event_tz.get_raw_timezone(id)
-    )
+    return Events(**dict(rows), timezone=await event_tz.get_raw_timezone(id))
 
 
-class ModifiedEvent(BaseModel):
+class ModifiedEvent(BaseModel, frozen=True):
     name: str
     description: str
     location: str
 
 
-class ModifiedEventWithDatetime(ModifiedEvent):
+class ModifiedEventWithDatetime(ModifiedEvent, frozen=True):
     start_at: datetime.datetime
     end_at: datetime.datetime
     timezone: str
@@ -166,7 +159,7 @@ class ModifiedEventWithDatetime(ModifiedEvent):
 
 @router.put(
     "/events/{id}",
-    responses={200: {"model": EventsWithID}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": Events}, 404: {"model": NotFoundResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
@@ -175,7 +168,7 @@ async def edit_event(
     id: uuid.UUID,
     req: Union[ModifiedEvent, ModifiedEventWithDatetime],
     session: Annotated[SessionContainer, Depends(verify_session())],
-) -> EventsWithID:
+) -> Events:
     """Updates the specified event"""
     query = """
     UPDATE events
@@ -222,7 +215,7 @@ async def edit_event(
                 request.app.ph.hash(str(id)),
             )
 
-        return EventsWithID(**dict(rows))
+        return Events(**dict(rows))
 
 
 class DeleteResponse(BaseModel, frozen=True):
@@ -231,7 +224,7 @@ class DeleteResponse(BaseModel, frozen=True):
 
 @router.delete(
     "/events/{id}",
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
@@ -254,7 +247,7 @@ async def delete_event(
 
 @router.post(
     "/events/create",
-    responses={200: {"model": EventsWithAllID}, 409: {"model": HTTPExceptionMessage}},
+    responses={200: {"model": Events}, 409: {"model": ConflictResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("15/minute")
@@ -262,7 +255,7 @@ async def create_events(
     request: RouteRequest,
     req: Events,
     session: Annotated[SessionContainer, Depends(verify_session())],
-) -> EventsWithAllID:
+) -> Events:
     """Creates a new event given the provided data"""
     query = """
     INSERT INTO events (name, description, start_at, end_at, location, type, timezone, creator_id)
@@ -296,22 +289,19 @@ async def create_events(
             )
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise HTTPException(
-                detail="Requested project already exists",
-                status_code=status.HTTP_409_CONFLICT,
-            )
+            raise ConflictException("Requested project already exists")
         else:
             await tr.commit()
-            return EventsWithAllID(**dict(rows))
+            return Events(**dict(rows))
 
 
 @router.post(
     "/events/{id}/join",
     responses={
         200: {"model": JoinResponse},
-        403: {"model": HTTPExceptionMessage},
-        404: {"model": NotFoundMessage},
-        409: {"model": HTTPExceptionMessage},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
     },
 )
 @router.limiter.limit("5/minute")
@@ -340,9 +330,8 @@ async def join_event(
 
         now = datetime.datetime.now(await zone.get_tzinfo(id))
         if now > rows["end_at"]:
-            raise HTTPException(
-                detail="The event has ended. You can't join an finished event.",
-                status_code=status.HTTP_403_FORBIDDEN,
+            raise ForbiddenException(
+                "The event has ended. You can't join an finished event."
             )
 
         await tr.start()
@@ -351,20 +340,19 @@ async def join_event(
             await connection.execute(insert_query, id, session.get_user_id())
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise HTTPException(
-                detail="Authenticated member has already joined the requested event",
-                status_code=status.HTTP_409_CONFLICT,
+            raise ConflictException(
+                "Authenticated member has already joined the requested event"
             )
         else:
             await tr.commit()
             return JoinResponse()
 
 
-class VerifiedResponse(BaseModel):
-    message: str = "Successfully verified attendance!"
+class VerifyFailedResponse(FailureResponse, frozen=True):
+    message = "Failed to verify, entirely invalid hash"
 
 
-class VerifyRequest(BaseModel):
+class VerifyRequest(BaseModel, frozen=True):
     code: str
 
     @model_validator(mode="before")
@@ -378,9 +366,9 @@ class VerifyRequest(BaseModel):
 @router.post(
     "/events/{id}/verify",
     responses={
-        200: {"model": VerifiedResponse},
+        200: {"model": SuccessResponse},
         403: {"model": VerifyFailedResponse},
-        404: {"model": HTTPExceptionMessage},
+        404: {"model": NotFoundResponse},
     },
 )
 @router.limiter.limit("5/second")
@@ -409,9 +397,8 @@ async def verify_attendance(
     # - one our before the event
     buffer = record["start_at"] + relativedelta(hours=-1)
     if not (now >= record["start_at"] and now <= record["end_at"]) or (now <= buffer):
-        raise HTTPException(
-            detail="You must verify your hash either during the event or one hour beforehand. Please try again.",
-            status_code=status.HTTP_404_NOT_FOUND,
+        raise NotFoundException(
+            "You must verify your hash either during the event or one hour beforehand. Please try again."
         )
 
     # should raise a error directly, which would need to be handled.
@@ -424,4 +411,4 @@ async def verify_attendance(
         """
         await request.app.pool.execute(verify_query, id, session.get_user_id())
 
-    return VerifiedResponse()
+    return SuccessResponse(message="Successfully verified attendance!")

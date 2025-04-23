@@ -31,12 +31,19 @@ from supertokens_python.recipe.session.framework.fastapi import verify_session
 from supertokens_python.types import AccountInfo
 from utils.errors import (
     BadRequestException,
+    ConflictException,
     HTTPException,
-    HTTPExceptionMessage,
     NotFoundException,
-    NotFoundMessage,
+    UnauthorizedException,
 )
 from utils.request import RouteRequest
+from utils.responses import (
+    BadRequestResponse,
+    ConflictResponse,
+    NotFoundResponse,
+    SuccessResponse,
+    UnauthorizedResponse,
+)
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Members"])
@@ -132,7 +139,7 @@ async def get_member_info(
 
 @router.get(
     "/members/me",
-    responses={200: {"model": ClientMember}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": ClientMember}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("10/minute")
 async def get_logged_member(
@@ -145,7 +152,7 @@ async def get_logged_member(
 
 @router.get(
     "/members/{id}",
-    responses={200: {"model": ClientMember}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": ClientMember}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("10/minute")
 async def get_member(request: RouteRequest, id: uuid.UUID) -> ClientMember:
@@ -235,18 +242,14 @@ class ModifiedClient(BaseModel, frozen=True):
     new_password: Optional[str] = None
 
 
-class SuccessResponse(BaseModel, frozen=True):
-    message: str
-
-
 @router.put(
     "/members/me/update",
     responses={
         200: {"model": SuccessResponse},
-        400: {"model": HTTPExceptionMessage},
-        401: {"model": HTTPExceptionMessage},
-        404: {"model": NotFoundMessage},
-        409: {"model": HTTPExceptionMessage},
+        400: {"model": BadRequestResponse},
+        401: {"model": UnauthorizedResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
     },
 )
 @router.limiter.limit("2 per 15 minutes")
@@ -277,9 +280,7 @@ async def update_logged_member(
                 "public", login_method.email, req.old_password
             )
             if isinstance(is_valid_password, WrongCredentialsError):
-                raise HTTPException(
-                    status_code=401, detail="Wrong credentials provided"
-                )
+                raise UnauthorizedException("Wrong credentials provided")
 
             response = await update_email_or_password(
                 session.get_recipe_user_id(),
@@ -287,9 +288,8 @@ async def update_logged_member(
                 tenant_id_for_password_policy=session.get_tenant_id(),
             )
             if isinstance(response, PasswordPolicyViolationError):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Password conflicts with current password policy",
+                raise ConflictException(
+                    "Password conflicts with current password policy"
                 )
 
             await revoke_all_sessions_for_user(session.get_user_id())
@@ -329,9 +329,8 @@ async def update_logged_member(
                     )
                     for curr_member in members_with_same_email:
                         if curr_member.id != session.get_user_id():
-                            raise HTTPException(
-                                status_code=409,
-                                detail="Requested email conflicts with other members",
+                            raise ConflictException(
+                                "Requested email conflicts with other members"
                             )
 
                 await send_email_verification_email(
@@ -356,8 +355,6 @@ async def update_logged_member(
             return SuccessResponse(message="Successfully changed email")
 
         if isinstance(response, UpdateUserEmailAlreadyExistsError):
-            raise HTTPException(
-                status_code=409, detail="Email already exists, try another one"
-            )
+            raise ConflictException("Email already exists, try another one")
 
     raise HTTPException(status_code=500, detail="How...")

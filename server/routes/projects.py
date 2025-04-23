@@ -3,20 +3,21 @@ import uuid
 from typing import Annotated, Literal, Optional
 
 import asyncpg
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from supertokens_python.recipe.userroles import UserRoleClaim
-from utils.errors import (
-    BadRequestException,
-    HTTPExceptionMessage,
-    NotFoundException,
-    NotFoundMessage,
-)
+from utils.errors import BadRequestException, ConflictException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses import DeleteResponse, JoinResponse
+from utils.responses import (
+    ConflictResponse,
+    DeleteResponse,
+    HTTPExceptionResponse,
+    JoinResponse,
+    NotFoundResponse,
+)
 from utils.roles import has_admin_role, has_any_role
 from utils.router import KanaeRouter
 
@@ -126,7 +127,7 @@ async def list_projects(
 
 @router.get(
     "/projects/{id}",
-    responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": Projects}, 404: {"model": NotFoundResponse}},
 )
 async def get_project(request: RouteRequest, id: uuid.UUID) -> Projects:
     """Retrieve project details via ID"""
@@ -155,7 +156,7 @@ class ModifiedProject(BaseModel):
 
 @router.put(
     "/projects/{id}",
-    responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": Projects}, 404: {"model": NotFoundResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("3/minute")
@@ -223,7 +224,7 @@ async def edit_project(
 
 @router.delete(
     "/projects/{id}",
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("3/minute")
@@ -263,7 +264,7 @@ class CreateProject(BaseModel):
 
 @router.post(
     "/projects/create",
-    responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionMessage}},
+    responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
@@ -307,7 +308,7 @@ async def create_project(
                 )
                 raise HTTPException(
                     detail="The tag(s) specified is invalid. Please check the current tags available.",
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=422,
                 )
             else:
                 await tr.commit()
@@ -317,7 +318,7 @@ async def create_project(
 
 @router.post(
     "/projects/{id}/join",
-    responses={200: {"model": JoinResponse}, 409: {"model": HTTPExceptionMessage}},
+    responses={200: {"model": JoinResponse}, 409: {"model": ConflictResponse}},
 )
 @router.limiter.limit("5/minute")
 async def join_project(
@@ -337,9 +338,8 @@ async def join_project(
             await connection.execute(query, id, session.get_user_id())
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise HTTPException(
-                detail="Authenticated member has already joined the requested project",
-                status_code=status.HTTP_409_CONFLICT,
+            raise ConflictException(
+                "Authenticated member has already joined the requested project"
             )
         else:
             await tr.commit()
@@ -354,7 +354,7 @@ class BulkJoinMember(BaseModel):
     "/projects/{id}/bulk-join",
     responses={
         200: {"model": JoinResponse},
-        409: {"model": HTTPExceptionMessage},
+        409: {"model": ConflictResponse},
     },
 )
 @has_any_role("admin", "leads")
@@ -380,9 +380,8 @@ async def bulk_join_project(
             await connection.executemany(query, id, [entry.id for entry in req])
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise HTTPException(
-                detail="Authenticated member has already joined the requested project",
-                status_code=status.HTTP_409_CONFLICT,
+            raise ConflictException(
+                "Authenticated member has already joined the requested project"
             )
         else:
             await tr.commit()
@@ -391,7 +390,7 @@ async def bulk_join_project(
 
 @router.delete(
     "/projects/{id}/leave",
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("5/minute")
 async def leave_project(

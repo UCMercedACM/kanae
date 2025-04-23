@@ -1,37 +1,47 @@
-from typing import Optional
-
 from fastapi import HTTPException
-from pydantic import BaseModel
 
 HTTP_404_DETAIL = "Resource not found"
 
 
-class NotFoundMessage(BaseModel, frozen=True):
-    message: str = HTTP_404_DETAIL
+class BaseHTTPException(HTTPException):
+    status_code: int
 
-
-class NotFoundException(HTTPException):
-    def __init__(self, detail: str = HTTP_404_DETAIL):
-        self.status_code = 404
-        self.detail = detail
-
-
-class BadRequestException(HTTPException):
     def __init__(self, detail: str):
-        self.status_code = 400
         self.detail = detail
 
 
-class RequestValidationErrorDetails(BaseModel, frozen=True):
-    detail: str
-    context: Optional[str]
+# HTTP 400
+class BadRequestException(BaseHTTPException):
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.status_code = 400
 
 
-class RequestValidationErrorMessage(BaseModel, frozen=True):
-    result: str = "error"
-    errors: list[RequestValidationErrorDetails]
+# HTTP 401
+class UnauthorizedException(BaseHTTPException):
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.status_code = 401
 
 
-class HTTPExceptionMessage(BaseModel, frozen=True):
-    result: str = "error"
-    detail: str
+# HTTP 403
+class ForbiddenException(BaseHTTPException):
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.status_code = 403
+
+
+# HTTP 404
+class NotFoundException(BaseHTTPException):
+    def __init__(self, detail: str = HTTP_404_DETAIL):
+        super().__init__(detail)
+        self.status_code = 400
+
+
+# HTTP 409
+
+
+class ConflictException(BaseHTTPException):
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.status_code = 409

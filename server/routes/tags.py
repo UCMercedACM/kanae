@@ -6,10 +6,9 @@ from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from utils.errors import (
     NotFoundException,
-    NotFoundMessage,
 )
 from utils.request import RouteRequest
-from utils.responses import DeleteResponse
+from utils.responses import DeleteResponse, NotFoundResponse
 from utils.roles import has_admin_role
 from utils.router import KanaeRouter
 
@@ -49,7 +48,7 @@ async def get_tags(
 
 @router.get(
     "/tags/{id}",
-    responses={200: {"model": Tags}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
 )
 async def get_tag_by_id(request: RouteRequest, id: int) -> Tags:
     """Get tag via ID"""
@@ -72,7 +71,7 @@ class ModifiedTag(BaseModel):
 
 @router.put(
     "/tags/{id}",
-    responses={200: {"model": Tags}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
@@ -99,7 +98,7 @@ async def edit_tag(
 
 @router.delete(
     "/tags/{id}",
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
