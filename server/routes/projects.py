@@ -8,10 +8,10 @@ from pydantic import BaseModel
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from supertokens_python.recipe.userroles import UserRoleClaim
-from utils.errors import BadRequestException, ConflictException, NotFoundException
+from utils.exceptions import BadRequestException, ConflictException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses.errors import (
+from utils.responses.exceptions import (
     ConflictResponse,
     HTTPExceptionResponse,
     NotFoundResponse,

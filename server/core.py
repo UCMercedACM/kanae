@@ -55,7 +55,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 # isort: on
 
 from utils.config import KanaeConfig
-from utils.responses.errors import (
+from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorDetails,
     RequestValidationErrorResponse,

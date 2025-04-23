@@ -14,10 +14,10 @@ from pydantic import BaseModel, model_validator
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from typing_extensions import Self
-from utils.errors import ConflictException, ForbiddenException, NotFoundException
+from utils.exceptions import ConflictException, ForbiddenException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses.errors import (
+from utils.responses.exceptions import (
     ConflictResponse,
     ErrorResponse,
     ForbiddenResponse,

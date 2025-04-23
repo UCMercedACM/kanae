@@ -29,7 +29,7 @@ from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.asyncio import revoke_all_sessions_for_user
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from supertokens_python.types import AccountInfo
-from utils.errors import (
+from utils.exceptions import (
     BadRequestException,
     ConflictException,
     HTTPException,
@@ -37,7 +37,7 @@ from utils.errors import (
     UnauthorizedException,
 )
 from utils.request import RouteRequest
-from utils.responses.errors import (
+from utils.responses.exceptions import (
     BadRequestResponse,
     ConflictResponse,
     NotFoundResponse,

@@ -4,11 +4,11 @@ from fastapi import Depends, Query
 from pydantic import BaseModel
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
-from utils.errors import (
+from utils.exceptions import (
     NotFoundException,
 )
 from utils.request import RouteRequest
-from utils.responses.errors import NotFoundResponse
+from utils.responses.exceptions import NotFoundResponse
 from utils.responses.success import DeleteResponse
 from utils.roles import has_admin_role
 from utils.router import KanaeRouter
