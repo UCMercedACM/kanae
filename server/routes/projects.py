@@ -213,7 +213,7 @@ async def edit_project(
         RETURNING *;
         """
 
-    args = (id) if roles and "admin" in roles else (id, session.get_user_id())
+    args = (id,) if roles and "admin" in roles else (id, session.get_user_id())
     rows = await request.app.pool.fetchrow(query, *args, *req.model_dump().values())
 
     if not rows:
@@ -265,12 +265,12 @@ class CreateProject(BaseModel):
     "/projects/create",
     responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionMessage}},
 )
-# @has_admin_role()
+@has_admin_role()
 @router.limiter.limit("5/minute")
 async def create_project(
     request: RouteRequest,
     req: CreateProject,
-    # session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> PartialProjects:
     """Creates a new project given the provided data"""
     query = """
@@ -323,7 +323,7 @@ async def create_project(
 async def join_project(
     request: RouteRequest,
     id: uuid.UUID,
-    # session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> JoinResponse:
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
@@ -340,7 +340,7 @@ async def join_project(
         tr = connection.transaction()
         await tr.start()
         try:
-            await connection.execute(query, id, "1a83e6bb-1096-4bdc-80eb-eb24a87cf190")
+            await connection.execute(query, id, session.get_user_id())
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             raise HTTPException(

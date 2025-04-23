@@ -256,12 +256,12 @@ async def delete_event(
     "/events/create",
     responses={200: {"model": EventsWithAllID}, 409: {"model": HTTPExceptionMessage}},
 )
-# @has_any_role("admin", "leads")
-# @router.limiter.limit("15/minute")
+@has_any_role("admin", "leads")
+@router.limiter.limit("15/minute")
 async def create_events(
     request: RouteRequest,
     req: Events,
-    # session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> EventsWithAllID:
     """Creates a new event given the provided data"""
     query = """
@@ -284,7 +284,7 @@ async def create_events(
             rows = await request.app.pool.fetchrow(
                 query,
                 *req.model_dump().values(),
-                "1a83e6bb-1096-4bdc-80eb-eb24a87cf190",
+                "69268f99-08ac-4ca9-8007-f94f8092e396",
             )
             encoded_hash = request.app.ph.hash(str(rows["id"]))
 
@@ -292,8 +292,7 @@ async def create_events(
             await request.app.pool.execute(
                 attendance_query,
                 rows["id"],
-                # session.get_user_id(),
-                "1a83e6bb-1096-4bdc-80eb-eb24a87cf190",
+                session.get_user_id(),
                 "$".join(encoded_hash.split("$")[-2:]),
                 base62.encodebytes(encoded_hash.split("$")[-1].encode("utf-8")),
             )
@@ -317,11 +316,11 @@ async def create_events(
         409: {"model": HTTPExceptionMessage},
     },
 )
-# @router.limiter.limit("5/minute")
+@router.limiter.limit("5/minute")
 async def join_event(
     request: RouteRequest,
     id: uuid.UUID,
-    # session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> JoinResponse:
     """Registers and joins an upcoming event"""
     query = """
@@ -342,11 +341,11 @@ async def join_event(
         zone = EventTimezone(pool=request.app.pool)
 
         now = datetime.datetime.now(await zone.get_tzinfo(id))
-        # if now > rows["end_at"]:
-        #     raise HTTPException(
-        #         detail="The event has ended. You can't join an finished event.",
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #     )
+        if now > rows["end_at"]:
+            raise HTTPException(
+                detail="The event has ended. You can't join an finished event.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
 
         await tr.start()
 
