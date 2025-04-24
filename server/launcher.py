@@ -1,5 +1,6 @@
 import argparse
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 from supertokens_python import get_all_cors_headers
 from supertokens_python.framework.fastapi import get_middleware
 from utils.config import KanaeConfig, KanaeUvicornConfig
+from utils.handler import InterruptHandler
 from uvicorn.supervisors import Multiprocess
 
 config_path = Path(__file__).parent / "config.yml"
@@ -67,12 +69,18 @@ if __name__ == "__main__":
 
     server = uvicorn.Server(config)
 
+    sock = config.bind_socket()
+
     if use_workers:
         config.workers = worker_count
-        sock = config.bind_socket()
 
         runner = Multiprocess(config, target=server.run, sockets=[sock])
     else:
+        # Apparently this doesn't have it's own signal handler
+        handler = InterruptHandler(core=app, server=server, sockets=[sock])
+        app.loop.add_signal_handler(signal.SIGINT, handler)
+        app.loop.add_signal_handler(signal.SIGTERM, handler)
+
         runner = server
 
     runner.run()

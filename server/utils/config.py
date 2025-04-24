@@ -174,6 +174,8 @@ class KanaeUvicornConfig(UvicornConfig):
         access_logger = logging.getLogger("uvicorn.access")
         asgi_logger = logging.getLogger("uvicorn.asgi")
 
+        kanae_root = logging.getLogger("kanae")
+
         level = self._determine_level(self.log_level)
 
         handler = logging.StreamHandler()
@@ -195,6 +197,9 @@ class KanaeUvicornConfig(UvicornConfig):
 
         root.setLevel(level)
         root.addHandler(handler)
+
+        kanae_root.setLevel(level)
+        kanae_root.addHandler(handler)
 
         asgi_logger.setLevel(level)
         asgi_logger.addHandler(handler)
