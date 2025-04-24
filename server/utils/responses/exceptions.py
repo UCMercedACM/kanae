@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel
 
 from . import HTTP_404_DETAIL
@@ -40,14 +38,11 @@ class ConflictResponse(ErrorResponse, frozen=True):
 
 
 # HTTP 400/422
-class RequestValidationErrorDetails(BaseModel, frozen=True):
-    detail: str
-    context: Optional[str]
 
 
 class RequestValidationErrorResponse(BaseModel, frozen=True):
     result: str = "error"
-    errors: list[RequestValidationErrorDetails]
+    errors: str
 
 
 # Any status codes

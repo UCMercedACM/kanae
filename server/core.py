@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
 
@@ -57,7 +58,6 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 from utils.config import KanaeConfig
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
-    RequestValidationErrorDetails,
     RequestValidationErrorResponse,
 )
 
@@ -203,6 +203,8 @@ class Kanae(FastAPI):
             VerificationError,
             self.verification_error_handler,  # type: ignore
         )
+
+        self._logger = logging.getLogger("kanae.core")
 
     # SuperTokens recipes overrides
 
@@ -365,8 +367,15 @@ class Kanae(FastAPI):
                 and result.created_new_recipe_user
                 and len(result.user.login_methods) == 1
             ):
+                is_valid_email = validate_email(
+                    user_info["email"], check_deliverability=True
+                )
+                if isinstance(is_valid_email, EmailNotValidError):
+                    raise EmailNotValidError("Email provided is not valid")
+
+                normalized_email = is_valid_email.normalized
                 await self._set_first_time_member(
-                    result.user.id, user_info["name"], user_info["email"]
+                    result.user.id, user_info["name"], normalized_email
                 )
 
         return result
@@ -411,15 +420,11 @@ class Kanae(FastAPI):
     async def request_validation_error_handler(
         self, request: RouteRequest, exc: RequestValidationError
     ) -> ORJSONResponse:
-        message = RequestValidationErrorResponse(
-            errors=[
-                RequestValidationErrorDetails(
-                    detail=exception["msg"],
-                    context=exception["ctx"]["error"] if exception.get("ctx") else None,
-                )
-                for exception in exc.errors()
-            ]
-        )
+        # The errors seem to be extremely inconsistent
+        # For now, we'll log them down for further analysis
+        encoded = orjson.dumps(exc.errors()).decode("utf-8")
+        message = RequestValidationErrorResponse(errors=encoded)
+        self._logger.warning("Request Validation Error! Message:\n%s", encoded)
         return ORJSONResponse(
             content=message.model_dump(), status_code=status.HTTP_400_BAD_REQUEST
         )
