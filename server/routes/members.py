@@ -1,6 +1,6 @@
 import datetime
 import uuid
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Optional, Union
 
 import asyncpg
 from email_validator import EmailNotValidError, validate_email
@@ -29,63 +29,35 @@ from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.asyncio import revoke_all_sessions_for_user
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from supertokens_python.types import AccountInfo
-from utils.errors import (
+from utils.exceptions import (
     BadRequestException,
+    ConflictException,
     HTTPException,
-    HTTPExceptionMessage,
     NotFoundException,
-    NotFoundMessage,
+    UnauthorizedException,
 )
 from utils.request import RouteRequest
+from utils.responses.exceptions import (
+    BadRequestResponse,
+    ConflictResponse,
+    NotFoundResponse,
+    UnauthorizedResponse,
+)
+from utils.responses.success import SuccessResponse
 from utils.router import KanaeRouter
 
+from .events import Events
+from .projects import Projects
+
 router = KanaeRouter(tags=["Members"])
-
-
-class ClientEvents(BaseModel, frozen=True):
-    id: uuid.UUID
-    name: str
-    description: str
-    start_at: datetime.datetime
-    end_at: datetime.datetime
-    location: str
-    type: Literal[
-        "general",
-        "sig_ai",
-        "sig_swe",
-        "sig_cyber",
-        "sig_data",
-        "sig_arch",
-        "social",
-        "misc",
-    ]
-    timezone: str
-
-
-class ClientProjects(BaseModel, frozen=True):
-    id: uuid.UUID
-    name: str
-    description: str
-    link: str
-    type: Literal[
-        "independent",
-        "sig_ai",
-        "sig_swe",
-        "sig_cyber",
-        "sig_data",
-        "sig_arch",
-        "sig_graph",
-    ]
-    active: bool
-    founded_at: datetime.datetime
 
 
 class ClientMember(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
     created_at: datetime.datetime
-    projects: list[ClientProjects]
-    events: list[ClientEvents]
+    projects: list[Projects]
+    events: list[Events]
 
 
 async def get_member_info(
@@ -132,7 +104,7 @@ async def get_member_info(
 
 @router.get(
     "/members/me",
-    responses={200: {"model": ClientMember}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": ClientMember}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("10/minute")
 async def get_logged_member(
@@ -145,7 +117,7 @@ async def get_logged_member(
 
 @router.get(
     "/members/{id}",
-    responses={200: {"model": ClientMember}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": ClientMember}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("10/minute")
 async def get_member(request: RouteRequest, id: uuid.UUID) -> ClientMember:
@@ -153,13 +125,13 @@ async def get_member(request: RouteRequest, id: uuid.UUID) -> ClientMember:
     return await get_member_info(id, pool=request.app.pool)
 
 
-@router.get("/members/me/projects", responses={200: {"model": ClientProjects}})
+@router.get("/members/me/projects", responses={200: {"model": Projects}})
 @router.limiter.limit("10/minute")
 async def get_logged_projects(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
     since: Optional[datetime.datetime] = None,
-) -> list[ClientProjects]:
+) -> list[Projects]:
     """Obtains projects associated with the currently authenticated member, with options to sort"""
     args = [session.get_user_id()]
 
@@ -185,7 +157,7 @@ async def get_logged_projects(
         args.append(since)  # type: ignore
 
     rows = await request.app.pool.fetch(query, *args)
-    return [ClientProjects(**dict(record)) for record in rows]
+    return [Projects(**dict(record)) for record in rows]
 
 
 @router.get("/members/me/events")
@@ -195,7 +167,7 @@ async def get_logged_events(
     session: Annotated[SessionContainer, Depends(verify_session())],
     planned: Optional[bool] = None,
     attended: Optional[bool] = None,
-) -> list[ClientEvents]:
+) -> list[Events]:
     """Obtains events associated with the currently authenticated member.
 
     Note that using both `planned` and `attended` queries would result in events that have been planned and attended
@@ -225,7 +197,7 @@ async def get_logged_events(
     GROUP BY events.id;
     """
     rows = await request.app.pool.fetch(query, session.get_user_id())
-    return [ClientEvents(**dict(record)) for record in rows]
+    return [Events(**dict(record)) for record in rows]
 
 
 class ModifiedClient(BaseModel, frozen=True):
@@ -235,18 +207,14 @@ class ModifiedClient(BaseModel, frozen=True):
     new_password: Optional[str] = None
 
 
-class SuccessResponse(BaseModel, frozen=True):
-    message: str
-
-
 @router.put(
     "/members/me/update",
     responses={
         200: {"model": SuccessResponse},
-        400: {"model": HTTPExceptionMessage},
-        401: {"model": HTTPExceptionMessage},
-        404: {"model": NotFoundMessage},
-        409: {"model": HTTPExceptionMessage},
+        400: {"model": BadRequestResponse},
+        401: {"model": UnauthorizedResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
     },
 )
 @router.limiter.limit("2 per 15 minutes")
@@ -277,9 +245,7 @@ async def update_logged_member(
                 "public", login_method.email, req.old_password
             )
             if isinstance(is_valid_password, WrongCredentialsError):
-                raise HTTPException(
-                    status_code=401, detail="Wrong credentials provided"
-                )
+                raise UnauthorizedException("Wrong credentials provided")
 
             response = await update_email_or_password(
                 session.get_recipe_user_id(),
@@ -287,9 +253,8 @@ async def update_logged_member(
                 tenant_id_for_password_policy=session.get_tenant_id(),
             )
             if isinstance(response, PasswordPolicyViolationError):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Password conflicts with current password policy",
+                raise ConflictException(
+                    "Password conflicts with current password policy"
                 )
 
             await revoke_all_sessions_for_user(session.get_user_id())
@@ -329,9 +294,8 @@ async def update_logged_member(
                     )
                     for curr_member in members_with_same_email:
                         if curr_member.id != session.get_user_id():
-                            raise HTTPException(
-                                status_code=409,
-                                detail="Requested email conflicts with other members",
+                            raise ConflictException(
+                                "Requested email conflicts with other members"
                             )
 
                 await send_email_verification_email(
@@ -356,8 +320,6 @@ async def update_logged_member(
             return SuccessResponse(message="Successfully changed email")
 
         if isinstance(response, UpdateUserEmailAlreadyExistsError):
-            raise HTTPException(
-                status_code=409, detail="Email already exists, try another one"
-            )
+            raise ConflictException("Email already exists, try another one")
 
     raise HTTPException(status_code=500, detail="How...")
