@@ -3,20 +3,20 @@ import uuid
 from typing import Annotated, Literal, Optional
 
 import asyncpg
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from supertokens_python.recipe.userroles import UserRoleClaim
-from utils.errors import (
-    BadRequestException,
-    HTTPExceptionMessage,
-    NotFoundException,
-    NotFoundMessage,
-)
+from utils.exceptions import BadRequestException, ConflictException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses import DeleteResponse, JoinResponse
+from utils.responses.exceptions import (
+    ConflictResponse,
+    HTTPExceptionResponse,
+    NotFoundResponse,
+)
+from utils.responses.success import DeleteResponse, JoinResponse
 from utils.roles import has_admin_role, has_any_role
 from utils.router import KanaeRouter
 
@@ -28,7 +28,26 @@ class ProjectMember(BaseModel, frozen=True):
     name: str
 
 
-class Projects(BaseModel):
+class Projects(BaseModel, frozen=True):
+    id: uuid.UUID
+    name: str
+    description: str
+    link: str
+    type: Literal[
+        "independent",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+    ]
+    tags: Optional[list[str]]
+    active: bool
+    founded_at: datetime.datetime
+
+
+class FullProjects(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
     description: str
@@ -43,26 +62,7 @@ class Projects(BaseModel):
         "sig_arch",
         "sig_graph",
     ]
-    tags: Optional[list[str]]
-    active: bool
-    founded_at: datetime.datetime
-
-
-class PartialProjects(BaseModel):
-    id: uuid.UUID
-    name: str
-    description: str
-    link: str
-    type: Literal[
-        "independent",
-        "sig_ai",
-        "sig_swe",
-        "sig_cyber",
-        "sig_data",
-        "sig_arch",
-        "sig_graph",
-    ]
-    tags: Optional[list[str]]
+    tags: Optional[list[str]] = None
     active: bool
     founded_at: datetime.datetime
 
@@ -76,7 +76,7 @@ async def list_projects(
     active: Optional[bool] = True,
     *,
     params: Annotated[KanaeParams, Depends()],
-) -> KanaePages[Projects]:
+) -> KanaePages[FullProjects]:
     """Search and filter a list of projects"""
     if since and until:
         raise BadRequestException(
@@ -126,14 +126,14 @@ async def list_projects(
 
 @router.get(
     "/projects/{id}",
-    responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
 )
-async def get_project(request: RouteRequest, id: uuid.UUID) -> Projects:
+async def get_project(request: RouteRequest, id: uuid.UUID) -> FullProjects:
     """Retrieve project details via ID"""
     query = """
     SELECT 
         projects.id, projects.name, projects.description, projects.link,
-        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name)) AS members, 
+        jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', project_members.role)) AS members, 
         projects.type, projects.active, projects.founded_at
     FROM projects
     INNER JOIN project_members ON project_members.project_id = projects.id
@@ -144,10 +144,10 @@ async def get_project(request: RouteRequest, id: uuid.UUID) -> Projects:
     rows = await request.app.pool.fetchrow(query, id)
     if not rows:
         raise NotFoundException
-    return Projects(**dict(rows))
+    return FullProjects(**dict(rows))
 
 
-class ModifiedProject(BaseModel):
+class ModifiedProject(BaseModel, frozen=True):
     name: str
     description: str
     link: str
@@ -155,7 +155,7 @@ class ModifiedProject(BaseModel):
 
 @router.put(
     "/projects/{id}",
-    responses={200: {"model": Projects}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("3/minute")
@@ -218,12 +218,12 @@ async def edit_project(
 
     if not rows:
         raise NotFoundException(detail="Resource cannot be updated")
-    return Projects(**dict(rows))
+    return FullProjects(**dict(rows))
 
 
 @router.delete(
     "/projects/{id}",
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("3/minute")
@@ -243,7 +243,7 @@ async def delete_project(
     return DeleteResponse()
 
 
-class CreateProject(BaseModel):
+class CreateProject(BaseModel, frozen=True):
     name: str
     description: str
     link: str
@@ -263,7 +263,7 @@ class CreateProject(BaseModel):
 
 @router.post(
     "/projects/create",
-    responses={200: {"model": PartialProjects}, 422: {"model": HTTPExceptionMessage}},
+    responses={200: {"model": Projects}, 422: {"model": HTTPExceptionResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
@@ -271,7 +271,7 @@ async def create_project(
     request: RouteRequest,
     req: CreateProject,
     session: Annotated[SessionContainer, Depends(verify_session())],
-) -> PartialProjects:
+) -> Projects:
     """Creates a new project given the provided data"""
     query = """
     INSERT INTO projects (name, description, link, type, active, founded_at)
@@ -307,17 +307,17 @@ async def create_project(
                 )
                 raise HTTPException(
                     detail="The tag(s) specified is invalid. Please check the current tags available.",
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=422,
                 )
             else:
                 await tr.commit()
 
-        return PartialProjects(**dict(project_rows), tags=req.tags)
+        return Projects(**dict(project_rows), tags=req.tags)
 
 
 @router.post(
     "/projects/{id}/join",
-    responses={200: {"model": JoinResponse}, 409: {"model": HTTPExceptionMessage}},
+    responses={200: {"model": JoinResponse}, 409: {"model": ConflictResponse}},
 )
 @router.limiter.limit("5/minute")
 async def join_project(
@@ -337,16 +337,15 @@ async def join_project(
             await connection.execute(query, id, session.get_user_id())
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise HTTPException(
-                detail="Authenticated member has already joined the requested project",
-                status_code=status.HTTP_409_CONFLICT,
+            raise ConflictException(
+                "Authenticated member has already joined the requested project"
             )
         else:
             await tr.commit()
             return JoinResponse(message="ok")
 
 
-class BulkJoinMember(BaseModel):
+class BulkJoinMember(BaseModel, frozen=True):
     id: uuid.UUID
 
 
@@ -354,7 +353,7 @@ class BulkJoinMember(BaseModel):
     "/projects/{id}/bulk-join",
     responses={
         200: {"model": JoinResponse},
-        409: {"model": HTTPExceptionMessage},
+        409: {"model": ConflictResponse},
     },
 )
 @has_any_role("admin", "leads")
@@ -380,9 +379,8 @@ async def bulk_join_project(
             await connection.executemany(query, id, [entry.id for entry in req])
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise HTTPException(
-                detail="Authenticated member has already joined the requested project",
-                status_code=status.HTTP_409_CONFLICT,
+            raise ConflictException(
+                "Authenticated member has already joined the requested project"
             )
         else:
             await tr.commit()
@@ -391,7 +389,7 @@ async def bulk_join_project(
 
 @router.delete(
     "/projects/{id}/leave",
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundMessage}},
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("5/minute")
 async def leave_project(
@@ -411,7 +409,7 @@ async def leave_project(
         return DeleteResponse()
 
 
-class UpgradeMemberRole(BaseModel):
+class UpgradeMemberRole(BaseModel, frozen=True):
     id: uuid.UUID
     role: Literal["former", "lead"]
 
@@ -439,12 +437,12 @@ async def modify_member(
     return DeleteResponse()
 
 
-@router.get("/projects/me", responses={200: {"model": PartialProjects}})
+@router.get("/projects/me", responses={200: {"model": Projects}})
 @router.limiter.limit("15/minute")
 async def get_my_projects(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
-) -> list[PartialProjects]:
+) -> list[Projects]:
     """Get all projects associated with the authenticated user"""
     query = """
     SELECT 
@@ -458,4 +456,4 @@ async def get_my_projects(
     """
 
     records = await request.app.pool.fetch(query, session.get_user_id())
-    return [PartialProjects(**dict(row)) for row in records]
+    return [Projects(**dict(row)) for row in records]
