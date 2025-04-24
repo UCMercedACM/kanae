@@ -35,7 +35,7 @@ class ForbiddenException(BaseHTTPException):
 class NotFoundException(BaseHTTPException):
     def __init__(self, detail: str = HTTP_404_DETAIL):
         super().__init__(detail)
-        self.status_code = 400
+        self.status_code = 404
 
 
 # HTTP 409
