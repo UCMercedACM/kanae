@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import TracebackType
-from typing import Optional, Type, TypeVar
+from typing import Generator, Optional, Type, TypeVar
 
 import httpx
 import pytest
@@ -14,9 +14,9 @@ from utils.config import KanaeConfig
 from yarl import URL
 
 try:
-    from typing import Generator, Self
+    from typing import Self
 except ImportError:
-    from typing_extensions import Generator, Self
+    from typing_extensions import Self
 
 BE = TypeVar("BE", bound=BaseException)
 
