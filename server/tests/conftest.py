@@ -70,7 +70,7 @@ def setup() -> Generator[PostgresContainer, None, None]:
 @pytest_asyncio.fixture(scope="function")
 async def app(
     get_app: Kanae, setup: PostgresContainer
-) -> AsyncGenerator[KanaeTestClient, None, None]:  # type: ignore # correct due to backward compat with previous versions
+) -> AsyncGenerator[KanaeTestClient, None]:
     get_app.config.replace("postgres_uri", setup.get_connection_url(driver=None))
     async with (
         LifespanManager(app=get_app),
