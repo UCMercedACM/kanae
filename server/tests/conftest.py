@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import TracebackType
-from typing import AsyncGenerator, Generator, Optional, Type, TypeVar
+from typing import Optional, Type, TypeVar
 
 import httpx
 import pytest
@@ -14,9 +14,9 @@ from utils.config import KanaeConfig
 from yarl import URL
 
 try:
-    from typing import Self
+    from typing import AsyncGenerator, Generator, Self
 except ImportError:
-    from typing_extensions import Self
+    from typing_extensions import AsyncGenerator, Generator, Self
 
 BE = TypeVar("BE", bound=BaseException)
 
@@ -70,7 +70,7 @@ def setup() -> Generator[PostgresContainer, None, None]:
 @pytest_asyncio.fixture(scope="function")
 async def app(
     get_app: Kanae, setup: PostgresContainer
-) -> AsyncGenerator[KanaeTestClient, None]:
+) -> AsyncGenerator[KanaeTestClient, None, None]:  # type: ignore # correct due to backward compat with previous versions
     get_app.config.replace("postgres_uri", setup.get_connection_url(driver=None))
     async with (
         LifespanManager(app=get_app),
