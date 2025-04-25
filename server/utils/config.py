@@ -95,8 +95,8 @@ class KanaeConfig(Generic[_T]):
         """Retrieves a config entry."""
         return self._config.get(str(key), default)
 
-    def shim(self, key: Any, value: Union[_T, Any]) -> None:
-        """Edits a config entry."""
+    def replace(self, key: Any, value: Union[_T, Any]) -> None:
+        """Replaces a config entry."""
         self._config[str(key)] = value
 
     def __contains__(self, item: Any) -> bool:

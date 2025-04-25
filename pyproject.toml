@@ -76,4 +76,4 @@ testpaths = [
     "server/tests"
 ]
 pythonpath = ["server"]
-asyncio_default_fixture_loop_scope= "function"
+asyncio_default_fixture_loop_scope = "function"

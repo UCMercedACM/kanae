@@ -7,27 +7,26 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from core import Kanae
-from migrations import Migrations, create_migrations_table_from_connection
-from testcontainers.core.generic import DbContainer
+from testcontainers.core.image import DockerImage
+from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 from utils.config import KanaeConfig
 from yarl import URL
 
 BE = TypeVar("BE", bound=BaseException)
 
-config = KanaeConfig(Path(__file__).parents[1] / "config.yml")
+ROOT = Path(__file__).parents[2]
+DOCKERFILE_PATH = ROOT / "docker" / "pg-test" / "Dockerfile"
+CONFIG_PATH = ROOT / "server" / "config.yml"
+
+config = KanaeConfig(CONFIG_PATH)
 
 
 class KanaeTestClient:
-    def __init__(self, app: Kanae, config: KanaeConfig):
-        self.db_container = PostgresContainer(
-            image="postgres:17-alpine", driver="asyncpg"
-        )
-        self._host = config["kanae"]["host"]
-        self._port = config["kanae"]["port"]
-        self._transport = httpx.ASGITransport(
-            app=app, client=(config["kanae"]["host"], config["kanae"]["port"])
-        )
+    def __init__(self, app: Kanae):
+        self._host = app.config["kanae"]["host"]
+        self._port = app.config["kanae"]["port"]
+        self._transport = httpx.ASGITransport(app=app, client=(self._host, self._port))
         self.client = httpx.AsyncClient(
             transport=self._transport,
             base_url=str(URL.build(scheme="http", host=self._host, port=self._port)),
@@ -48,25 +47,28 @@ class KanaeTestClient:
         await self.close()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def get_app() -> Kanae:
     return Kanae(config=config)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup() -> Generator[DbContainer]:
-    with PostgresContainer(driver=None) as container:
-        yield container
+@pytest.fixture(scope="session")
+def setup() -> Generator[PostgresContainer]:
+    with DockerImage(
+        path=ROOT, dockerfile_path=DOCKERFILE_PATH, tag="kanae-pg-test:latest"
+    ) as image:
+        with PostgresContainer(str(image)) as container:
+            wait_for_logs(container, "ready", timeout=15.0)
+            yield container
 
 
-@pytest_asyncio.fixture(scope="session")
-async def server(get_app: Kanae, setup: DbContainer) -> AsyncGenerator[KanaeTestClient]:
-    config.shim("postgres_uri", setup.get_connection_url())
-    await create_migrations_table_from_connection(config["postgres_uri"])
+@pytest_asyncio.fixture(scope="function")
+async def app(
+    get_app: Kanae, setup: PostgresContainer
+) -> AsyncGenerator[KanaeTestClient]:
+    get_app.config.replace("postgres_uri", setup.get_connection_url(driver=None))
     async with (
         LifespanManager(app=get_app),
-        Migrations(config["postgres_uri"]) as mg,
-        KanaeTestClient(app=get_app, config=config) as test_client,
+        KanaeTestClient(app=get_app) as client,
     ):
-        await mg.upgrade()
-        yield test_client
+        yield client
