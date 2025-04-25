@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
+from typing import TYPE_CHECKING, Any, Generator, Optional, Union, Unpack
 
 import asyncpg
 import orjson
@@ -60,6 +60,11 @@ from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
 )
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 if TYPE_CHECKING:
     from supertokens_python.recipe.thirdparty.types import (
