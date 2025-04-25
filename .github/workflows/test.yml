@@ -1,0 +1,50 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - main
+      
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  Test:
+    name: Test (${{ matrix.version }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+
+    env:
+      TESTCONTAINER_DOCKER_NETWORK: kanae-testcontainers
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.version }}
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.version }}
+
+      - name: Install Tox
+        run: |
+          pip install "tox>=4.25.0,<5"
+
+      - name: Set up server configuration
+        run: |
+          cp config-example.yml server/config.yml
+
+      - name: Create Docker network for running Testcontainers
+        run: sudo docker network create ${{ env.TESTCONTAINER_DOCKER_NETWORK }}
+
+      - name: Run Tests
+        run: |
+          RAW_PYTHON_VERSION=${{ matrix.version }}
+          PYTHON_VERSION=$(echo $RAW_PYTHON_VERSION | sed 's/\.//')
+          tox -e $PYTHON_VERSION
