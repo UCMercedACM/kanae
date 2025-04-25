@@ -62,7 +62,7 @@ from utils.responses.exceptions import (
 )
 
 try:
-    from typing import Self, Unpack
+    from typing import Self, Unpack  # type: ignore # Yes, for backwards compat purposes
 except ImportError:
     from typing_extensions import Self, Unpack
 

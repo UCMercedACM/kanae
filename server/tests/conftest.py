@@ -14,9 +14,10 @@ from utils.config import KanaeConfig
 from yarl import URL
 
 try:
-    from typing import Self
+    from typing import Self  # type: ignore # Yes, for backwards compat purposes
 except ImportError:
     from typing_extensions import Self
+
 
 BE = TypeVar("BE", bound=BaseException)
 
