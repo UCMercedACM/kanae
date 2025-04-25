@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import TracebackType
-from typing import AsyncGenerator, Generator, Optional, Self, Type, TypeVar
+from typing import AsyncGenerator, Generator, Optional, Type, TypeVar
 
 import httpx
 import pytest
@@ -12,6 +12,11 @@ from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 from utils.config import KanaeConfig
 from yarl import URL
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 BE = TypeVar("BE", bound=BaseException)
 
@@ -53,7 +58,7 @@ def get_app() -> Kanae:
 
 
 @pytest.fixture(scope="session")
-def setup() -> Generator[PostgresContainer]:
+def setup() -> Generator[PostgresContainer, None, None]:
     with DockerImage(
         path=ROOT, dockerfile_path=DOCKERFILE_PATH, tag="kanae-pg-test:latest"
     ) as image:
@@ -65,7 +70,7 @@ def setup() -> Generator[PostgresContainer]:
 @pytest_asyncio.fixture(scope="function")
 async def app(
     get_app: Kanae, setup: PostgresContainer
-) -> AsyncGenerator[KanaeTestClient]:
+) -> AsyncGenerator[KanaeTestClient, None]:
     get_app.config.replace("postgres_uri", setup.get_connection_url(driver=None))
     async with (
         LifespanManager(app=get_app),
