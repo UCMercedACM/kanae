@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, Optional, Union, Unpack
+from typing import TYPE_CHECKING, Any, Generator, Optional, Union
 
 import asyncpg
 import orjson
@@ -62,9 +62,9 @@ from utils.responses.exceptions import (
 )
 
 try:
-    from typing import Self
+    from typing import Self, Unpack
 except ImportError:
-    from typing_extensions import Self
+    from typing_extensions import Self, Unpack
 
 if TYPE_CHECKING:
     from supertokens_python.recipe.thirdparty.types import (
