@@ -128,7 +128,6 @@ class Kanae(FastAPI):
             dependencies=[Depends(self.get_db)],
             default_response_class=ORJSONResponse,
             responses={400: {"model": RequestValidationErrorResponse}},
-            loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
             lifespan=self.lifespan,
