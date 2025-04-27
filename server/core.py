@@ -55,15 +55,17 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 )
 # isort: on
 
+import sys
+
 from utils.config import KanaeConfig
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
 )
 
-try:
-    from typing import Self, Unpack  # type: ignore # Yes, for backwards compat purposes
-except ImportError:
+if sys.version_info >= (3, 11):
+    from typing import Self, Unpack
+else:
     from typing_extensions import Self, Unpack
 
 if TYPE_CHECKING:

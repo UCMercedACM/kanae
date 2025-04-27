@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from types import TracebackType
 from typing import Generator, Optional, Type, TypeVar
@@ -13,11 +14,10 @@ from testcontainers.postgres import PostgresContainer
 from utils.config import KanaeConfig
 from yarl import URL
 
-try:
-    from typing import Self  # type: ignore # Yes, for backwards compat purposes
-except ImportError:
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
     from typing_extensions import Self
-
 
 BE = TypeVar("BE", bound=BaseException)
 
