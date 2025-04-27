@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Generator, Optional, Union
 
@@ -54,8 +55,6 @@ from supertokens_python.recipe.emailpassword.interfaces import (
     SignUpOkResult as EmailPasswordSignUpOkResult,
 )
 # isort: on
-
-import sys
 
 from utils.config import KanaeConfig
 from utils.responses.exceptions import (
