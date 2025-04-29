@@ -1,10 +1,8 @@
 import argparse
 import os
-import signal
 import sys
 from pathlib import Path
 
-import uvicorn
 from core import Kanae
 from fastapi_pagination import add_pagination
 from routes import router
@@ -14,7 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from supertokens_python import get_all_cors_headers
 from supertokens_python.framework.fastapi import get_middleware
 from utils.config import KanaeConfig, KanaeUvicornConfig
-from utils.handler import InterruptHandler
+from utils.server import KanaeUvicornServer
 from uvicorn.supervisors import Multiprocess
 
 config_path = Path(__file__).parent / "config.yml"
@@ -67,20 +65,18 @@ if __name__ == "__main__":
         "launcher:app", port=args.port, host=args.host, access_log=True
     )
 
-    server = uvicorn.Server(config)
+    server = KanaeUvicornServer(config)
 
     sock = config.bind_socket()
 
     if use_workers:
         config.workers = worker_count
 
-        runner = Multiprocess(config, target=server.run, sockets=[sock])
+        # Needs to be fixed
+        runner = Multiprocess(config, target=server.multi_run, sockets=[sock])
     else:
-        # Apparently this doesn't have it's own signal handler
-        handler = InterruptHandler(core=app, server=server, sockets=[sock])
-        app.loop.add_signal_handler(signal.SIGINT, handler)
-        app.loop.add_signal_handler(signal.SIGTERM, handler)
-
         runner = server
+
+        # Apparently this doesn't have it's own signal handler
 
     runner.run()

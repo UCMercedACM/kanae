@@ -114,6 +114,10 @@ class KanaeConfig(Generic[_T]):
 class KanaeUvicornConfig(UvicornConfig):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.loop = "auto"
+
+    def setup_event_loop(self) -> None:
+        return
 
     ### Private utilities
 

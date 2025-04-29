@@ -1,5 +1,8 @@
 fastapi>=0.115.12,<1
-uvicorn[standard]>=0.34.0,<1
+uvicorn>=0.34.0,<1
+httptools>=0.6.4,<1
+uvloop>=0.21.0,<1 ; sys_platform != "win32"
+winloop>=0.1.8,<1 ; sys_platform == "win32"
 asyncpg>=0.30.0,<1
 typing-extensions>=4.13.0,<5
 slowapi>=0.1.9,<1
@@ -10,3 +13,5 @@ supertokens-python>=0.29.0,<1
 argon2-cffi>=23.1.0,<24
 pybase62>=1.0.0,<2
 email-validator>=2.2.0,<3
+PyYAML>=6.0.2,<7
+watchfiles>=1.0.5
