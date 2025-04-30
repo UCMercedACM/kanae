@@ -72,7 +72,6 @@ if __name__ == "__main__":
     if use_workers:
         config.workers = worker_count
 
-        # Needs to be fixed
         runner = Multiprocess(config, target=server.multi_run, sockets=[sock])
     else:
         runner = server
