@@ -1,6 +1,3 @@
-import argparse
-import os
-import sys
 from pathlib import Path
 
 from core import Kanae
@@ -12,8 +9,7 @@ from starlette.middleware.cors import CORSMiddleware
 from supertokens_python import get_all_cors_headers
 from supertokens_python.framework.fastapi import get_middleware
 from utils.config import KanaeConfig, KanaeUvicornConfig
-from utils.server import KanaeUvicornServer
-from uvicorn.supervisors import Multiprocess
+from utils.uvicorn.server import KanaeUvicornServer
 
 config_path = Path(__file__).parent / "config.yml"
 config = KanaeConfig(config_path)
@@ -34,46 +30,12 @@ app.state.limiter = router.limiter
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-H",
-        "--host",
-        default=config["kanae"]["host"],
-        help="The host to bind to. Defaults to value set in config",
-    )
-    parser.add_argument(
-        "-p",
-        "--port",
-        default=config["kanae"]["port"],
-        help="The port to bind to. Defaults to value set in config",
-        type=int,
-    )
-    parser.add_argument(
-        "-nw",
-        "--no-workers",
-        action="store_true",
-        default=False,
-        help="Runs no workers",
-    )
-    parser.add_argument("-w", "--workers", default=os.cpu_count() or 1, type=int)
-
-    args = parser.parse_args(sys.argv[1:])
-    use_workers = not args.no_workers
-    worker_count = args.workers
-
     config = KanaeUvicornConfig(
-        "launcher:app", port=args.port, host=args.host, access_log=True
+        "launcher:app",
+        port=config["kanae"]["host"],
+        host=config["kanae"]["port"],
+        access_log=True,
     )
 
     server = KanaeUvicornServer(config)
-
-    sock = config.bind_socket()
-
-    if use_workers:
-        config.workers = worker_count
-
-        runner = Multiprocess(config, target=server.multi_run, sockets=[sock])
-    else:
-        runner = server
-
-    runner.run()
+    server.run()

@@ -1,5 +1,4 @@
 # Wrapper around uvicorn.Server to handle uvloop/winloop
-import asyncio
 import os
 import signal
 import socket
@@ -26,6 +25,3 @@ class KanaeUvicornServer(uvicorn.Server):
         self.loop.add_signal_handler(signal.SIGINT, handler)
         self.loop.add_signal_handler(signal.SIGTERM, handler)
         return run(self.serve(sockets=sockets))
-
-    def multi_run(self, sockets: Optional[list[socket.socket]] = None) -> None:
-        return asyncio.run(self.serve(sockets=sockets))
