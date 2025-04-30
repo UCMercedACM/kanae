@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
@@ -115,12 +114,8 @@ class Kanae(FastAPI):
     def __init__(
         self,
         *,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
         config: KanaeConfig,
     ):
-        self.loop: asyncio.AbstractEventLoop = (
-            loop or asyncio.get_event_loop_policy().get_event_loop()
-        )
         super().__init__(
             title=__title__,
             description=__description__,
@@ -128,7 +123,6 @@ class Kanae(FastAPI):
             dependencies=[Depends(self.get_db)],
             default_response_class=ORJSONResponse,
             responses={400: {"model": RequestValidationErrorResponse}},
-            loop=self.loop,
             redoc_url="/docs",
             docs_url=None,
             lifespan=self.lifespan,
