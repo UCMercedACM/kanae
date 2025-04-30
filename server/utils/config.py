@@ -117,7 +117,7 @@ class KanaeUvicornConfig(UvicornConfig):
         self.loop = "auto"
 
     def setup_event_loop(self) -> None:
-        return
+        pass
 
     ### Private utilities
 
