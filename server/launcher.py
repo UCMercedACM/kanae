@@ -77,6 +77,4 @@ if __name__ == "__main__":
     else:
         runner = server
 
-        # Apparently this doesn't have it's own signal handler
-
     runner.run()
