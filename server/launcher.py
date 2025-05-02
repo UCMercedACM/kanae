@@ -32,8 +32,8 @@ app.state.limiter = router.limiter
 if __name__ == "__main__":
     config = KanaeUvicornConfig(
         "launcher:app",
-        port=config["kanae"]["host"],
-        host=config["kanae"]["port"],
+        port=config["kanae"]["port"],
+        host=config["kanae"]["host"],
         access_log=True,
     )
 
