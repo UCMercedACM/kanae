@@ -5,7 +5,7 @@ import socket
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from .server import KanaeUvicornServer
+    from utils.uvicorn.server import KanaeUvicornServer
 
 
 class InterruptHandler:
