@@ -15,9 +15,9 @@ from utils.config import KanaeConfig
 from yarl import URL
 
 if sys.version_info >= (3, 11):
-    from typing import Self
+    from typing import AsyncGenerator, Self
 else:
-    from typing_extensions import Self
+    from typing_extensions import AsyncGenerator, Self
 
 BE = TypeVar("BE", bound=BaseException)
 
@@ -71,7 +71,7 @@ def setup() -> Generator[PostgresContainer, None, None]:
 @pytest_asyncio.fixture(scope="function")
 async def app(
     get_app: Kanae, setup: PostgresContainer
-):  # I give up with the type hints
+) -> AsyncGenerator[KanaeTestClient, None]:
     get_app.config.replace("postgres_uri", setup.get_connection_url(driver=None))
     async with (
         LifespanManager(app=get_app),
