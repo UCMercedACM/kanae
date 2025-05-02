@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, Optional, Self, Union, Unpack
+from typing import TYPE_CHECKING, Any, Generator, Optional, Union
 
 import asyncpg
 import orjson
@@ -59,6 +60,11 @@ from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
 )
+
+if sys.version_info >= (3, 11):
+    from typing import Self, Unpack
+else:
+    from typing_extensions import Self, Unpack
 
 if TYPE_CHECKING:
     from supertokens_python.recipe.thirdparty.types import (

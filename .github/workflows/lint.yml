@@ -33,6 +33,5 @@ jobs:
 
       - name: Lint Codebase
         run: |
-          RAW_PYTHON_VERSION=${{ matrix.version }}
-          PYTHON_VERSION=$(echo $RAW_PYTHON_VERSION | sed 's/\.//')
-          tox -e py$PYTHON_VERSION
+          tox -e lint
+

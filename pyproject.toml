@@ -68,3 +68,12 @@ force-wrap-aliases = true
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra"
+testpaths = [
+    "server/tests"
+]
+pythonpath = ["server"]
+asyncio_default_fixture_loop_scope = "function"
