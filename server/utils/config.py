@@ -119,6 +119,9 @@ class KanaeUvicornConfig(UvicornConfig):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    def setup_event_loop(self) -> None:
+        pass
+
     ### Private utilities
 
     def _determine_level(self, level: Optional[Union[str, int]]) -> int:

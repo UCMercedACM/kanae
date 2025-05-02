@@ -12,3 +12,7 @@ pytest>=8.3.5,<9
 pytest-asyncio>=0.26.0,<1
 testcontainers>=4.10.0,<5
 asgi-lifespan>=2.1.0,<3
+
+# Additional utils only used for development
+colorama>=0.4.6,<5 ; sys_platform == "win32"
+watchfiles>=1.0.5,<2

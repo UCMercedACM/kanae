@@ -1,10 +1,5 @@
-import argparse
-import os
-import signal
-import sys
 from pathlib import Path
 
-import uvicorn
 from core import Kanae
 from fastapi_pagination import add_pagination
 from routes import router
@@ -14,8 +9,7 @@ from starlette.middleware.cors import CORSMiddleware
 from supertokens_python import get_all_cors_headers
 from supertokens_python.framework.fastapi import get_middleware
 from utils.config import KanaeConfig, KanaeUvicornConfig
-from utils.handler import InterruptHandler
-from uvicorn.supervisors import Multiprocess
+from utils.uvicorn.server import KanaeUvicornServer
 
 config_path = Path(__file__).parent / "config.yml"
 config = KanaeConfig(config_path)
@@ -36,51 +30,12 @@ app.state.limiter = router.limiter
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-H",
-        "--host",
-        default=config["kanae"]["host"],
-        help="The host to bind to. Defaults to value set in config",
-    )
-    parser.add_argument(
-        "-p",
-        "--port",
-        default=config["kanae"]["port"],
-        help="The port to bind to. Defaults to value set in config",
-        type=int,
-    )
-    parser.add_argument(
-        "-nw",
-        "--no-workers",
-        action="store_true",
-        default=False,
-        help="Runs no workers",
-    )
-    parser.add_argument("-w", "--workers", default=os.cpu_count() or 1, type=int)
-
-    args = parser.parse_args(sys.argv[1:])
-    use_workers = not args.no_workers
-    worker_count = args.workers
-
     config = KanaeUvicornConfig(
-        "launcher:app", port=args.port, host=args.host, access_log=True
+        "launcher:app",
+        port=config["kanae"]["port"],
+        host=config["kanae"]["host"],
+        access_log=True,
     )
 
-    server = uvicorn.Server(config)
-
-    sock = config.bind_socket()
-
-    if use_workers:
-        config.workers = worker_count
-
-        runner = Multiprocess(config, target=server.run, sockets=[sock])
-    else:
-        # Apparently this doesn't have it's own signal handler
-        handler = InterruptHandler(core=app, server=server, sockets=[sock])
-        app.loop.add_signal_handler(signal.SIGINT, handler)
-        app.loop.add_signal_handler(signal.SIGTERM, handler)
-
-        runner = server
-
-    runner.run()
+    server = KanaeUvicornServer(config)
+    server.run()
