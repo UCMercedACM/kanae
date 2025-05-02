@@ -122,6 +122,7 @@ class Kanae(FastAPI):
             version=__version__,
             dependencies=[Depends(self.get_db)],
             default_response_class=ORJSONResponse,
+            http="httptools",
             responses={400: {"model": RequestValidationErrorResponse}},
             redoc_url="/docs",
             docs_url=None,

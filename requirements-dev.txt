@@ -8,3 +8,4 @@ tox>=4.25.0,<5
 
 # Additional utils only used for development
 colorama>=0.4.6,<5 ; sys_platform == "win32"
+watchfiles>=1.0.5,<2

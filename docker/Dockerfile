@@ -25,7 +25,7 @@ EXPOSE 9555
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-CMD ["python3", "/kanae/server/launcher.py", "--no-workers"]
+CMD ["python3", "/kanae/server/launcher.py"]
 
 STOPSIGNAL SIGTERM
 
