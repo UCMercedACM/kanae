@@ -1,9 +1,5 @@
-from typing import TYPE_CHECKING
-
 import pytest
-
-if TYPE_CHECKING:
-    from conftest import KanaeTestClient
+from conftest import KanaeTestClient
 
 
 @pytest.mark.asyncio()
