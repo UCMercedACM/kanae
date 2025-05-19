@@ -6,7 +6,7 @@ winloop>=0.1.8,<1 ; sys_platform == "win32"
 asyncpg>=0.30.0,<1
 typing-extensions>=4.13.0,<5
 slowapi>=0.1.9,<1
-redis[hiredis]>=5.2.1,<6.0.0
+redis[hiredis]>=5.2.1,<7.0.0
 orjson>=3.10.16,<4
 fastapi-pagination>=0.12.34,<1
 supertokens-python>=0.29.0,<1
