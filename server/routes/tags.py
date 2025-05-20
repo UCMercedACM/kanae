@@ -73,6 +73,7 @@ class ModifiedTag(BaseModel):
 @router.put(
     "/tags/{id}",
     responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
+    include_in_schema=False,
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
@@ -100,6 +101,7 @@ async def edit_tag(
 @router.delete(
     "/tags/{id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
+    include_in_schema=False,
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
@@ -120,7 +122,7 @@ async def delete_tag(
     return DeleteResponse()
 
 
-@router.post("/tags/create", responses={200: {"model": Tags}})
+@router.post("/tags/create", responses={200: {"model": Tags}}, include_in_schema=False)
 @has_admin_role()
 @router.limiter.limit("5/minute")
 async def create_tags(
@@ -138,7 +140,9 @@ async def create_tags(
     return Tags(**dict(rows))
 
 
-@router.post("/tags/bulk-create", responses={200: {"model": list[Tags]}})
+@router.post(
+    "/tags/bulk-create", responses={200: {"model": list[Tags]}}, include_in_schema=False
+)
 @has_admin_role()
 @router.limiter.limit("1/minute")
 async def bulk_create_tags(
