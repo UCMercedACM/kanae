@@ -95,8 +95,10 @@ class KanaeConfig(Generic[_T]):
         """Retrieves a config entry."""
         return self._config.get(str(key), default)
 
-    def replace(self, key: Any, value: Union[_T, Any]) -> None:
-        """Replaces a config entry."""
+    def __setitem__(self, key: Any, value: Union[_T, Any]) -> None:
+        # Prevent replacing other keys for security reasons
+        if str(key) != "postgres_uri":
+            return
         self._config[str(key)] = value
 
     def __contains__(self, item: Any) -> bool:

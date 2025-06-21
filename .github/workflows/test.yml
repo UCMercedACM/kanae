@@ -38,7 +38,7 @@ jobs:
 
       - name: Set up server configuration
         run: |
-          cp config-example.yml server/config.yml
+          cp config.dist.yml server/config.yml
 
       - name: Create Docker network for running Testcontainers
         run: sudo docker network create ${{ env.TESTCONTAINER_DOCKER_NETWORK }}

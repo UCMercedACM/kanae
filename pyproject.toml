@@ -19,11 +19,8 @@ exclude = [
     "docker"
 ]
 reportMissingImports = "error"
-typeCheckingMode = "basic"
+typeCheckingMode = "standard"
 reportUnnecessaryTypeIgnoreComment = "warning"
-
-[tool.bandit]
-skips = ["B311", "B101"]
 
 [tool.ruff]
 line-length = 88

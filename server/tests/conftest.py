@@ -38,9 +38,6 @@ class KanaeTestClient:
             base_url=str(URL.build(scheme="http", host=self._host, port=self._port)),
         )
 
-    async def close(self) -> None:
-        await self.client.aclose()
-
     async def __aenter__(self) -> Self:
         return self
 
@@ -50,7 +47,7 @@ class KanaeTestClient:
         exc: Optional[BE],
         traceback: Optional[TracebackType],
     ) -> None:
-        await self.close()
+        await self.client.aclose()
 
 
 @pytest.fixture(scope="session")
@@ -60,9 +57,7 @@ def get_app() -> Kanae:
 
 @pytest.fixture(scope="session")
 def setup() -> Generator[PostgresContainer, None, None]:
-    with DockerImage(
-        path=ROOT, dockerfile_path=DOCKERFILE_PATH, tag="kanae-pg-test:latest"
-    ) as image:
+    with DockerImage(path=ROOT, dockerfile_path=DOCKERFILE_PATH) as image:
         with PostgresContainer(str(image)) as container:
             wait_for_logs(container, "ready", timeout=15.0)
             yield container
@@ -72,7 +67,7 @@ def setup() -> Generator[PostgresContainer, None, None]:
 async def app(
     get_app: Kanae, setup: PostgresContainer
 ) -> AsyncGenerator[KanaeTestClient, None]:
-    get_app.config.replace("postgres_uri", setup.get_connection_url(driver=None))
+    get_app.config["postgres_uri"] = setup.get_connection_url(driver=None)
     async with (
         LifespanManager(app=get_app),
         KanaeTestClient(app=get_app) as client,

@@ -3,7 +3,7 @@ name: kanae
 services:
   kanae:
     container_name: kanae
-    image: ghcr.io/ucmercedacm/kanae:edge 
+    image: ghcr.io/ucmercedacm/kanae:latest
     volumes:
       # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
       - ${CONFIG_LOCATION}:/kanae/server/config.yml
@@ -23,7 +23,7 @@ services:
 
   database:
     container_name: kanae_postgres
-    image: postgres:17
+    image: postgres:17-alpine
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
@@ -42,7 +42,7 @@ services:
 
   redis:
     container_name: kanae_redis
-    image: redis:7-alpine
+    image: redis:8-alpine
     healthcheck:
       test: redis-cli ping || exit 1
     ports:

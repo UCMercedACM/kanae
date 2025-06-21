@@ -17,7 +17,7 @@ jobs:
           mkdir -p releases
           cp docker/docker-compose.yml kanae-docker/
           cp docker/example.env kanae-docker/
-          cp config-example.yml kanae-docker/
+          cp config.dist.yml kanae-docker/
   
       - name: Bundle docker-related files
         run: |
