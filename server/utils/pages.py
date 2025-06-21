@@ -81,7 +81,7 @@ class KanaePages(AbstractPage[T], Generic[T]):
     __params_type__ = KanaeParams
 
     @classmethod
-    def create(
+    def create(  # type: ignore
         cls,
         items: Sequence[T],
         params: KanaeParams,

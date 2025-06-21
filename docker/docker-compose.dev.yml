@@ -18,7 +18,7 @@ services:
 
   redis:
     container_name: kanae_redis
-    image: redis:7-alpine
+    image: redis:8-alpine
     healthcheck:
       test: redis-cli ping || exit 1
     ports:

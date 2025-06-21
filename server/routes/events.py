@@ -1,4 +1,5 @@
 import datetime
+import sys
 import uuid
 from dataclasses import asdict
 from typing import Annotated, Literal, Optional, Union
@@ -13,7 +14,6 @@ from fastapi import Depends, Query
 from pydantic import BaseModel, model_validator
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
-from typing_extensions import Self
 from utils.exceptions import ConflictException, ForbiddenException, NotFoundException
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
@@ -26,6 +26,11 @@ from utils.responses.exceptions import (
 from utils.responses.success import DeleteResponse, JoinResponse, SuccessResponse
 from utils.roles import has_any_role
 from utils.router import KanaeRouter
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 _TYPE_TO_NAME = {Type.ID: "argon2id", Type.I: "argon2i", Type.D: "argon2d"}
 _REQUIRED_KEYS = ("v", "m", "t", "p")
