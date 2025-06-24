@@ -7,4 +7,4 @@ pre-commit:
     ruff-fmt:
       glob: "*.py"
       stage_fixed: true
-      run: ruff format {staged_files}
+      run: ruff format --exit-non-zero-on-format {staged_files}
