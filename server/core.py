@@ -21,7 +21,9 @@ from supertokens_python import (
     init as supertokens_init,
 )
 from supertokens_python.asyncio import list_users_by_account_info
-from supertokens_python.auth_utils import LinkingToSessionUserFailedError
+from supertokens_python.auth_utils import (
+    LinkingToSessionUserFailedError,  # type: ignore
+)
 from supertokens_python.exceptions import GeneralError
 from supertokens_python.recipe import (
     dashboard,
@@ -31,6 +33,7 @@ from supertokens_python.recipe import (
     userroles,
 )
 from supertokens_python.recipe.session.interfaces import SessionContainer
+from supertokens_python.types.base import AccountInfoInput
 
 # isort: off
 # isort is turned off here to clarify the different imports of interfaces and providers
@@ -71,9 +74,8 @@ if TYPE_CHECKING:
         RawUserInfoFromProvider,
         ThirdPartyInfo,
     )
-    from supertokens_python.types import AccountInfo, GeneralErrorResponse
+    from supertokens_python.types import GeneralErrorResponse
     from utils.request import RouteRequest
-
 
 __title__ = "Kanae"
 __description__ = """
@@ -228,7 +230,7 @@ class Kanae(FastAPI):
             user_context: dict[str, Any],
         ):
             existing_users = await list_users_by_account_info(
-                tenant_id, AccountInfo(email=email)
+                tenant_id, AccountInfoInput(email=email)
             )
             if len(existing_users) == 0:
                 result = await original_sign_in_up(
@@ -297,7 +299,7 @@ class Kanae(FastAPI):
 
             normalized_email = is_valid_email.normalized
             existing_users = await list_users_by_account_info(
-                tenant_id, AccountInfo(email=normalized_email)
+                tenant_id, AccountInfoInput(email=normalized_email)
             )
 
             if len(existing_users) == 0:
@@ -396,7 +398,7 @@ class Kanae(FastAPI):
             except asyncpg.UniqueViolationError:
                 await tr.rollback()
                 return LinkingToSessionUserFailedError(
-                    "RECIPE_USER_ID_ALREADY_LINKED_WITH_ANOTHER_PRIMARY_USER_ID_ERROR"
+                    reason="RECIPE_USER_ID_ALREADY_LINKED_WITH_ANOTHER_PRIMARY_USER_ID_ERROR"
                 )
             except Exception as e:
                 await tr.rollback()
