@@ -19,7 +19,7 @@ exclude = [
     "docker"
 ]
 reportMissingImports = "error"
-typeCheckingMode = "basic"
+typeCheckingMode = "standard"
 reportUnnecessaryTypeIgnoreComment = "warning"
 
 [tool.ruff]

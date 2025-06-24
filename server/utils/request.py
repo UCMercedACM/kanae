@@ -9,4 +9,9 @@ if TYPE_CHECKING:
 
 
 class RouteRequest(Request):
-    app: Kanae
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @property
+    def app(self) -> Kanae:
+        return self.scope["app"]

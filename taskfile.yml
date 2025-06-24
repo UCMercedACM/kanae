@@ -35,6 +35,11 @@ tasks:
       - ruff format server
     silent: true
 
+  pyright:
+    cmds:
+      - pyright server
+    silent: true
+
   schema-plan:
     cmds:
       - atlas schema plan --to file://server/schema.sql --env dev --var url=$DATABASE_URL

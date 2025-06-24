@@ -28,7 +28,7 @@ from supertokens_python.recipe.passwordless.interfaces import (
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.asyncio import revoke_all_sessions_for_user
 from supertokens_python.recipe.session.framework.fastapi import verify_session
-from supertokens_python.types import AccountInfo
+from supertokens_python.types.base import AccountInfoInput
 from utils.exceptions import (
     BadRequestException,
     ConflictException,
@@ -290,7 +290,7 @@ async def update_logged_member(
             if member:
                 for tenant_id in member.tenant_ids:
                     members_with_same_email = await list_users_by_account_info(
-                        tenant_id, AccountInfo(email=normalized_email)
+                        tenant_id, AccountInfoInput(email=normalized_email)
                     )
                     for curr_member in members_with_same_email:
                         if curr_member.id != session.get_user_id():
