@@ -40,6 +40,22 @@ kanae:
     # it will always be set to 9555
     port: 9555
 
+    limiter:
+      enabled: True
+      headers_enabled: False
+      auto_check: True
+      swallow_errors: True
+      retry_after: "http-date"
+      default_limits: ["10/second"]
+      application_limits: []
+      in_memory_fallback:
+        enabled: True
+        limits:
+          - "15/second"
+      key_prefix: ""
+      key_style: "url"
+      storage_uri: ""
+
 # These are used by SuperTokens for our backend auth
 auth:
 
