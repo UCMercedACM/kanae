@@ -223,9 +223,10 @@ async def test_endpoint_request_param_invalid(build_fastapi_app):
             base_url=str(URL.build(scheme="http", host="testserver")),
         ) as client:
             await client.get("/t4")
-        assert exc_info.match(
-            r"""parameter `request` must be an instance of starlette.requests.Request"""
-        )
+
+    assert exc_info.match(
+        r"""parameter `request` must be an instance of starlette.requests.Request"""
+    )
 
 
 @pytest.mark.asyncio
@@ -244,9 +245,10 @@ async def test_endpoint_response_param_invalid(build_fastapi_app):
             base_url=str(URL.build(scheme="http", host="testserver")),
         ) as client:
             await client.get("/t4")
-        assert exc_info.match(
-            r"""parameter `response` must be an instance of starlette.responses.Response"""
-        )
+
+    assert exc_info.match(
+        r"""parameter `response` must be an instance of starlette.responses.Response"""
+    )
 
 
 @pytest.mark.asyncio
@@ -302,11 +304,11 @@ async def test_disabled_limiter(build_fastapi_app):
     async with AsyncClient(
         transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
     ) as client:
-        for i in range(0, 10):
+        for _ in range(0, 10):
             response = await client.get("/t1")
 
             assert response.status_code == 200
-        for i in range(0, 10):
+        for _ in range(0, 10):
             response = await client.get("/t3")
 
             assert response.status_code == 200

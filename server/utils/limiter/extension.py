@@ -22,7 +22,7 @@ from fastapi.requests import Request
 from fastapi.responses import ORJSONResponse, Response
 from limits import RateLimitItem, parse_many
 from limits.aio.storage import MemoryStorage, RedisStorage
-from limits.aio.strategies import FixedWindowRateLimiter, RateLimiter
+from limits.aio.strategies import FixedWindowRateLimiter
 from pydantic import BaseModel
 from starlette.datastructures import MutableHeaders
 from utils.config import KanaeConfig
@@ -99,7 +99,7 @@ class RateLimitExceeded(HTTPException):
                 else limit.error_message()
             )
         else:
-            description = str(limit.limit)
+            description = str(limit.limit_item)
         super(RateLimitExceeded, self).__init__(status_code=429, detail=description)
 
 
@@ -135,7 +135,7 @@ class Limit:
 
     def __init__(
         self,
-        limit: RateLimitItem,
+        limit_item: RateLimitItem,
         key_func: Callable[..., str],
         *,
         scope: Optional[Union[str, Callable[..., str]]] = None,
@@ -146,7 +146,7 @@ class Limit:
         cost: Union[int, Callable[..., int]] = 1,
         override_defaults: bool = False,
     ) -> None:
-        self.limit = limit
+        self.limit_item = limit_item
         self.key_func = key_func
         self.__scope = scope
         self.per_method = per_method
@@ -396,7 +396,7 @@ class Limiter:
 
     ### Properties and public methods
     @property
-    def limiter(self) -> RateLimiter:
+    def rate_limiter(self) -> FixedWindowRateLimiter:
         """
         The backend that keeps track of consumption of endpoints vs limits
         """
@@ -467,27 +467,29 @@ class Limiter:
             if all(args):
                 if self._key_prefix:
                     args = [self._key_prefix] + args
-                if not limit_for_header or lim.limit < limit_for_header[0]:
-                    limit_for_header = (lim.limit, args)
+                if not limit_for_header or lim.limit_item < limit_for_header[0]:
+                    limit_for_header = (lim.limit_item, args)
 
                 cost = lim.cost(request) if callable(lim.cost) else lim.cost
 
                 # Redis can't decode this if it's not cast into an int for some reason
-                if not await self.limiter.hit(lim.limit, *args, cost=int(cost)):
+                if not await self.rate_limiter.hit(
+                    lim.limit_item, *args, cost=int(cost)
+                ):
                     self.logger.warning(
                         "ratelimit %s (%s) exceeded at endpoint: %s",
-                        lim.limit,
+                        lim.limit_item,
                         limit_key,
                         limit_scope,
                     )
                     failed_limit = lim
-                    limit_for_header = (lim.limit, args)
+                    limit_for_header = (lim.limit_item, args)
                     break
             else:
                 self.logger.error(
-                    "Skipping limit: %s. Empty value found in parameters.", lim.limit
+                    "Skipping limit: %s. Empty value found in parameters.",
+                    lim.limit_item,
                 )
-                continue
         # keep track of which limit was hit, to be picked up for the response header
         request.state.view_rate_limit = limit_for_header
 
@@ -575,20 +577,15 @@ class Limiter:
                     all_limits += list(itertools.chain(*self._default_limits))
             # actually check the limits, so far we've only computed the list of limits to check
             await self._evaluate_limits(request, _endpoint_key, all_limits)
-        except Exception as e:  # no qa
-            if isinstance(e, RateLimitExceeded):
-                raise
+        except RateLimitExceeded:
             if self._in_memory_fallback_enabled and not self._storage_dead:
                 self.logger.warning(
                     "Rate limit storage unreachable - falling back to in-memory storage"
                 )
                 self._storage_dead = True
                 await self._check_request_limit(request, endpoint_func, in_middleware)
-            else:
-                if self._swallow_errors:
-                    self.logger.exception("Failed to rate limit. Swallowing error")
-                else:
-                    raise
+            elif self._swallow_errors:
+                self.logger.exception("Failed to rate limit. Swallowing error")
 
     ### Header injection
 
@@ -597,7 +594,7 @@ class Limiter:
     ) -> Response:
         if self.enabled and self._headers_enabled and current_limit is not None:
             try:
-                window_stats = await self.limiter.get_window_stats(
+                window_stats = await self.rate_limiter.get_window_stats(
                     current_limit[0], *current_limit[1]
                 )
                 reset_in = int(1 + window_stats.reset_time)
@@ -633,12 +630,10 @@ class Limiter:
                     )
                     self._storage_dead = True
                     response = await self._inject_headers(response, current_limit)
-                if self._swallow_errors:
+                elif self._swallow_errors:
                     self.logger.exception(
                         "Failed to update rate limit headers. Swallowing error"
                     )
-                else:
-                    raise
         return response
 
     async def _inject_asgi_headers(
@@ -653,7 +648,7 @@ class Limiter:
         """
         if self.enabled and self._headers_enabled and current_limit is not None:
             try:
-                window_stats = await self.limiter.get_window_stats(
+                window_stats = await self.rate_limiter.get_window_stats(
                     current_limit[0], *current_limit[1]
                 )
                 reset_in = int(1 + window_stats.reset_time)
@@ -687,12 +682,10 @@ class Limiter:
                     )
                     self._storage_dead = True
                     headers = await self._inject_asgi_headers(headers, current_limit)
-                if self._swallow_errors:
+                elif self._swallow_errors:
                     self.logger.exception(
                         "Failed to update rate limit headers. Swallowing error"
                     )
-                else:
-                    raise
         return headers
 
     ### Decorators
@@ -761,7 +754,7 @@ class Limiter:
                 if parameter.name == "request" or parameter.name == "websocket":
                     break
             else:
-                raise Exception(
+                raise ValueError(
                     f'No "request" or "websocket" argument on function "{func}"'
                 )
 
@@ -774,16 +767,18 @@ class Limiter:
                     request = kwargs.get("request", args[idx] if args else None)
 
                     if not isinstance(request, Request):
-                        raise Exception(
+                        raise ValueError(
                             "parameter `request` must be an instance of starlette.requests.Request"
                         )
 
-                    if self.enabled:
-                        if self._auto_check and not getattr(
-                            request.state, "_rate_limiting_complete", False
-                        ):
-                            await self._check_request_limit(request, func, False)
-                            request.state._rate_limiting_complete = True
+                    if (
+                        self.enabled
+                        and self._auto_check
+                        and not getattr(request.state, "_rate_limiting_complete", False)
+                    ):
+                        await self._check_request_limit(request, func, False)
+                        request.state._rate_limiting_complete = True
+
                     response = await func(*args, **kwargs)
 
                     if self._headers_enabled:
