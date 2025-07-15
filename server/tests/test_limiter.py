@@ -4,6 +4,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from utils.limiter.extension import get_ipaddr
+from yarl import URL
 
 
 @pytest.mark.asyncio
@@ -16,7 +17,9 @@ async def test_single_decorator(build_fastapi_app):
         return PlainTextResponse("test")
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1")
 
@@ -33,7 +36,9 @@ async def test_single_decorator_with_headers(build_fastapi_app):
         return PlainTextResponse("test")
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1")
 
@@ -54,7 +59,9 @@ async def test_single_decorator_not_response(build_fastapi_app):
         return {"key": "value"}
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1")
 
@@ -71,7 +78,9 @@ async def test_single_decorator_not_response_with_headers(build_fastapi_app):
         return {"key": "value"}
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1")
 
@@ -99,7 +108,8 @@ async def test_multiple_decorators(build_fastapi_app):
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url=str(URL.build(scheme="http", host="testserver")),
         ) as cli:
             for i in range(0, 100):
                 response = await cli.get(
@@ -134,7 +144,8 @@ async def test_multiple_decorators_not_response(build_fastapi_app):
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url=str(URL.build(scheme="http", host="testserver")),
         ) as cli:
             for i in range(0, 100):
                 response = await cli.get(
@@ -166,7 +177,8 @@ async def test_multiple_decorators_not_response_with_headers(build_fastapi_app):
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url=str(URL.build(scheme="http", host="testserver")),
         ) as cli:
             for i in range(0, 100):
                 response = await cli.get(
@@ -207,7 +219,8 @@ async def test_endpoint_request_param_invalid(build_fastapi_app):
     with pytest.raises(Exception) as exc_info:
         transport = ASGITransport(app=app)
         async with AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url=str(URL.build(scheme="http", host="testserver")),
         ) as client:
             await client.get("/t4")
         assert exc_info.match(
@@ -227,7 +240,8 @@ async def test_endpoint_response_param_invalid(build_fastapi_app):
     with pytest.raises(Exception) as exc_info:
         transport = ASGITransport(app=app)
         async with AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url=str(URL.build(scheme="http", host="testserver")),
         ) as client:
             await client.get("/t4")
         assert exc_info.match(
@@ -255,7 +269,9 @@ async def test_dynamic_limit_provider_depending_on_key(build_fastapi_app):
         return {"key": "value"}
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1")
 
@@ -283,7 +299,9 @@ async def test_disabled_limiter(build_fastapi_app):
         return PlainTextResponse("also a test")
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1")
 
@@ -309,7 +327,9 @@ async def test_cost(build_fastapi_app):
         return PlainTextResponse("test")
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1")
             assert response.status_code == 200 if i < 5 else 429
@@ -333,7 +353,9 @@ async def test_callable_cost(build_fastapi_app):
         return PlainTextResponse("test")
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         for i in range(0, 10):
             response = await client.get("/t1", headers={"foo": "10"})
 
@@ -358,7 +380,9 @@ async def test_key_style(build_fastapi_app, key_style):
         return PlainTextResponse("test")
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=transport, base_url=str(URL.build(scheme="http", host="testserver"))
+    ) as client:
         await client.get("/t1/param_one")
         second_call = await client.get("/t1/param_two")
 
