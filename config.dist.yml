@@ -18,12 +18,6 @@ kanae:
   # Whether the development mode should be enabled or not
   # This should be disabled during production
   dev_mode: False
-  
-  # Global ratelimit for Kanae
-  # Syntax is amount/minute. Ex: 1/minute
-  ratelimits:
-    - "10/second"
-
 
   # Prometheus exporter for Kanae. The following keys are used in order to control
   # the behavior of the Prometheus exporter
@@ -40,21 +34,59 @@ kanae:
     # it will always be set to 9555
     port: 9555
 
+  # Settings for Kanae's custom rate limiters
   limiter:
+
+    # Whether the rate limiters are enabled or not
     enabled: True
+
+    # Whether to inject the following headers into HTTP headers:
+    # - X-RateLimit-Reset
+    # - X-RateLimit-Remaining
+    # - X-RateLimit-Limit
+    # - Retry-After
     headers_enabled: False
+
+    # Whether to check the rate limit before the request_before chain
     auto_check: True
+
+    # Whether to swallow exceptions during rate limiting
     swallow_errors: True
+
+    # The type of retry-after header to use. Must be http-date or delta-seconds
+    # See https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
     retry_after: "http-date"
-    default_limits: ["10/second"]
+
+    # Default ratelimits throughout all routes
+    # See https://limits.readthedocs.io/en/stable/quickstart.html#rate-limit-string-notation
+    default_limits:
+      - "10/second"
+
+    # Default shared ratelimits used throughout the application
+    # This means that these limits below will be used as one rate limit throughout the application
+    # LEAVE THIS BLANK if you have set the default limits
     application_limits: []
+    
+    ## Settings for falling back to memory-based storage
     in_memory_fallback:
+
+      # Whether to enable this feature or not
       enabled: True
+
+      # Limits used in the case of falling back to memory-based storage
       limits:
         - "15/second"
+
+    # Prefix for each key
     key_prefix: ""
+
+    # The style of the key. Must be either url or endpoint
+    # - URL uses the actual path of the endpoint
+    # - Endpoint uses the function module and name
     key_style: "url"
-    storage_uri: ""
+
+    # Valkey storage-backend URI
+    storage_uri: "valkey://localhost:6379/"
 
 # These are used by SuperTokens for our backend auth
 auth:
@@ -113,7 +145,3 @@ auth:
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
 postgres_uri: "postgresql://user:password@localhost:5432/user"
-
-# The Redis connection URI that is used
-# See https://github.com/redis/lettuce/wiki/Redis-URI-and-connection-details#uri-syntax for URI syntax
-redis_uri: "redis://localhost:6379/0"
