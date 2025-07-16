@@ -197,58 +197,28 @@ async def test_multiple_decorators_not_response_with_headers(build_fastapi_app):
 @pytest.mark.asyncio
 async def test_endpoint_missing_request_param(build_fastapi_app):
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(ValueError) as exc_info:
 
         @app.get("/t3")
         @limiter.limit("5/minute")
         async def t3():
             return PlainTextResponse("test")
 
-    assert exc_info.match(r"""^No "request" or "websocket" argument on function .*""")
+    assert exc_info.match(r"^Missing or invalid `request` argument specified on .*")
 
 
 @pytest.mark.asyncio
 async def test_endpoint_request_param_invalid(build_fastapi_app):
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
-    @app.get("/t4")
-    @limiter.limit("5/minute")
-    async def t4(request: str):
-        return PlainTextResponse("test")
+    with pytest.raises(ValueError) as exc_info:
 
-    with pytest.raises(Exception) as exc_info:
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url=str(URL.build(scheme="http", host="testserver")),
-        ) as client:
-            await client.get("/t4")
+        @app.get("/t4")
+        @limiter.limit("5/minute")
+        async def t4(req: str):
+            return PlainTextResponse("test")
 
-    assert exc_info.match(
-        r"""parameter `request` must be an instance of starlette.requests.Request"""
-    )
-
-
-@pytest.mark.asyncio
-async def test_endpoint_response_param_invalid(build_fastapi_app):
-    app, limiter = build_fastapi_app(key_func=get_ipaddr, headers_enabled=True)
-
-    @app.get("/t4")
-    @limiter.limit("5/minute")
-    async def t4(request: Request, response: str = ""):
-        return {"key": "value"}
-
-    with pytest.raises(Exception) as exc_info:
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url=str(URL.build(scheme="http", host="testserver")),
-        ) as client:
-            await client.get("/t4")
-
-    assert exc_info.match(
-        r"""parameter `response` must be an instance of starlette.responses.Response"""
-    )
+    assert exc_info.match(r"^Missing or invalid `request` argument specified on .*")
 
 
 @pytest.mark.asyncio

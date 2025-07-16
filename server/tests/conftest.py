@@ -45,10 +45,14 @@ CONFIG_PATH = ROOT / "server" / "config.yml"
 config = KanaeConfig(CONFIG_PATH)
 
 
+async def _async_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return await rate_limit_exceeded_handler(request, exc)
+
+
 class ValkeyContainer(DockerContainer):
     def __init__(
         self,
-        image: str = "valkey/valkey:latest",
+        image: str = "valkey/valkey:alpine",
         port: int = 6379,
         password: str | None = None,
         **kwargs,
@@ -100,10 +104,6 @@ class ValkeyContainer(DockerContainer):
 class KanaeServices(NamedTuple):
     postgres: PostgresContainer
     valkey: ValkeyContainer
-
-
-async def _async_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
-    return await rate_limit_exceeded_handler(request, exc)
 
 
 class KanaeTestClient:
@@ -200,4 +200,4 @@ async def build_fastapi_app(request, valkey: ValkeyContainer):
 
     # Constantly reset to clean out cleans
     # Removes constant unexpected 429 errors
-    await _factory()[1].reset()
+    await _factory()[1]._reset()

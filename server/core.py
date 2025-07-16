@@ -59,6 +59,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 # isort: on
 
 from utils.config import KanaeConfig
+from utils.limiter.extension import RateLimitExceeded, rate_limit_exceeded_handler
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
@@ -205,6 +206,10 @@ class Kanae(FastAPI):
         self.add_exception_handler(
             VerificationError,
             self.verification_error_handler,  # type: ignore
+        )
+        self.add_exception_handler(
+            RateLimitExceeded,
+            rate_limit_exceeded_handler,  # type: ignore
         )
 
         self._logger = logging.getLogger("kanae.core")

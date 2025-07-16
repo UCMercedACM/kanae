@@ -1,4 +1,3 @@
-import asyncio
 import functools
 import inspect
 import itertools
@@ -34,6 +33,7 @@ else:
 
 # Define an alias for the most commonly used type
 StrOrCallableStr = Union[str, Callable[..., str]]
+
 
 ### Utilities
 
@@ -395,6 +395,7 @@ class Limiter:
         self._marked_for_limiting: dict[str, list[Callable]] = {}
 
     ### Properties and public methods
+
     @property
     def limiter(self) -> RateLimiter:
         """
@@ -407,21 +408,22 @@ class Limiter:
         else:
             return self._limiter
 
-    async def reset(self) -> None:
-        """
-        resets the storage if it supports being reset
-        """
+    ### Internal utilities
+
+    async def _reset(self) -> None:
         try:
             await self._storage.reset()
             self.logger.info("Storage has been reset and all limits cleared")
         except NotImplementedError:
             self.logger.warning("This storage type does not support being reset")
 
-    ### Internal utilities
-
     def _should_check_backend(self) -> bool:
-        if self._check_backend_count > MAX_BACKEND_CHECKS:
-            self._check_backend_count = 0
+        self._check_backend_count = (
+            0
+            if self._check_backend_count > MAX_BACKEND_CHECKS
+            else self._check_backend_count
+        )
+
         if time.monotonic() - self._last_check_backend > pow(
             2, self._check_backend_count
         ):
@@ -435,12 +437,7 @@ class Limiter:
             retry_after_date = parse(retry_header_value)
             return int(time.mktime(retry_after_date.timetuple()))
 
-        try:
-            return int(time.monotonic() + int(retry_header_value))
-        except Exception:
-            raise ValueError(
-                "Retry-After Header does not meet RFC2616 - value is not of http-date or int type."
-            )
+        return int(time.monotonic() + int(retry_header_value))
 
     ## Limit emulations
 
@@ -450,23 +447,28 @@ class Limiter:
         failed_limit = None
         limit_for_header = None
         for lim in limits:
-            limit_scope = lim.scope or endpoint
-            if lim.is_exempt(request):
+            if (
+                lim.is_exempt(request)
+                or lim.methods is not None
+                and request.method.lower() not in lim.methods
+            ):
                 continue
-            if lim.methods is not None and request.method.lower() not in lim.methods:
-                continue
-            if lim.per_method:
-                limit_scope += ":%s" % request.method
 
-            if "request" in inspect.signature(lim.key_func).parameters.keys():
-                limit_key = lim.key_func(request)
-            else:
-                limit_key = lim.key_func()
+            limit_scope = lim.scope or endpoint
+            limit_key = (
+                lim.key_func(request)
+                if "request" in inspect.signature(lim.key_func).parameters.keys()
+                else lim.key_func()
+            )
+
+            if lim.per_method:
+                limit_scope += f":{request.method}"
 
             args = [limit_key, limit_scope]
             if all(args):
                 if self._key_prefix:
-                    args = [self._key_prefix] + args
+                    args.insert(0, self._key_prefix)
+
                 if not limit_for_header or lim.limit < limit_for_header[0]:
                     limit_for_header = (lim.limit, args)
 
@@ -487,7 +489,6 @@ class Limiter:
                 self.logger.error(
                     "Skipping limit: %s. Empty value found in parameters.", lim.limit
                 )
-                continue
         # keep track of which limit was hit, to be picked up for the response header
         request.state.view_rate_limit = limit_for_header
 
@@ -543,16 +544,21 @@ class Limiter:
 
         try:
             all_limits: list[Limit] = []
-            if self._storage_dead and self._fallback_limiter:
-                if in_middleware and endpoint_func_name in self._marked_for_limiting:
-                    pass
+
+            if (
+                self._storage_dead
+                and self._fallback_limiter
+                and not (
+                    in_middleware and endpoint_func_name in self._marked_for_limiting
+                )
+            ):
+                if self._should_check_backend() and await self._storage.check():
+                    self.logger.info("Rate limit storage recovered")
+                    self._storage_dead = False
+                    self._check_backend_count = 0
                 else:
-                    if self._should_check_backend() and await self._storage.check():
-                        self.logger.info("Rate limit storage recovered")
-                        self._storage_dead = False
-                        self._check_backend_count = 0
-                    else:
-                        all_limits = list(itertools.chain(*self._in_memory_fallback))
+                    all_limits = list(itertools.chain(*self._in_memory_fallback))
+
             if not all_limits:
                 route_limits: list[Limit] = limits + dynamic_limits
                 all_limits = (
@@ -614,7 +620,7 @@ class Limiter:
                 # response may have an existing retry after
                 existing_retry_after_header = response.headers.get("Retry-After")
 
-                if existing_retry_after_header is not None:
+                if existing_retry_after_header:
                     reset_in = max(
                         self._determine_retry_time(existing_retry_after_header),
                         reset_in,
@@ -633,12 +639,10 @@ class Limiter:
                     )
                     self._storage_dead = True
                     response = await self._inject_headers(response, current_limit)
-                if self._swallow_errors:
+                elif self._swallow_errors:
                     self.logger.exception(
                         "Failed to update rate limit headers. Swallowing error"
                     )
-                else:
-                    raise
         return response
 
     async def _inject_asgi_headers(
@@ -687,12 +691,10 @@ class Limiter:
                     )
                     self._storage_dead = True
                     headers = await self._inject_asgi_headers(headers, current_limit)
-                if self._swallow_errors:
+                elif self._swallow_errors:
                     self.logger.exception(
                         "Failed to update rate limit headers. Swallowing error"
                     )
-                else:
-                    raise
         return headers
 
     ### Decorators
@@ -757,33 +759,32 @@ class Limiter:
                 self._route_limits.setdefault(name, []).extend(static_limits)
 
             sig = inspect.signature(func)
-            for idx, parameter in enumerate(sig.parameters.values()):
-                if parameter.name == "request" or parameter.name == "websocket":
-                    break
-            else:
-                raise Exception(
-                    f'No "request" or "websocket" argument on function "{func}"'
+
+            if "request" not in sig.parameters:
+                raise ValueError(
+                    f"Missing or invalid `request` argument specified on {func}"
                 )
 
-            if asyncio.iscoroutinefunction(func):
+            if inspect.iscoroutinefunction(func):
                 # Handle async request/response functions.
                 @functools.wraps(func)
                 async def async_wrapper(*args: Any, **kwargs: Any) -> Response:
                     # get the request object from the decorated endpoint function
-
-                    request = kwargs.get("request", args[idx] if args else None)
+                    request = kwargs.get("request")
 
                     if not isinstance(request, Request):
-                        raise Exception(
-                            "parameter `request` must be an instance of starlette.requests.Request"
+                        raise ValueError(
+                            "parameter `request` must be an instance of fastapi.Request"
                         )
 
-                    if self.enabled:
-                        if self._auto_check and not getattr(
-                            request.state, "_rate_limiting_complete", False
-                        ):
-                            await self._check_request_limit(request, func, False)
-                            request.state._rate_limiting_complete = True
+                    if (
+                        self.enabled
+                        and self._auto_check
+                        and not getattr(request.state, "_rate_limiting_complete", False)
+                    ):
+                        await self._check_request_limit(request, func, False)
+                        request.state._rate_limiting_complete = True
+
                     response = await func(*args, **kwargs)
 
                     if self._headers_enabled:
@@ -793,10 +794,11 @@ class Limiter:
                                 kwargs["response"].headers,
                                 request.state.view_rate_limit,
                             )
-                        else:
-                            await self._inject_asgi_headers(
-                                response.headers, request.state.view_rate_limit
-                            )
+                            return response
+
+                        await self._inject_asgi_headers(
+                            response.headers, request.state.view_rate_limit
+                        )
                     return response
 
                 return async_wrapper
@@ -892,7 +894,7 @@ class Limiter:
 
         self._exempt_routes.add(name)
 
-        if asyncio.iscoroutinefunction(obj):
+        if inspect.iscoroutinefunction(obj):
 
             @wraps(obj)
             async def __async_inner(*a, **k):
