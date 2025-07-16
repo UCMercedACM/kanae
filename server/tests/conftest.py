@@ -52,7 +52,7 @@ async def _async_rate_limit_exceeded_handler(request: Request, exc: RateLimitExc
 class ValkeyContainer(DockerContainer):
     def __init__(
         self,
-        image: str = "valkey/valkey:alpine",
+        image: str = "valkey/valkey:latest",
         port: int = 6379,
         password: str | None = None,
         **kwargs,
