@@ -22,6 +22,7 @@ from fastapi.responses import ORJSONResponse, Response
 from limits import RateLimitItem, parse_many
 from limits.aio.storage import MemoryStorage, RedisStorage
 from limits.aio.strategies import FixedWindowRateLimiter, RateLimiter
+from limits.errors import StorageError
 from pydantic import BaseModel
 from starlette.datastructures import MutableHeaders
 from utils.config import KanaeConfig
@@ -77,10 +78,10 @@ async def rate_limit_exceeded_handler(
     response = ORJSONResponse(
         {"error": f"Rate limit exceeded: {exc.detail}"}, status_code=429
     )
-    response = await request.app.state.limiter._inject_headers(
+    injected_response = await request.app.state.limiter._inject_headers(
         response, request.state.view_rate_limit
     )
-    return response
+    return injected_response
 
 
 class RateLimitExceeded(HTTPException):
@@ -92,15 +93,18 @@ class RateLimitExceeded(HTTPException):
 
     def __init__(self, limit: "Limit"):
         self.limit = limit
+        self.description = str(limit.limit)
+
         if limit.error_message:
-            description: str = (
+            self.description: str = (
                 limit.error_message
                 if not callable(limit.error_message)
                 else limit.error_message()
             )
-        else:
-            description = str(limit.limit)
-        super(RateLimitExceeded, self).__init__(status_code=429, detail=description)
+
+        super(RateLimitExceeded, self).__init__(
+            status_code=429, detail=self.description
+        )
 
 
 ### Limit configuration models
@@ -169,9 +173,9 @@ class Limit:
 
         Return True to exempt the route from the limit.
         """
-        if self.exempt_when is None:
+        if not self.exempt_when:
             return False
-        if self._exempt_when_takes_request and request:
+        elif self._exempt_when_takes_request and request:
             return self.exempt_when(request)
         return self.exempt_when()
 
@@ -180,12 +184,11 @@ class Limit:
         # flack.request.endpoint is the name of the function for the endpoint
         if self.__scope is None:
             return ""
-        else:
-            return (
-                self.__scope(request.endpoint)  # type: ignore # noqa: F821 (this has to be rewritten, dont want to break)
-                if callable(self.__scope)
-                else self.__scope
-            )
+        return (
+            self.__scope(request.endpoint)  # type: ignore # noqa: F821 (this has to be rewritten, dont want to break)
+            if callable(self.__scope)
+            else self.__scope
+        )
 
 
 class LimitGroup:
@@ -219,22 +222,23 @@ class LimitGroup:
 
     def __iter__(self) -> Iterator[Limit]:
         if callable(self.__limit_provider):
-            if "key" in inspect.signature(self.__limit_provider).parameters.keys():
-                if (
-                    "request"
-                    not in inspect.signature(self.key_function).parameters.keys()
-                ):
-                    raise ValueError(
-                        f"Limit provider function {self.key_function.__name__} needs a `request` argument"
-                    )
+            if (
+                "key" in inspect.signature(self.__limit_provider).parameters.keys()
+                and "request"
+                not in inspect.signature(self.key_function).parameters.keys()
+            ):
+                raise ValueError(
+                    f"Limit provider function {self.key_function.__name__} needs a `request` argument"
+                )
 
-                if not self.request:
-                    raise ValueError("`request` object can't be None")
-                limit_raw = self.__limit_provider(self.key_function(self.request))
-            else:
-                limit_raw = self.__limit_provider()
+            if not self.request:
+                raise ValueError("`request` object can't be None")
+
+            limit_raw = self.__limit_provider(self.key_function(self.request))
+
         else:
             limit_raw = self.__limit_provider
+
         limit_items: list[RateLimitItem] = parse_many(limit_raw)
         for limit in limit_items:
             yield Limit(
@@ -535,11 +539,11 @@ class Limiter:
                 for lim in self._dynamic_route_limits[endpoint_func_name]:
                     try:
                         dynamic_limits.extend(list(lim.with_request(request)))
-                    except ValueError as e:
-                        self.logger.error(
-                            "failed to load ratelimit for view function %s (%s)",
+                    except ValueError as exc:
+                        self.logger.exception(
+                            "failed to load ratelimit for view function %s",
                             endpoint_func_name,
-                            e,
+                            exc_info=exc,
                         )
 
         try:
@@ -581,20 +585,19 @@ class Limiter:
                     all_limits += list(itertools.chain(*self._default_limits))
             # actually check the limits, so far we've only computed the list of limits to check
             await self._evaluate_limits(request, _endpoint_key, all_limits)
-        except Exception as e:  # no qa
+        except Exception as e:
             if isinstance(e, RateLimitExceeded):
                 raise
+
             if self._in_memory_fallback_enabled and not self._storage_dead:
                 self.logger.warning(
                     "Rate limit storage unreachable - falling back to in-memory storage"
                 )
                 self._storage_dead = True
                 await self._check_request_limit(request, endpoint_func, in_middleware)
-            else:
-                if self._swallow_errors:
-                    self.logger.exception("Failed to rate limit. Swallowing error")
-                else:
-                    raise
+
+            elif self._swallow_errors:
+                self.logger.exception("Failed to rate limit. Swallowing error")
 
     ### Header injection
 
@@ -631,7 +634,7 @@ class Limiter:
                     if self._retry_after == "http-date"
                     else str(int(reset_in - time.monotonic()))
                 )
-            except Exception:
+            except StorageError:
                 if self._in_memory_fallback and not self._storage_dead:
                     self.logger.warning(
                         "Rate limit storage unreachable - falling back to"
@@ -640,9 +643,10 @@ class Limiter:
                     self._storage_dead = True
                     response = await self._inject_headers(response, current_limit)
                 elif self._swallow_errors:
-                    self.logger.exception(
+                    self.logger.error(
                         "Failed to update rate limit headers. Swallowing error"
                     )
+
         return response
 
     async def _inject_asgi_headers(
@@ -683,7 +687,7 @@ class Limiter:
                     if self._retry_after == "http-date"
                     else str(int(reset_in - time.monotonic()))
                 )
-            except Exception:
+            except StorageError:
                 if self._in_memory_fallback and not self._storage_dead:
                     self.logger.warning(
                         "Rate limit storage unreachable - falling back to"
@@ -692,7 +696,7 @@ class Limiter:
                     self._storage_dead = True
                     headers = await self._inject_asgi_headers(headers, current_limit)
                 elif self._swallow_errors:
-                    self.logger.exception(
+                    self.logger.error(
                         "Failed to update rate limit headers. Swallowing error"
                     )
         return headers
@@ -746,11 +750,9 @@ class Limiter:
                             override_defaults=override_defaults,
                         )
                     )
-                except ValueError as e:
-                    self.logger.error(
-                        "Failed to configure throttling for %s (%s)",
-                        name,
-                        e,
+                except ValueError as exc:
+                    self.logger.exception(
+                        "Failed to configure throttling for %s", name, exc_info=exc
                     )
             self._marked_for_limiting.setdefault(name, []).append(func)
             if dynamic_limit:

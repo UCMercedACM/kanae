@@ -65,14 +65,14 @@ async def check_limits(
     ):
         try:
             await limiter._check_request_limit(request, handler, True)
-        except Exception as e:
+        except Exception as exc:
             # handle the exception since the global exception handler won't pick it up if we call_next
             exception_handler = app.exception_handlers.get(
-                type(e), rate_limit_exceeded_handler
+                exc, rate_limit_exceeded_handler
             )
 
             if inspect.iscoroutinefunction(exception_handler):
-                return (await exception_handler(request, e), False)
+                return (await exception_handler(request, exc), False)
         return None, True
     return None, False
 
@@ -98,6 +98,7 @@ class LimiterMiddleware(BaseHTTPMiddleware):
             return error_response
 
         response = await call_next(request)
+
         if should_inject_headers:
             response = await limiter._inject_headers(
                 response, request.state.view_rate_limit
@@ -155,6 +156,7 @@ class _ASGIMiddlewareResponder:
 
         handler = _find_route_handler(_app.routes, scope)
         request = Request(scope, receive=receive, send=self.send)
+
         if _should_exempt(limiter, handler):
             return await self.app(scope, receive, self.send)
 
