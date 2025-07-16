@@ -97,7 +97,7 @@ class KanaeConfig(Generic[_T]):
 
     def __setitem__(self, key: Any, value: Union[_T, Any]) -> None:
         # Prevent replacing other keys for security reasons
-        if str(key) != "postgres_uri":
+        if str(key) not in ("postgres_uri", "storage_uri"):
             return
         self._config[str(key)] = value
 

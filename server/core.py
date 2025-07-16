@@ -59,6 +59,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 # isort: on
 
 from utils.config import KanaeConfig
+from utils.limiter.extension import RateLimitExceeded, rate_limit_exceeded_handler
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
@@ -205,6 +206,10 @@ class Kanae(FastAPI):
         self.add_exception_handler(
             VerificationError,
             self.verification_error_handler,  # type: ignore
+        )
+        self.add_exception_handler(
+            RateLimitExceeded,
+            rate_limit_exceeded_handler,  # type: ignore
         )
 
         self._logger = logging.getLogger("kanae.core")
@@ -409,7 +414,7 @@ class Kanae(FastAPI):
 
     ### Exception Handlers
 
-    async def http_exception_handler(
+    def http_exception_handler(
         self, request: RouteRequest, exc: HTTPException
     ) -> Response:
         headers = getattr(exc, "headers", None)
@@ -420,7 +425,7 @@ class Kanae(FastAPI):
             content=message.model_dump(), status_code=exc.status_code, headers=headers
         )
 
-    async def request_validation_error_handler(
+    def request_validation_error_handler(
         self, request: RouteRequest, exc: RequestValidationError
     ) -> ORJSONResponse:
         # The errors seem to be extremely inconsistent
@@ -432,14 +437,14 @@ class Kanae(FastAPI):
             content=message.model_dump(), status_code=status.HTTP_400_BAD_REQUEST
         )
 
-    async def general_error_handler(
+    def general_error_handler(
         self, request: RouteRequest, exc: GeneralError
     ) -> ORJSONResponse:
         return ORJSONResponse(
             content={"error": str(exc)}, status_code=status.HTTP_400_BAD_REQUEST
         )
 
-    async def verification_error_handler(
+    def verification_error_handler(
         self, request: RouteRequest, exc: VerificationError
     ) -> ORJSONResponse:
         return ORJSONResponse(
