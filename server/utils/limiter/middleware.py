@@ -16,7 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 if TYPE_CHECKING:
     from core import Kanae
 
-from .extension import Limiter, rate_limit_exceeded_handler
+from .extension import KanaeLimiter, rate_limit_exceeded_handler
 
 
 def _find_route_handler(
@@ -34,7 +34,7 @@ def _get_route_name(handler: Callable):
     return f"{handler.__module__}.{handler.__name__}"
 
 
-def _should_exempt(limiter: Limiter, handler: Optional[Callable]) -> bool:
+def _should_exempt(limiter: KanaeLimiter, handler: Optional[Callable]) -> bool:
     # if we can't find the route handler
     if handler is None:
         return True
@@ -53,7 +53,7 @@ def _should_exempt(limiter: Limiter, handler: Optional[Callable]) -> bool:
 
 
 async def check_limits(
-    limiter: Limiter, request: Request, handler: Optional[Callable], app: Kanae
+    limiter: KanaeLimiter, request: Request, handler: Optional[Callable], app: Kanae
 ) -> tuple[Optional[Response], bool]:
     """
     Returns a `Response` object if an error occurred, as well as a boolean to know
@@ -82,7 +82,7 @@ class LimiterMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         app: Kanae = request.app
-        limiter: Limiter = app.state.limiter
+        limiter: KanaeLimiter = app.state.limiter
 
         if not limiter.enabled:
             return await call_next(request)
@@ -149,7 +149,7 @@ class _ASGIMiddlewareResponder:
         self.send = send
 
         _app: Kanae = scope["app"]
-        limiter: Limiter = _app.state.limiter
+        limiter: KanaeLimiter = _app.state.limiter
 
         if not limiter.enabled:
             return await self.app(scope, receive, self.send)

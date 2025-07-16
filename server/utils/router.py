@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter
-from utils.limiter import Limiter
+from utils.limiter import KanaeLimiter
 from utils.limiter.extension import get_remote_address
 
 from .config import KanaeConfig
@@ -15,4 +15,6 @@ class KanaeRouter(APIRouter):
 
         # This isn't my favorite implementation, but will do for now - Noelle
         self._config = KanaeConfig(CONFIG_PATH)
-        self.limiter: Limiter = Limiter(get_remote_address, config=self._config)
+        self.limiter: KanaeLimiter = KanaeLimiter(
+            get_remote_address, config=self._config
+        )

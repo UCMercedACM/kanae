@@ -91,7 +91,7 @@ class RateLimitExceeded(HTTPException):
 
     limit = None
 
-    def __init__(self, limit: "Limit"):
+    def __init__(self, limit: "LimitItem"):
         self.limit = limit
         self.description = str(limit.limit)
 
@@ -132,7 +132,7 @@ class LimiterSettings(BaseModel, frozen=True):
 ### Limit Wrappers
 
 
-class Limit:
+class LimitItem:
     """
     simple wrapper to encapsulate limits and their context
     """
@@ -220,7 +220,7 @@ class LimitGroup:
         self.override_defaults = override_defaults
         self.request = None
 
-    def __iter__(self) -> Iterator[Limit]:
+    def __iter__(self) -> Iterator[LimitItem]:
         if callable(self.__limit_provider):
             if (
                 "key" in inspect.signature(self.__limit_provider).parameters.keys()
@@ -241,7 +241,7 @@ class LimitGroup:
 
         limit_items: list[RateLimitItem] = parse_many(limit_raw)
         for limit in limit_items:
-            yield Limit(
+            yield LimitItem(
                 limit,
                 self.key_function,
                 scope=self.__scope,
@@ -271,7 +271,7 @@ class HEADERS:
 MAX_BACKEND_CHECKS = 5
 
 
-class Limiter:
+class KanaeLimiter:
     """
     Initializes the slowapi rate limiter.
 
@@ -394,7 +394,7 @@ class Limiter:
 
         self._exempt_routes: set[str] = set()
         self._request_filters: list[Callable[..., bool]] = []
-        self._route_limits: dict[str, list[Limit]] = {}
+        self._route_limits: dict[str, list[LimitItem]] = {}
         self._dynamic_route_limits: dict[str, list[LimitGroup]] = {}
         self._marked_for_limiting: dict[str, list[Callable]] = {}
 
@@ -446,7 +446,7 @@ class Limiter:
     ## Limit emulations
 
     async def _evaluate_limits(
-        self, request: Request, endpoint: str, limits: list[Limit]
+        self, request: Request, endpoint: str, limits: list[LimitItem]
     ) -> None:
         failed_limit = None
         limit_for_header = None
@@ -525,8 +525,8 @@ class Limiter:
             or any(fn() for fn in self._request_filters)
         ):
             return
-        limits: list[Limit] = []
-        dynamic_limits: list[Limit] = []
+        limits: list[LimitItem] = []
+        dynamic_limits: list[LimitItem] = []
 
         if not in_middleware:
             limits = (
@@ -547,7 +547,7 @@ class Limiter:
                         )
 
         try:
-            all_limits: list[Limit] = []
+            all_limits: list[LimitItem] = []
 
             if (
                 self._storage_dead
@@ -564,7 +564,7 @@ class Limiter:
                     all_limits = list(itertools.chain(*self._in_memory_fallback))
 
             if not all_limits:
-                route_limits: list[Limit] = limits + dynamic_limits
+                route_limits: list[LimitItem] = limits + dynamic_limits
                 all_limits = (
                     list(itertools.chain(*self._application_limits))
                     if in_middleware
@@ -722,7 +722,7 @@ class Limiter:
             limit_key_func = key_func or self._key_func
             name = f"{func.__module__}.{func.__name__}"
             dynamic_limit = None
-            static_limits: list[Limit] = []
+            static_limits: list[LimitItem] = []
             if callable(limit_value):
                 dynamic_limit = LimitGroup(
                     limit_value,

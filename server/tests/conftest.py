@@ -21,7 +21,7 @@ from testcontainers.core.waiting_utils import wait_container_is_ready, wait_for_
 from testcontainers.postgres import PostgresContainer
 from utils.config import KanaeConfig
 from utils.limiter.extension import (
-    Limiter,
+    KanaeLimiter,
     RateLimitExceeded,
     get_remote_address,
     rate_limit_exceeded_handler,
@@ -182,7 +182,7 @@ async def build_fastapi_app(request, valkey: ValkeyContainer):
 
         limiter_args.setdefault("key_func", get_remote_address)
         limiter_args.setdefault("config", test_config)
-        limiter = Limiter(**limiter_args)
+        limiter = KanaeLimiter(**limiter_args)
 
         # There is no point of connection to PostgreSQL
         # As we are running this on the function scope, and are sending tons of redis connections
