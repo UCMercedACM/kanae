@@ -13,6 +13,7 @@ config_path = Path(__file__).parent / "config.yml"
 config = KanaeConfig(config_path)
 
 app = Kanae(config=config)
+app.instrumentator.add_middleware()
 app.add_middleware(get_middleware())
 app.include_router(router)
 app.add_middleware(

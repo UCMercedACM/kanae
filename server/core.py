@@ -34,6 +34,7 @@ from supertokens_python.recipe import (
 )
 from supertokens_python.recipe.session.interfaces import SessionContainer
 from supertokens_python.types.base import AccountInfoInput
+from utils.prometheus import PrometheusInstrumentator
 
 # isort: off
 # isort is turned off here to clarify the different imports of interfaces and providers
@@ -58,6 +59,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
 )
 # isort: on
 
+from prometheus_async.aio.web import start_http_server
 from utils.config import KanaeConfig
 from utils.limiter.extension import RateLimitExceeded, rate_limit_exceeded_handler
 from utils.responses.exceptions import (
@@ -190,6 +192,7 @@ class Kanae(FastAPI):
             mode="asgi",
         )
         self.config = config
+        self.instrumentator = PrometheusInstrumentator(self, metric_namespace="kanae")
         self.ph = PasswordHasher()
         self.add_exception_handler(
             HTTPException,
@@ -213,6 +216,8 @@ class Kanae(FastAPI):
         )
 
         self._logger = logging.getLogger("kanae.core")
+
+        self._prometheus_enabled: bool = config["kanae"]["prometheus"]["enabled"]
 
     # SuperTokens recipes overrides
 
@@ -456,6 +461,18 @@ class Kanae(FastAPI):
 
     @asynccontextmanager
     async def lifespan(self, app: Self):
+        if self._prometheus_enabled:
+            prom_host = app.config["kanae"]["prometheus"]["host"]
+            prom_port = app.config["kanae"]["prometheus"]["port"]
+
+            self.instrumentator.start()
+
+            await start_http_server(addr=prom_host, port=prom_port)
+
+            self._logger.info(
+                "Prometheus server started on %s:%d", prom_host, prom_port
+            )
+
         async with asyncpg.create_pool(
             dsn=self.config["postgres_uri"], init=init
         ) as app.pool:
