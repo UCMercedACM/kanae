@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 from http import HTTPStatus
-from timeit import default_timer
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -148,7 +148,7 @@ class PrometheusMiddleware:
             return await self.app(scope, receive, send)
 
         request = Request(scope)
-        start_time = default_timer()
+        start_time = time.perf_counter()
 
         handler, is_templated = self._get_handler(request)
         is_excluded = self._is_handler_excluded(handler, is_templated)
@@ -176,7 +176,7 @@ class PrometheusMiddleware:
                     nonlocal status_code, headers, response_start_time
                     headers = message["headers"]
                     status_code = message["status"]
-                    response_start_time = default_timer()
+                    response_start_time = time.perf_counter()
                 elif message["type"] == "http.response.body" and message["body"]:
                     nonlocal body
                     body += message["body"]
@@ -189,7 +189,7 @@ class PrometheusMiddleware:
                     nonlocal status_code, headers, response_start_time
                     headers = message["headers"]
                     status_code = message["status"]
-                    response_start_time = default_timer()
+                    response_start_time = time.perf_counter()
                 await send(message)
 
         try:
@@ -204,7 +204,7 @@ class PrometheusMiddleware:
             )
 
             if not is_excluded:
-                duration = max(default_timer() - start_time, 0.0)
+                duration = max(time.perf_counter() - start_time, 0.0)
                 duration_without_streaming = 0.0
 
                 if response_start_time:
