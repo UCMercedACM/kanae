@@ -4,7 +4,6 @@ import asyncio
 import os
 import re
 import time
-from http import HTTPStatus
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -197,11 +196,7 @@ class PrometheusMiddleware:
         except Exception as exc:
             raise exc
         finally:
-            status = (
-                str(status_code.value)
-                if isinstance(status_code, HTTPStatus)
-                else str(status_code)
-            )
+            status = str(status_code)
 
             if not is_excluded:
                 duration = max(time.perf_counter() - start_time, 0.0)
