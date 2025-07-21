@@ -27,11 +27,50 @@ from prometheus_client import (
     multiprocess,
 )
 from prometheus_fastapi_instrumentator import metrics, routing
+from pydantic import BaseModel
 from starlette.datastructures import Headers
 
 if TYPE_CHECKING:
     from core import Kanae
     from starlette.types import Message, Receive, Scope, Send
+
+LATENCY_HIGHER_BUCKETS = (
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1,
+    1.5,
+    2,
+    2.5,
+    3,
+    3.5,
+    4,
+    4.5,
+    5,
+    7.5,
+    10,
+    30,
+    60,
+)
+LATENCY_LOWER_BUCKETS = (0.1, 0.5, 1)
+
+
+class InstrumentatorSettings(BaseModel, frozen=True):
+    should_group_status_codes: bool = True
+    should_ignore_not_templated: bool = False
+    should_group_not_templated: bool = True
+    should_round_latency_decimals: bool = False
+    should_instrument_requests_in_progress: bool = False
+    should_exclude_streaming_duration: bool = False
+    in_progress_name: str = "http_requests_in_progress"
+    in_progress_labels: bool = False
+    metric_namespace: str = ""
+    metric_subsystem: str = ""
 
 
 class PrometheusMiddleware:
@@ -39,68 +78,35 @@ class PrometheusMiddleware:
         self,
         app: Kanae,
         *,
-        should_group_status_codes: bool = True,
-        should_ignore_not_templated: bool = False,
-        should_group_not_templated: bool = True,
-        should_round_latency_decimals: bool = False,
-        should_respect_env_var: bool = False,
-        should_instrument_requests_in_progress: bool = False,
-        should_exclude_streaming_duration: bool = False,
+        settings: InstrumentatorSettings,
+        round_latency_decimals: int = 4,
+        should_only_respect_2xx_for_higher: bool = False,
         excluded_handlers: Sequence[Union[re.Pattern[str], str]] = (),
         body_handlers: Sequence[Union[re.Pattern[str], str]] = (),
-        round_latency_decimals: int = 4,
-        in_progress_name: str = "http_requests_in_progress",
-        in_progress_labels: bool = False,
         instrumentations: Sequence[Callable[[metrics.Info], None]] = (),
         async_instrumentations: Sequence[
             Callable[[metrics.Info], Awaitable[None]]
         ] = (),
-        metric_namespace: str = "",
-        metric_subsystem: str = "",
-        should_only_respect_2xx_for_higher: bool = False,
-        latency_higher_buckets: Sequence[Union[float, str]] = (
-            0.01,
-            0.025,
-            0.05,
-            0.075,
-            0.1,
-            0.25,
-            0.5,
-            0.75,
-            1,
-            1.5,
-            2,
-            2.5,
-            3,
-            3.5,
-            4,
-            4.5,
-            5,
-            7.5,
-            10,
-            30,
-            60,
-        ),
-        latency_lower_buckets: Sequence[Union[float, str]] = (0.1, 0.5, 1),
+        latency_higher_buckets: Sequence[Union[float, str]] = LATENCY_HIGHER_BUCKETS,
+        latency_lower_buckets: Sequence[Union[float, str]] = LATENCY_LOWER_BUCKETS,
         registry: CollectorRegistry = REGISTRY,
-        custom_labels: dict = {},
+        custom_labels: Optional[dict] = None,
     ) -> None:
         self.app = app
 
-        self.should_group_status_codes = should_group_status_codes
-        self.should_ignore_not_templated = should_ignore_not_templated
-        self.should_group_not_templated = should_group_not_templated
-        self.should_round_latency_decimals = should_round_latency_decimals
-        self.should_respect_env_var = should_respect_env_var
+        self.should_group_status_codes = settings.should_group_status_codes
+        self.should_ignore_not_templated = settings.should_ignore_not_templated
+        self.should_group_not_templated = settings.should_group_not_templated
+        self.should_round_latency_decimals = settings.should_round_latency_decimals
         self.should_instrument_requests_in_progress = (
-            should_instrument_requests_in_progress
+            settings.should_instrument_requests_in_progress
         )
 
         self.round_latency_decimals = round_latency_decimals
-        self.in_progress_name = in_progress_name
-        self.in_progress_labels = in_progress_labels
+        self.in_progress_name = settings.in_progress_name
+        self.in_progress_labels = settings.in_progress_labels
         self.registry = registry
-        self.custom_labels = custom_labels
+        self.custom_labels = {} if not custom_labels else custom_labels
 
         self.excluded_handlers = [re.compile(path) for path in excluded_handlers]
         self.body_handlers = [re.compile(path) for path in body_handlers]
@@ -109,14 +115,14 @@ class PrometheusMiddleware:
             self.instrumentations = instrumentations
         else:
             default_instrumentation = metrics.default(
-                metric_namespace=metric_namespace,
-                metric_subsystem=metric_subsystem,
                 should_only_respect_2xx_for_highr=should_only_respect_2xx_for_higher,
-                should_exclude_streaming_duration=should_exclude_streaming_duration,
                 latency_highr_buckets=latency_higher_buckets,
                 latency_lowr_buckets=latency_lower_buckets,
                 registry=self.registry,
-                custom_labels=custom_labels,
+                custom_labels=self.custom_labels,
+                metric_namespace=settings.metric_namespace,
+                metric_subsystem=settings.metric_subsystem,
+                should_exclude_streaming_duration=settings.should_exclude_streaming_duration,
             )
             if default_instrumentation:
                 self.instrumentations = [default_instrumentation]
@@ -193,9 +199,9 @@ class PrometheusMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except Exception as exc:
-            raise exc
-        finally:
+        except Exception:
+            return  # Ignore requests that make an error
+        else:
             status = str(status_code)
 
             if not is_excluded:
@@ -282,93 +288,55 @@ class PrometheusInstrumentator:
         self,
         app: Kanae,
         *,
-        should_group_status_codes: bool = True,
-        should_ignore_not_templated: bool = False,
-        should_group_not_templated: bool = True,
-        should_round_latency_decimals: bool = False,
-        should_instrument_requests_in_progress: bool = False,
-        should_exclude_streaming_duration: bool = False,
+        settings: InstrumentatorSettings,
+        round_latency_decimals: int = 4,
         excluded_handlers: list[str] = [],
         body_handlers: list[str] = [],
-        round_latency_decimals: int = 4,
-        in_progress_name: str = "http_requests_in_progress",
-        in_progress_labels: bool = False,
-        metric_namespace: str = "",
-        metric_subsystem: str = "",
-        registry: Union[CollectorRegistry, None] = None,
+        registry: Optional[CollectorRegistry] = None,
     ) -> None:
         self.app = app
+        self.settings = settings
 
-        self.should_group_status_codes = should_group_status_codes
-        self.should_ignore_not_templated = should_ignore_not_templated
-        self.should_group_not_templated = should_group_not_templated
-        self.should_round_latency_decimals = should_round_latency_decimals
+        self.should_group_status_codes = settings.should_group_status_codes
+        self.should_ignore_not_templated = settings.should_ignore_not_templated
+        self.should_group_not_templated = settings.should_group_not_templated
+        self.should_round_latency_decimals = settings.should_round_latency_decimals
         self.should_instrument_requests_in_progress = (
-            should_instrument_requests_in_progress
+            settings.should_instrument_requests_in_progress
         )
-        self.should_exclude_streaming_duration = should_exclude_streaming_duration
+        self.should_exclude_streaming_duration = (
+            settings.should_exclude_streaming_duration
+        )
+
+        self.in_progress_name = settings.in_progress_name
+        self.in_progress_labels = settings.in_progress_labels
+        self.metric_namespace = settings.metric_namespace
+        self.metric_subsystem = settings.metric_subsystem
 
         self.round_latency_decimals = round_latency_decimals
-        self.in_progress_name = in_progress_name
-        self.in_progress_labels = in_progress_labels
-        self.metric_namespace = metric_namespace
-        self.metric_subsystem = metric_subsystem
+        self.registry = registry if registry else REGISTRY
 
         self.excluded_handlers = [re.compile(path) for path in excluded_handlers]
         self.body_handlers = [re.compile(path) for path in body_handlers]
-
         self.instrumentations: list[Callable[[metrics.Info], None]] = []
         self.async_instrumentations: list[
             Callable[[metrics.Info], Awaitable[None]]
         ] = []
 
-        self.registry = registry if registry else REGISTRY
-
     def add_middleware(
         self,
         should_only_respect_2xx_for_higher: bool = False,
-        latency_higher_buckets: Sequence[Union[float, str]] = (
-            0.01,
-            0.025,
-            0.05,
-            0.075,
-            0.1,
-            0.25,
-            0.5,
-            0.75,
-            1,
-            1.5,
-            2,
-            2.5,
-            3,
-            3.5,
-            4,
-            4.5,
-            5,
-            7.5,
-            10,
-            30,
-            60,
-        ),
-        latency_lower_buckets: Sequence[Union[float, str]] = (0.1, 0.5, 1),
+        latency_higher_buckets: Sequence[Union[float, str]] = LATENCY_HIGHER_BUCKETS,
+        latency_lower_buckets: Sequence[Union[float, str]] = LATENCY_LOWER_BUCKETS,
     ) -> None:
         self.app.add_middleware(
             PrometheusMiddleware,  # type: ignore (This is actually correct)
-            should_group_status_codes=self.should_group_status_codes,
-            should_ignore_not_templated=self.should_ignore_not_templated,
-            should_group_not_templated=self.should_group_not_templated,
-            should_round_latency_decimals=self.should_round_latency_decimals,
-            should_instrument_requests_in_progress=self.should_instrument_requests_in_progress,
-            should_exclude_streaming_duration=self.should_exclude_streaming_duration,
+            settings=self.settings,
             round_latency_decimals=self.round_latency_decimals,
-            in_progress_name=self.in_progress_name,
-            in_progress_labels=self.in_progress_labels,
             instrumentations=self.instrumentations,
             async_instrumentations=self.async_instrumentations,
             excluded_handlers=self.excluded_handlers,
             body_handlers=self.body_handlers,
-            metric_namespace=self.metric_namespace,
-            metric_subsystem=self.metric_subsystem,
             should_only_respect_2xx_for_higher=should_only_respect_2xx_for_higher,
             latency_higher_buckets=latency_higher_buckets,
             latency_lower_buckets=latency_lower_buckets,
