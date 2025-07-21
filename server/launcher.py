@@ -25,7 +25,7 @@ app.add_middleware(
 add_pagination(app)
 app.state.limiter = router.limiter
 
-if config["kanae"]["prometheus"]["enabled"]:
+if app.is_prometheus_enabled:
     app.instrumentator.add_middleware()
 
 

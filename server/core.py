@@ -191,6 +191,9 @@ class Kanae(FastAPI):
             mode="asgi",
         )
         self.config = config
+
+        self.is_prometheus_enabled: bool = config["kanae"]["prometheus"]["enabled"]
+
         self.instrumentator = PrometheusInstrumentator(self, metric_namespace="kanae")
         self.ph = PasswordHasher()
         self.add_exception_handler(
@@ -216,7 +219,7 @@ class Kanae(FastAPI):
 
         self._logger = logging.getLogger("kanae.core")
 
-        if config["kanae"]["prometheus"]["enabled"]:
+        if self.is_prometheus_enabled:
             _host = self.config["kanae"]["host"]
             _port = self.config["kanae"]["port"]
 
