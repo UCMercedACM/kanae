@@ -10,5 +10,5 @@ worker_class = "utils.uvicorn.workers.KanaeWorker"
 wsgi_app = "launcher:app"
 
 
-def child_exit(server, worker):
-    multiprocess.mark_process_dead(worker.pid)
+def worker_exit(server, worker):
+    multiprocess.mark_process_dead(pid=worker.pid)

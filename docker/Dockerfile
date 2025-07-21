@@ -21,7 +21,6 @@ ENV PATH="${PATH}:/home/kanae/.local/bin"
 RUN pip install --user -r requirements.txt
 
 EXPOSE 8000
-EXPOSE 9555
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 

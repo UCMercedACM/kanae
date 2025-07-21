@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import gzip
 import os
 import re
 from http import HTTPStatus
@@ -11,11 +10,11 @@ from typing import (
     Any,
     Awaitable,
     Callable,
-    List,
     Optional,
     Sequence,
     Tuple,
     Union,
+    cast,
 )
 
 from fastapi.requests import Request
@@ -30,10 +29,10 @@ from prometheus_client import (
 )
 from prometheus_fastapi_instrumentator import metrics, routing
 from starlette.datastructures import Headers
-from starlette.types import Message, Receive, Scope, Send
 
 if TYPE_CHECKING:
     from core import Kanae
+    from starlette.types import Message, Receive, Scope, Send
 
 
 class PrometheusMiddleware:
@@ -294,8 +293,8 @@ class PrometheusInstrumentator:
         should_round_latency_decimals: bool = False,
         should_instrument_requests_in_progress: bool = False,
         should_exclude_streaming_duration: bool = False,
-        excluded_handlers: List[str] = [],
-        body_handlers: List[str] = [],
+        excluded_handlers: list[str] = [],
+        body_handlers: list[str] = [],
         round_latency_decimals: int = 4,
         in_progress_name: str = "http_requests_in_progress",
         in_progress_labels: bool = False,
@@ -323,21 +322,12 @@ class PrometheusInstrumentator:
         self.excluded_handlers = [re.compile(path) for path in excluded_handlers]
         self.body_handlers = [re.compile(path) for path in body_handlers]
 
-        self.instrumentations: List[Callable[[metrics.Info], None]] = []
-        self.async_instrumentations: List[
+        self.instrumentations: list[Callable[[metrics.Info], None]] = []
+        self.async_instrumentations: list[
             Callable[[metrics.Info], Awaitable[None]]
         ] = []
 
-        if registry:
-            self.registry = registry
-        else:
-            self.registry = REGISTRY
-
-        # Very hacky way to check whether we are using gunicorn or not
-        # TODO: fix this
-        server_software = os.environ.get("SERVER_SOFTWARE")
-        if server_software and "gunicorn" in server_software:
-            os.environ["PROMETHEUS_MULTIPROC_DIR"] = ""
+        self.registry = registry if registry else REGISTRY
 
     def add_middleware(
         self,
@@ -390,11 +380,42 @@ class PrometheusInstrumentator:
             registry=self.registry,
         )
 
+    def add(
+        self,
+        *instrumentation_function: Optional[
+            Callable[[metrics.Info], Union[None, Awaitable[None]]]
+        ],
+    ) -> None:
+        """Adds function to list of instrumentations.
+
+        Args:
+            instrumentation_function: Function
+                that will be executed during every request handler call (if
+                not excluded). See above for detailed information on the
+                interface of the function.
+
+        Returns:
+            self: Instrumentator. Builder Pattern.
+        """
+
+        for func in instrumentation_function:
+            if func:
+                if asyncio.iscoroutinefunction(func):
+                    self.async_instrumentations.append(
+                        cast(
+                            Callable[[metrics.Info], Awaitable[None]],
+                            func,
+                        )
+                    )
+                else:
+                    self.instrumentations.append(
+                        cast(Callable[[metrics.Info], None], func)
+                    )
+
     def start(
         self,
-        should_gzip: bool = False,
         endpoint: str = "/metrics",
-        include_in_schema: bool = True,
+        include_in_schema: bool = False,
         **kwargs: Any,
     ) -> None:
         def metrics(request: Request) -> Response:
@@ -405,15 +426,8 @@ class PrometheusInstrumentator:
                 ephemeral_registry = CollectorRegistry()
                 multiprocess.MultiProcessCollector(ephemeral_registry)
 
-            if should_gzip and "gzip" in request.headers.get("Accept-Encoding", ""):
-                resp = Response(
-                    content=gzip.compress(generate_latest(ephemeral_registry))
-                )
-                resp.headers["Content-Type"] = CONTENT_TYPE_LATEST
-                resp.headers["Content-Encoding"] = "gzip"
-            else:
-                resp = Response(content=generate_latest(ephemeral_registry))
-                resp.headers["Content-Type"] = CONTENT_TYPE_LATEST
+            resp = Response(content=generate_latest(ephemeral_registry))
+            resp.headers["Content-Type"] = CONTENT_TYPE_LATEST
 
             return resp
 
