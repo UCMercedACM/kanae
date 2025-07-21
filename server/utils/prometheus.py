@@ -162,10 +162,11 @@ class PrometheusMiddleware:
         )
 
         if not is_excluded and self.in_progress:
-            if self.in_progress_labels:
-                in_progress = self.in_progress.labels(request.method, handler)
-            else:
-                in_progress = self.in_progress
+            in_progress = (
+                self.in_progress.labels(request.method, handler)
+                if self.in_progress_labels
+                else self.in_progress
+            )
             in_progress.inc()
 
         status_code = 500
@@ -222,8 +223,7 @@ class PrometheusMiddleware:
                         duration_without_streaming, self.round_latency_decimals
                     )
 
-                if self.should_group_status_codes:
-                    status = status[0] + "xx"
+                status = status[0] + "xx" if self.should_group_status_codes else status
 
                 response = Response(
                     content=body, headers=Headers(raw=headers), status_code=status_code
