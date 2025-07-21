@@ -34,6 +34,7 @@ from supertokens_python.recipe import (
 )
 from supertokens_python.recipe.session.interfaces import SessionContainer
 from supertokens_python.types.base import AccountInfoInput
+from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 
 # isort: off
 # isort is turned off here to clarify the different imports of interfaces and providers
@@ -190,6 +191,14 @@ class Kanae(FastAPI):
             mode="asgi",
         )
         self.config = config
+
+        self.is_prometheus_enabled: bool = config["kanae"]["prometheus"]["enabled"]
+
+        _instrumentator_settings = InstrumentatorSettings(metric_namespace="kanae")
+        self.instrumentator = PrometheusInstrumentator(
+            self, settings=_instrumentator_settings
+        )
+
         self.ph = PasswordHasher()
         self.add_exception_handler(
             HTTPException,
@@ -213,6 +222,16 @@ class Kanae(FastAPI):
         )
 
         self._logger = logging.getLogger("kanae.core")
+
+        if self.is_prometheus_enabled:
+            _host = self.config["kanae"]["host"]
+            _port = self.config["kanae"]["port"]
+
+            self.instrumentator.start()
+
+            self._logger.info(
+                "Prometheus server started on %s:%d/metrics", _host, _port
+            )
 
     # SuperTokens recipes overrides
 

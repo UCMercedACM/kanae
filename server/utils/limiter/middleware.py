@@ -11,10 +11,10 @@ from starlette.middleware.base import (
     RequestResponseEndpoint,
 )
 from starlette.routing import BaseRoute, Match
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 if TYPE_CHECKING:
     from core import Kanae
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .extension import KanaeLimiter, rate_limit_exceeded_handler
 

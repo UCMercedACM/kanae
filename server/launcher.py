@@ -25,6 +25,9 @@ app.add_middleware(
 add_pagination(app)
 app.state.limiter = router.limiter
 
+if app.is_prometheus_enabled:
+    app.instrumentator.add_middleware()
+
 
 if __name__ == "__main__":
     config = KanaeUvicornConfig(
