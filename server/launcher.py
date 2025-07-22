@@ -34,6 +34,7 @@ if __name__ == "__main__":
         "launcher:app",
         port=config["kanae"]["port"],
         host=config["kanae"]["host"],
+        workers=2,
         access_log=True,
     )
 
