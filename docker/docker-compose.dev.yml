@@ -4,7 +4,7 @@ name: kanae_dev
 services:
   database:
     container_name: kanae_postgres
-    image: postgres:17
+    image: postgres:17-alpine
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
