@@ -9,7 +9,6 @@ services:
       - ${CONFIG_LOCATION}:/kanae/server/config.yml
     ports:
       - 8000:8000
-      - 9555:9555
     depends_on:
       database:
         condition: service_healthy
@@ -23,7 +22,9 @@ services:
 
   database:
     container_name: kanae_postgres
-    image: postgres:17-alpine
+    build:
+      context: ../
+      dockerfile: docker/pg-test/Dockerfile
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
@@ -70,3 +71,5 @@ services:
 
 volumes:
   database:
+  prometheus-data:
+  grafana-data:
