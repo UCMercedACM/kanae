@@ -39,10 +39,10 @@ jobs:
       with:
         fetch-depth: '0'
 
-    - name: Setup Atlas
-      uses: ariga/setup-atlas@v0
-      with:
-        cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+    # - name: Setup Atlas
+    #   uses: ariga/setup-atlas@v0
+    #   with:
+    #     cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
 
 
     - name: Get Previous Tag
@@ -74,9 +74,9 @@ jobs:
         name: ${{ steps.tag_version.outputs.new_tag }}
         artifacts: "releases/kanae-docker.zip,releases/kanae-docker.tar.gz"
 
-    - name: Push schema
-      uses: ariga/atlas-action/schema/push@v1
-      with:
-        env: prod
-        tag: ${{ steps.tag_version.outputs.new_tag }}
-        version: ${{ steps.tag_version.outputs.new_tag }}
+    # - name: Push schema
+    #   uses: ariga/atlas-action/schema/push@v1
+    #   with:
+    #     env: prod
+    #     tag: ${{ steps.tag_version.outputs.new_tag }}
+    #     version: ${{ steps.tag_version.outputs.new_tag }}
