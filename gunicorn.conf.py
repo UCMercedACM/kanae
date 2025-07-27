@@ -2,7 +2,7 @@ import os
 
 from prometheus_client import multiprocess
 
-bind = ["127.0.0.1:8000", "unix:/tmp/gunicorn.sock"]
+bind = ["127.0.0.1:8000", "unix:/run/kanae/gunicorn.sock"]
 chdir = "server"
 workers = os.cpu_count() or 1
 worker_class = "utils.uvicorn.workers.KanaeWorker"
