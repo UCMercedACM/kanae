@@ -36,35 +36,6 @@ else:
 StrOrCallableStr = Union[str, Callable[..., str]]
 
 
-### Utilities
-
-
-def get_ipaddr(request: Request) -> str:
-    """
-    Returns the ip address for the current request (or 127.0.0.1 if none found)
-     based on the X-Forwarded-For headers.
-     Note that a more robust method for determining IP address of the client is
-     provided by uvicorn's ProxyHeadersMiddleware.
-    """
-    if "X_FORWARDED_FOR" in request.headers:
-        return request.headers["X_FORWARDED_FOR"]
-    else:
-        if not request.client or not request.client.host:
-            return "127.0.0.1"
-
-        return request.client.host
-
-
-def get_remote_address(request: Request) -> str:
-    """
-    Returns the ip address for the current request (or 127.0.0.1 if none found)
-    """
-    if not request.client or not request.client.host:
-        return "127.0.0.1"
-
-    return request.client.host
-
-
 ### Exceptions and handler
 
 
@@ -133,9 +104,7 @@ class LimiterSettings(BaseModel, frozen=True):
 
 
 class LimitItem:
-    """
-    simple wrapper to encapsulate limits and their context
-    """
+    """Wrapper around limits and their context"""
 
     def __init__(
         self,
@@ -164,23 +133,13 @@ class LimitItem:
         self.cost = cost
         self.override_defaults = override_defaults
 
-    def is_exempt(self, request: Optional[Request] = None) -> bool:
-        """
-        Check if the limit is exempt.
-
-        ** parameter **
-        * **request**: the request object
-
-        Return True to exempt the route from the limit.
-        """
-        if not self.exempt_when:
-            return False
-        elif self._exempt_when_takes_request and request:
-            return self.exempt_when(request)
-        return self.exempt_when()
-
     @property
     def scope(self) -> str:
+        """Obtains the scope of the limit
+
+        Returns:
+            str: Requested scope
+        """
         # flack.request.endpoint is the name of the function for the endpoint
         if self.__scope is None:
             return ""
@@ -190,11 +149,24 @@ class LimitItem:
             else self.__scope
         )
 
+    def is_exempt(self, request: Optional[Request] = None) -> bool:
+        """Checks whether the limit is exempt or not
+
+        Args:
+            request (Optional[Request], optional): Instance of `Request`. Defaults to None.
+
+        Returns:
+            bool: True to exempt the route from the limit, False to include
+        """
+        if not self.exempt_when:
+            return False
+        elif self._exempt_when_takes_request and request:
+            return self.exempt_when(request)
+        return self.exempt_when()
+
 
 class LimitGroup:
-    """
-    represents a group of related limits either from a string or a callable that returns one
-    """
+    """Represents a group of related limits that returns one limit"""
 
     def __init__(
         self,
@@ -253,7 +225,15 @@ class LimitGroup:
                 override_defaults=self.override_defaults,
             )
 
-    def with_request(self, request) -> Self:
+    def with_request(self, request: Request) -> Self:
+        """Binds the given request to the group
+
+        Args:
+            request (Request): Instance of `Request`
+
+        Returns:
+            Self: Group object for builder pattern
+        """
         self.request = request
         return self
 
@@ -272,43 +252,14 @@ MAX_BACKEND_CHECKS = 5
 
 
 class KanaeLimiter:
-    """
-    Initializes the slowapi rate limiter.
+    """Modified rate limiter based on SlowAPI's implementation
 
-    ** parameter **
-
-    * **app**: `Starlette/FastAPI` instance to initialize the extension
-     with.
-
-    * **default_limits**: a variable list of strings or callables returning strings denoting global
-     limits to apply to all routes. `ratelimit-string` for  more details.
-
-    * **application_limits**: a variable list of strings or callables returning strings for limits that
-     are applied to the entire application (i.e a shared limit for all routes)
-
-    * **key_func**: a callable that returns the domain to rate limit by.
-
-    * **headers_enabled**: whether ``X-RateLimit`` response headers are written.
-
-    * **strategy:** the strategy to use. refer to `ratelimit-strategy`
-
-    * **storage_uri**: the storage location. refer to `ratelimit-conf`
-
-    * **storage_options**: kwargs to pass to the storage implementation upon
-      instantiation.
-    * **auto_check**: whether to automatically check the rate limit in the before_request
-     chain of the application. default ``True``
-    * **swallow_errors**: whether to swallow errors when hitting a rate limit.
-     An exception will still be logged. default ``False``
-    * **in_memory_fallback**: a variable list of strings or callables returning strings denoting fallback
-     limits to apply when the storage is down.
-    * **in_memory_fallback_enabled**: simply falls back to in memory storage
-     when the main storage is down and inherits the original limits.
-    * **key_prefix**: prefix prepended to rate limiter keys.
-    * **enabled**: set to False to deactivate the limiter (default: True)
-    * **config_filename**: name of the config file for Starlette from which to load settings
-     for the rate limiter. Defaults to ".env".
-    * **key_style**: set to "url" to use the url, "endpoint" to use the view_func
+    Args:
+        key_func (Callable[..., str]): Function used to determine the domain of the key
+        config (KanaeConfig): Instance of `KanaeConfig`
+        enabled (bool, optional): Whether to enable or disable the rate limiter. Defaults to True.
+        headers_enabled (bool, optional): Whether to inject `X-RateLimit` and related entries into the header. Defaults to False.
+        key_style (Literal["endpoint", "url"], optional): Determines the style of the key to use. `url` uses the path of the request, `endpoint` uses the function module and name. Defaults to `url`.
     """
 
     _limiter: FixedWindowRateLimiter
@@ -322,11 +273,7 @@ class KanaeLimiter:
         headers_enabled: bool = False,
         key_style: Literal["endpoint", "url"] = "url",
     ):
-        """
-        Configure the rate limiter at app level
-        """
-
-        self.logger = logging.getLogger("slowapi")
+        self.logger = logging.getLogger("kanae.limiter")
 
         self._config = LimiterSettings(**config["kanae"]["limiter"])
 
@@ -402,8 +349,13 @@ class KanaeLimiter:
 
     @property
     def limiter(self) -> RateLimiter:
-        """
-        The backend that keeps track of consumption of endpoints vs limits
+        """Provides the backend that keeps track of consumption of endpoints vs limits
+
+        Raises:
+            RuntimeError: If a fallback limiter is `None`
+
+        Returns:
+            RateLimiter: Instance of `RateLimiter`. More accurately, `FixedWindowRateLimiter`
         """
         if self._storage_dead and self._in_memory_fallback_enabled:
             if not self._fallback_limiter:
@@ -505,9 +457,6 @@ class KanaeLimiter:
         endpoint_func: Optional[Callable[..., Any]],
         in_middleware: bool = True,
     ) -> None:
-        """
-        Determine if the request is within limits
-        """
         endpoint_url = request["path"] or ""
         view_func = endpoint_func
 
@@ -652,13 +601,6 @@ class KanaeLimiter:
     async def _inject_asgi_headers(
         self, headers: MutableHeaders, current_limit: tuple[RateLimitItem, list[str]]
     ) -> MutableHeaders:
-        """
-        Injects 'X-RateLimit-Reset', 'X-RateLimit-Remaining', 'X-RateLimit-Limit'
-        and 'Retry-After' headers into :headers parameter if needed.
-
-        Basically the same as _inject_headers, but without access to the Response object.
-        -> supports ASGI Middlewares.
-        """
         if self.enabled and self._headers_enabled and current_limit is not None:
             try:
                 window_stats = await self.limiter.get_window_stats(
@@ -811,30 +753,31 @@ class KanaeLimiter:
         self,
         limit_value: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
+        *,
         per_method: bool = False,
+        override_defaults: bool = True,
         methods: Optional[list[str]] = None,
         error_message: Optional[str] = None,
         exempt_when: Optional[Callable[..., bool]] = None,
         cost: Union[int, Callable[..., int]] = 1,
-        override_defaults: bool = True,
-    ) -> Callable:
-        """
-        Decorator to be used for rate limiting individual routes.
+    ) -> Callable[..., Any]:
+        """A decorator that attaches an limit to the specified individual route
 
-        * **limit_value**: rate limit string or a callable that returns a string.
-         :ref:`ratelimit-string` for more details.
-        * **key_func**: function/lambda to extract the unique identifier for
-         the rate limit. defaults to remote address of the request.
-        * **per_method**: whether the limit is sub categorized into the http
-         method of the request.
-        * **methods**: if specified, only the methods in this list will be rate
-         limited (default: None).
-        * **error_message**: string (or callable that returns one) to override the
-         error message used in the response.
-        * **exempt_when**: function returning a boolean indicating whether to exempt
-        the route from the limit. This function can optionally use a Request object.
-        * **cost**: integer (or callable that returns one) which is the cost of a hit
-        * **override_defaults**: whether to override the default limits (default: True)
+        Args:
+            limit_value (Union[str, Callable[..., str]]): String in rate-limit notation or a callable that returns a string in rate-limit notation
+
+                *See https://limits.readthedocs.io/en/stable/quickstart.html#rate-limit-string-notation for details*
+
+            key_func (Optional[Callable[..., str]], optional): Function or lambda that extracts the domain and unique identifier for the rate limit. Defaults to None, which uses the remote address of the request
+            per_method (bool, optional): Whether the limit is sub-categorized into the HTTP method of the request. Defaults to False
+            override_defaults (bool, optional): Whether to override the default limits. Defaults to True
+            methods (Optional[list[str]], optional): If specified, only those HTTP methods in this list will be subjected to rate limits. Defaults to None
+            error_message (Optional[str], optional): String that overrides the error message used in the response. Defaults to None
+            exempt_when (Optional[Callable[..., bool]], optional): Function that returns an boolean, which indicates whether to exempt the route from the limit. The function can optionally use an `Request` object. Defaults to None
+            cost (Union[int, Callable[..., int]], optional): Integer (or callable that returns an integer) which sets the cost of a hit to a backend ratelimiter. Defaults to 1
+
+        Returns:
+            Callable[..., Any]: A decorator that injects an limit and returns the original function
         """
         return self._limit_decorator(
             limit_value,
@@ -850,32 +793,30 @@ class KanaeLimiter:
     def shared_limit(
         self,
         limit_value: StrOrCallableStr,
-        scope: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
-        error_message: Optional[str] = None,
-        exempt_when: Optional[Callable[..., bool]] = None,
+        *,
+        scope: StrOrCallableStr,
         cost: Union[int, Callable[..., int]] = 1,
         override_defaults: bool = True,
-    ) -> Callable:
-        """
-        Decorator to be applied to multiple routes sharing the same rate limit.
+        error_message: Optional[str] = None,
+        exempt_when: Optional[Callable[..., bool]] = None,
+    ) -> Callable[..., Any]:
+        """A decorator that attaches a limit with the same rate limit that is shared amongst multiple routes
 
-        * **limit_value**: rate limit string or a callable that returns a string.
-         :ref:`ratelimit-string` for more details.
-        * **scope**: a string or callable that returns a string
-         for defining the rate limiting scope.
-        * **key_func**: function/lambda to extract the unique identifier for
-         the rate limit. defaults to remote address of the request.
-        * **per_method**: whether the limit is sub categorized into the http
-         method of the request.
-        * **methods**: if specified, only the methods in this list will be rate
-         limited (default: None).
-        * **error_message**: string (or callable that returns one) to override the
-         error message used in the response.
-        * **exempt_when**: function returning a boolean indicating whether to exempt
-        the route from the limit
-        * **cost**: integer (or callable that returns one) which is the cost of a hit
-        * **override_defaults**: whether to override the default limits (default: True)
+        Args:
+            limit_value (Union[str, Callable[..., str]]): String in rate-limit notation or a callable that returns a string in rate-limit notation
+
+                *See https://limits.readthedocs.io/en/stable/quickstart.html#rate-limit-string-notation for details*
+
+            key_func (Optional[Callable[..., str]], optional): Function or lambda that extracts the domain and unique identifier for the rate limit. Defaults to None, which uses the remote address of the request
+            scope (Union[str, Callable[..., str]], optional): String that defines the scope of the rate limit
+            override_defaults (bool, optional): Whether to override the default limits. Defaults to True
+            cost (Union[int, Callable[..., int]], optional): Integer (or callable that returns an integer) which sets the cost of a hit to a backend ratelimiter. Defaults to 1
+            error_message (Optional[str], optional): String that overrides the error message used in the response. Defaults to None
+            exempt_when (Optional[Callable[..., bool]], optional): Function that returns an boolean, which indicates whether to exempt the route from the limit. The function can optionally use an `Request` object. Defaults to None
+
+        Returns:
+            Callable[..., Any]: A decorator that injects an shared limit and returns the original function
         """
         return self._limit_decorator(
             limit_value,
@@ -888,25 +829,30 @@ class KanaeLimiter:
             override_defaults=override_defaults,
         )
 
-    def exempt(self, obj):
+    def exempt(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        """A decorator that marks a function as exempt from all rate limits
+
+        Args:
+            func (Callable[..., Any]): Provided function to mark as exempt
+
+        Returns:
+            Callable[..., Any]: A decorator that injects an exempt clause and returns the original function
         """
-        Decorator to mark a view as exempt from rate limits.
-        """
-        name = "%s.%s" % (obj.__module__, obj.__name__)
+        name = "%s.%s" % (func.__module__, func.__name__)
 
         self._exempt_routes.add(name)
 
-        if inspect.iscoroutinefunction(obj):
+        if inspect.iscoroutinefunction(func):
 
-            @wraps(obj)
+            @wraps(func)
             async def __async_inner(*a, **k):
-                return await obj(*a, **k)
+                return await func(*a, **k)
 
             return __async_inner
         else:
 
-            @wraps(obj)
+            @wraps(func)
             def __inner(*a, **k):
-                return obj(*a, **k)
+                return func(*a, **k)
 
             return __inner

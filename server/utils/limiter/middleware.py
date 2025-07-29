@@ -55,11 +55,6 @@ def _should_exempt(limiter: KanaeLimiter, handler: Optional[Callable]) -> bool:
 async def check_limits(
     limiter: KanaeLimiter, request: Request, handler: Optional[Callable], app: Kanae
 ) -> tuple[Optional[Response], bool]:
-    """
-    Returns a `Response` object if an error occurred, as well as a boolean to know
-    whether we should inject headers or not.
-    Used in our ASGI middleware, this support both synchronous or asynchronous exception handlers.
-    """
     if limiter._auto_check and not getattr(
         request.state, "_rate_limiting_complete", False
     ):
