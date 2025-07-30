@@ -14,4 +14,9 @@ class RouteRequest(Request):
 
     @property
     def app(self) -> Kanae:
+        """Returns the instance of our app, which is `Kanae`
+
+        Returns:
+            Kanae: Application instance
+        """
         return self.scope["app"]

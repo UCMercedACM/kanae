@@ -42,9 +42,14 @@ StrOrCallableStr = Union[str, Callable[..., str]]
 async def rate_limit_exceeded_handler(
     request: Request, exc: "RateLimitExceeded"
 ) -> Response:
-    """
-    Build a simple JSON response that includes the details of the rate limit
-    that was hit. If no limit is hit, the countdown is added to headers.
+    """Builds a JSON response that includes the details of the rate limit that was hit.
+
+    Args:
+        request (Request): Instance of `Request`
+        exc (RateLimitExceeded): Instance of the exception `RateLimitExceeded`
+
+    Returns:
+        Response: A generic JSON response that includes rate limit headers
     """
     response = ORJSONResponse(
         {"error": f"Rate limit exceeded: {exc.detail}"}, status_code=429
@@ -56,8 +61,10 @@ async def rate_limit_exceeded_handler(
 
 
 class RateLimitExceeded(HTTPException):
-    """
-    exception raised when a rate limit is hit.
+    """Exception for when an rate limit has been hit
+
+    Args:
+        limit (LimitItem): Instance of `LimitItem`
     """
 
     limit = None
