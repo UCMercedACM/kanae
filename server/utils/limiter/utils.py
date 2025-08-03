@@ -2,11 +2,13 @@ from fastapi import Request
 
 
 def get_ipaddr(request: Request) -> str:
-    """
-    Returns the ip address for the current request (or 127.0.0.1 if none found)
-     based on the X-Forwarded-For headers.
-     Note that a more robust method for determining IP address of the client is
-     provided by uvicorn's ProxyHeadersMiddleware.
+    """Returns the IP address for the current request through the `X-Forwarded-For` headers
+
+    Args:
+        request (Request): Instance of `Request`
+
+    Returns:
+        str: IP Address from the request
     """
     if "X_FORWARDED_FOR" in request.headers:
         return request.headers["X_FORWARDED_FOR"]
@@ -18,8 +20,13 @@ def get_ipaddr(request: Request) -> str:
 
 
 def get_remote_address(request: Request) -> str:
-    """
-    Returns the ip address for the current request (or 127.0.0.1 if none found)
+    """Returns the IP address through the currently provided request
+
+    Args:
+        request: (Request): Instance of `Request`
+
+    Returns:
+        str: IP Address from the request
     """
     if not request.client or not request.client.host:
         return "127.0.0.1"

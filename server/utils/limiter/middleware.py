@@ -52,14 +52,9 @@ def _should_exempt(limiter: KanaeLimiter, handler: Optional[Callable]) -> bool:
     return False
 
 
-async def check_limits(
+async def _check_limits(
     limiter: KanaeLimiter, request: Request, handler: Optional[Callable], app: Kanae
 ) -> tuple[Optional[Response], bool]:
-    """
-    Returns a `Response` object if an error occurred, as well as a boolean to know
-    whether we should inject headers or not.
-    Used in our ASGI middleware, this support both synchronous or asynchronous exception handlers.
-    """
     if limiter._auto_check and not getattr(
         request.state, "_rate_limiting_complete", False
     ):
@@ -91,7 +86,7 @@ class LimiterMiddleware(BaseHTTPMiddleware):
         if _should_exempt(limiter, handler):
             return await call_next(request)
 
-        error_response, should_inject_headers = await check_limits(
+        error_response, should_inject_headers = await _check_limits(
             limiter, request, handler, app
         )
         if error_response:
@@ -160,7 +155,7 @@ class _ASGIMiddlewareResponder:
         if _should_exempt(limiter, handler):
             return await self.app(scope, receive, self.send)
 
-        error_response, should_inject_headers = await check_limits(
+        error_response, should_inject_headers = await _check_limits(
             limiter, request, handler, _app
         )
         if error_response:

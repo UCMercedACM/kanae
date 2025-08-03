@@ -20,10 +20,10 @@ from testcontainers.core.utils import raise_for_deprecated_parameter
 from testcontainers.core.waiting_utils import wait_container_is_ready, wait_for_logs
 from testcontainers.postgres import PostgresContainer
 from utils.config import KanaeConfig
+from utils.limiter import get_remote_address
 from utils.limiter.extension import (
     KanaeLimiter,
     RateLimitExceeded,
-    get_remote_address,
     rate_limit_exceeded_handler,
 )
 from utils.limiter.middleware import LimiterASGIMiddleware, LimiterMiddleware

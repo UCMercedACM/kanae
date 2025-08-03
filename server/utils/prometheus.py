@@ -74,6 +74,23 @@ class InstrumentatorSettings(BaseModel, frozen=True):
 
 
 class PrometheusMiddleware:
+    """Middleware layer for the Prometheus instrumentator
+
+    Args:
+        app (Kanae): Instance of the application, which is `Kanae`
+        settings (InstrumentatorSettings): Instance of `InstrumentatorSettings`
+        round_latency_decimals (int, optional): The amount of decimals to round up to for latency values. Defaults to 4
+        should_only_respect_2xx_for_higher (bool, optional): Whether to only respect 2xx or higher requests. Defaults to False
+        excluded_handlers (list[str], optional): List of excluded handlers. Defaults to an empty list
+        body_handlers (list[str], optional): List of body handlers. Defaults to an empty list
+        instrumentations (Sequence[Callable[[metrics.Info], None]], optional): List of instrumentation functions to use. Defaults to an empty sequence
+        async_instrumentations (Sequence[Callable[[metrics.Info], Awaitable[None]]], optional): List of instrumentation coroutines to use. Defaults to an empty sequence
+        latency_higher_buckets (Sequence[Union[float, str]], optional): Optional sequence of buckets for higher latency. Defaults to `LATENCY_HIGHER_BUCKETS`, which is a predefined constant
+        latency_lower_buckets (Sequence[Union[float, str]], optional): Optional sequence of buckets for lower latency. Defaults to `LATENCY_LOWER_BUCKETS`, which is a predefined constant
+        registry (Optional[CollectorRegistry], optional): A optional provided registry to utilize instead. Defaults to None
+        custom_labels (Optional[dict], optional): Any custom labels to use within each metric. Defaults to None
+    """
+
     def __init__(
         self,
         app: Kanae,
@@ -253,7 +270,7 @@ class PrometheusMiddleware:
         """Extracts either template or (if no template) path.
 
         Args:
-            request (Request): Python Requests request object.
+            request (Request): Instance of `Request`
 
         Returns:
             Tuple[str, bool]: Tuple with two elements. First element is either
@@ -284,6 +301,17 @@ class PrometheusMiddleware:
 
 
 class PrometheusInstrumentator:
+    """Instrumentator that exports Prometheus metrics for consumption
+
+    Args:
+        app (Kanae): Instance of the application, which is `Kanae`
+        settings (InstrumentatorSettings): Instance of `InstrumentatorSettings`
+        round_latency_decimals (int, optional): The amount of decimals to round up to for latency values. Defaults to 4
+        excluded_handlers (list[str], optional): List of excluded handlers. Defaults to an empty list
+        body_handlers (list[str], optional): List of body handlers. Defaults to an empty list
+        registry (Optional[CollectorRegistry], optional): A optional provided registry to utilize instead. Defaults to None
+    """
+
     def __init__(
         self,
         app: Kanae,
@@ -329,6 +357,13 @@ class PrometheusInstrumentator:
         latency_higher_buckets: Sequence[Union[float, str]] = LATENCY_HIGHER_BUCKETS,
         latency_lower_buckets: Sequence[Union[float, str]] = LATENCY_LOWER_BUCKETS,
     ) -> None:
+        """Injects the middleware into the application
+
+        Args:
+            should_only_respect_2xx_for_higher (bool, optional): Whether to only respect 2xx or higher requests. Defaults to False
+            latency_higher_buckets (Sequence[Union[float, str]], optional): Optional sequence of buckets for higher latency. Defaults to `LATENCY_HIGHER_BUCKETS`, which is a predefined constant
+            latency_lower_buckets (Sequence[Union[float, str]], optional): Optional sequence of buckets for lower latency. Defaults to `LATENCY_LOWER_BUCKETS`, which is a predefined constant
+        """
         self.app.add_middleware(
             PrometheusMiddleware,  # type: ignore (This is actually correct)
             settings=self.settings,
@@ -349,16 +384,13 @@ class PrometheusInstrumentator:
             Callable[[metrics.Info], Union[None, Awaitable[None]]]
         ],
     ) -> None:
-        """Adds function to list of instrumentations.
+        """Adds a function to list of instrumentations
 
         Args:
-            instrumentation_function: Function
+            instrumentation_function (Optional[Callable[[metrics.Info], Union[None, Awaitable[None]]]]): Function
                 that will be executed during every request handler call (if
                 not excluded). See above for detailed information on the
                 interface of the function.
-
-        Returns:
-            self: Instrumentator. Builder Pattern.
         """
 
         for func in instrumentation_function:
@@ -381,9 +413,14 @@ class PrometheusInstrumentator:
         include_in_schema: bool = False,
         **kwargs: Any,
     ) -> None:
-        def metrics(request: Request) -> Response:
-            """Endpoint that serves Prometheus metrics."""
+        """Starts the instrumentator by injecting the metrics route into the application
 
+        Args:
+            endpoint (str, optional): The path of the endpoint to serve. Defaults to "/metrics".
+            include_in_schema (bool, optional): Whether to include the endpoint into the OpenAPI definitions. Defaults to False.
+        """
+
+        def metrics(request: Request) -> Response:
             ephemeral_registry = self.registry
             if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
                 ephemeral_registry = CollectorRegistry()

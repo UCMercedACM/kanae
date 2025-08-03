@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 from utils.limiter import KanaeLimiter
-from utils.limiter.extension import get_remote_address
+from utils.limiter.utils import get_remote_address
 
 from .config import KanaeConfig
 
