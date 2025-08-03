@@ -3,7 +3,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
-from utils.limiter.extension import get_ipaddr
+from utils.limiter import get_ipaddr
 from yarl import URL
 
 
