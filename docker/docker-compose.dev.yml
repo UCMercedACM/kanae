@@ -4,7 +4,9 @@ name: kanae_dev
 services:
   database:
     container_name: kanae_postgres
-    image: postgres:17-alpine
+    build:
+      context: ../
+      dockerfile: docker/pg-test/Dockerfile
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}

@@ -1,11 +1,10 @@
-FROM python:3.13-slim-bookworm
+FROM python:3.13-slim-trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TINI_VERSION=v0.19.0
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-  tini \
-  && apt-get clean
+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
+RUN chmod +x /tini
 
 WORKDIR /kanae
 COPY /server /kanae/server/
@@ -22,7 +21,7 @@ RUN pip install --user -r requirements.txt
 
 EXPOSE 8000
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/tini", "--"]
 
 CMD ["python3", "/kanae/server/launcher.py"]
 
