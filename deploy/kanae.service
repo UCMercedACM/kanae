@@ -1,0 +1,21 @@
+[Unit]
+Description=kanae
+Requires=kanae.socket
+After=network.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=kanae
+Group=kanae
+DynamicUser=true
+WorkingDirectory=/home/noelle/apps/kanae
+ExecStart=/home/noelle/apps/kanae/deploy/launcher.sh
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
