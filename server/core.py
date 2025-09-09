@@ -52,10 +52,21 @@ from supertokens_python.recipe.thirdparty.provider import (
     ProviderInput,
     RedirectUriInfo,
 )
+from supertokens_python.recipe.thirdparty.api.implementation import (
+    APIImplementation as ThirdPartyAPIImplementation,
+)
+from supertokens_python.recipe.thirdparty.recipe_implementation import (
+    RecipeImplementation as ThirdPartyRecipeImplementation,
+)
+
+
 from supertokens_python.recipe.emailpassword.interfaces import (
     EmailAlreadyExistsError,
-    RecipeInterface as EmailPasswordRecipeInterface,
+    RecipeInterface as EmailPasswordInterface,
     SignUpOkResult as EmailPasswordSignUpOkResult,
+)
+from supertokens_python.recipe.emailpassword.recipe_implementation import (
+    RecipeImplementation as EmailPasswordImplementation,
 )
 # isort: on
 
@@ -118,6 +129,183 @@ async def init(conn: asyncpg.Connection):
     )
 
 
+### Customized versions of third party and email+password implementations
+
+
+class ThirdPartyHandler(ThirdPartyRecipeImplementation):
+    def __init__(self, app: Kanae):
+        self.app = app
+
+    async def _register(
+        self,
+        third_party_id: str,
+        third_party_user_id: str,
+        email: str,
+        is_verified: bool,
+        oauth_tokens: dict[str, Any],
+        raw_user_info_from_provider: RawUserInfoFromProvider,
+        session: Optional[SessionContainer],
+        should_try_linking_with_session_user: Union[bool, None],
+        tenant_id: str,
+        user_context: dict[str, Any],
+    ) -> Union[
+        ThirdPartySignInUpOkResult,
+        ThirdPartySignInUpNotAllowed,
+        LinkingToSessionUserFailedError,
+        GeneralErrorResponse,
+    ]:
+        existing_users = await list_users_by_account_info(
+            tenant_id, AccountInfoInput(email=email)
+        )
+        if len(existing_users) == 0:
+            result = await self.sign_in_up(
+                third_party_id,
+                third_party_user_id,
+                email,
+                is_verified,
+                oauth_tokens,
+                raw_user_info_from_provider,
+                session,
+                should_try_linking_with_session_user,
+                tenant_id,
+                user_context,
+            )
+
+            if isinstance(result, ThirdPartySignInUpOkResult):
+                user_info = result.raw_user_info_from_provider.from_user_info_api
+                if (
+                    user_info
+                    and result.created_new_recipe_user
+                    and len(result.user.login_methods) == 1
+                ):
+                    is_valid_email = validate_email(
+                        user_info["email"], check_deliverability=True
+                    )
+                    if isinstance(is_valid_email, EmailNotValidError):
+                        raise EmailNotValidError("Email provided is not valid")
+
+                    normalized_email = is_valid_email.normalized
+                    await self.app._set_first_time_member(
+                        result.user.id, user_info["name"], normalized_email
+                    )
+            return result
+
+        if any(
+            any(
+                lm.recipe_id == "thirdparty"
+                and lm.has_same_third_party_info_as(
+                    ThirdPartyInfo(third_party_user_id, third_party_id)
+                )
+                for lm in user.login_methods
+            )
+            for user in existing_users
+        ):
+            result = await self.sign_in_up(
+                third_party_id,
+                third_party_user_id,
+                email,
+                is_verified,
+                oauth_tokens,
+                raw_user_info_from_provider,
+                session,
+                should_try_linking_with_session_user,
+                tenant_id,
+                user_context,
+            )
+            return result
+
+        raise GeneralError("Cannot sign up as email already exists")
+
+    def override_sign_in_up(
+        self, implementation: ThirdPartyRecipeInterface
+    ) -> ThirdPartyRecipeInterface:
+        implementation.sign_in_up = self._register  # type: ignore
+        return implementation
+
+
+class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
+    async def _post_register(
+        self,
+        provider: Provider,
+        redirect_uri_info: Optional[RedirectUriInfo],
+        oauth_tokens: Optional[dict[str, Any]],
+        session: Optional[SessionContainer],
+        should_try_linking_with_session_user: Union[bool, None],
+        tenant_id: str,
+        api_options: APIOptions,
+        user_context: dict[str, Any],
+    ):
+        try:
+            return await self.sign_in_up_post(
+                provider,
+                redirect_uri_info,
+                oauth_tokens,
+                session,
+                should_try_linking_with_session_user,
+                tenant_id,
+                api_options,
+                user_context,
+            )
+        except GeneralError:
+            return GeneralErrorResponse(
+                "Seems like you already have an account with another social login provider. Please use that instead."
+            )
+
+    def override_post_register(self, implementation: APIInterface) -> APIInterface:
+        implementation.sign_in_up_post = self._post_register
+        return implementation
+
+
+class EmailPasswordHandler(EmailPasswordImplementation):
+    def __init__(self, app: Kanae):
+        self.app = app
+
+    async def _register(
+        self,
+        email: str,
+        password: str,
+        tenant_id: str,
+        session: Union[SessionContainer, None],
+        should_try_linking_with_session_user: Union[bool, None],
+        user_context: dict[str, Any],
+    ):
+        is_valid_email = validate_email(email, check_deliverability=True)
+        if isinstance(is_valid_email, EmailNotValidError):
+            raise EmailNotValidError("Email provided is not valid")
+
+        normalized_email = is_valid_email.normalized
+        existing_users = await list_users_by_account_info(
+            tenant_id, AccountInfoInput(email=normalized_email)
+        )
+
+        if len(existing_users) == 0:
+            # this means this email is new so we allow sign up
+            result = await self.sign_up(
+                normalized_email,
+                password,
+                tenant_id,
+                session,
+                should_try_linking_with_session_user,
+                user_context,
+            )
+
+            if isinstance(result, EmailPasswordSignUpOkResult):
+                await self.app._set_first_time_member(
+                    result.user.id, normalized_email, normalized_email
+                )
+
+            return result
+
+        return EmailAlreadyExistsError()
+
+    def override_sign_up(
+        self, implementation: EmailPasswordInterface
+    ) -> EmailPasswordInterface:
+        implementation.sign_up = self._register
+        return implementation
+
+
+### FastAPI subclass (Kanae)
 class Kanae(FastAPI):
     pool: asyncpg.Pool
 
@@ -177,12 +365,13 @@ class Kanae(FastAPI):
                         ]
                     ),
                     override=thirdparty.InputOverrideConfig(
-                        functions=self.third_party_override
+                        apis=self._tp_api_handler.override_post_register,
+                        functions=self._tp_handler.override_sign_in_up,
                     ),
                 ),
                 emailpassword.init(
                     override=emailpassword.InputOverrideConfig(
-                        functions=self.emailpassword_override
+                        functions=self._ep_handler.override_sign_up
                     )
                 ),
                 dashboard.init(),
@@ -190,6 +379,12 @@ class Kanae(FastAPI):
             ],
             mode="asgi",
         )
+
+        self._tp_handler = ThirdPartyHandler(self)
+        self._ep_handler = EmailPasswordHandler(self)
+        self._tp_api_handler = ThirdPartyAPIHandler()
+        self._logger = logging.getLogger("kanae.core")
+
         self.config = config
 
         self.is_prometheus_enabled: bool = config["kanae"]["prometheus"]["enabled"]
@@ -200,6 +395,7 @@ class Kanae(FastAPI):
         )
 
         self.ph = PasswordHasher()
+
         self.add_exception_handler(
             HTTPException,
             self.http_exception_handler,  # type: ignore
@@ -221,8 +417,6 @@ class Kanae(FastAPI):
             rate_limit_exceeded_handler,  # type: ignore
         )
 
-        self._logger = logging.getLogger("kanae.core")
-
         if self.is_prometheus_enabled:
             _host = self.config["kanae"]["host"]
             _port = self.config["kanae"]["port"]
@@ -234,178 +428,6 @@ class Kanae(FastAPI):
             )
 
     # SuperTokens recipes overrides
-
-    # This is taken from the docs and modified
-    def third_party_override(
-        self, original_implementation: ThirdPartyRecipeInterface
-    ) -> ThirdPartyRecipeInterface:
-        original_sign_in_up = original_implementation.sign_in_up
-
-        async def sign_in_up(
-            third_party_id: str,
-            third_party_user_id: str,
-            email: str,
-            is_verified: bool,
-            oauth_tokens: dict[str, Any],
-            raw_user_info_from_provider: RawUserInfoFromProvider,
-            session: Optional[SessionContainer],
-            should_try_linking_with_session_user: Union[bool, None],
-            tenant_id: str,
-            user_context: dict[str, Any],
-        ):
-            existing_users = await list_users_by_account_info(
-                tenant_id, AccountInfoInput(email=email)
-            )
-            if len(existing_users) == 0:
-                result = await original_sign_in_up(
-                    third_party_id,
-                    third_party_user_id,
-                    email,
-                    is_verified,
-                    oauth_tokens,
-                    raw_user_info_from_provider,
-                    session,
-                    should_try_linking_with_session_user,
-                    tenant_id,
-                    user_context,
-                )
-                await self._first_time_tp_sign_up(result)
-                return result
-
-            if any(
-                any(
-                    lm.recipe_id == "thirdparty"
-                    and lm.has_same_third_party_info_as(
-                        ThirdPartyInfo(third_party_user_id, third_party_id)
-                    )
-                    for lm in user.login_methods
-                )
-                for user in existing_users
-            ):
-                result = await original_sign_in_up(
-                    third_party_id,
-                    third_party_user_id,
-                    email,
-                    is_verified,
-                    oauth_tokens,
-                    raw_user_info_from_provider,
-                    session,
-                    should_try_linking_with_session_user,
-                    tenant_id,
-                    user_context,
-                )
-                await self._first_time_tp_sign_up(result)
-                return result
-
-            raise RuntimeError("Cannot sign up as email already exists")
-
-        original_implementation.sign_in_up = sign_in_up
-
-        return original_implementation
-
-    def emailpassword_override(
-        self,
-        original_implementation: EmailPasswordRecipeInterface,
-    ) -> EmailPasswordRecipeInterface:
-        original_email_password_sign_up = original_implementation.sign_up
-
-        async def emailpassword_sign_up(
-            email: str,
-            password: str,
-            tenant_id: str,
-            session: Union[SessionContainer, None],
-            should_try_linking_with_session_user: Union[bool, None],
-            user_context: dict[str, Any],
-        ):
-            is_valid_email = validate_email(email, check_deliverability=True)
-            if isinstance(is_valid_email, EmailNotValidError):
-                raise EmailNotValidError("Email provided is not valid")
-
-            normalized_email = is_valid_email.normalized
-            existing_users = await list_users_by_account_info(
-                tenant_id, AccountInfoInput(email=normalized_email)
-            )
-
-            if len(existing_users) == 0:
-                # this means this email is new so we allow sign up
-                result = await original_email_password_sign_up(
-                    normalized_email,
-                    password,
-                    tenant_id,
-                    session,
-                    should_try_linking_with_session_user,
-                    user_context,
-                )
-
-                if isinstance(result, EmailPasswordSignUpOkResult):
-                    await self._set_first_time_member(
-                        result.user.id, normalized_email, normalized_email
-                    )
-
-                return result
-
-            return EmailAlreadyExistsError()
-
-        original_implementation.sign_up = emailpassword_sign_up
-
-        return original_implementation
-
-    def apis_override(self, original_implementation: APIInterface) -> APIInterface:
-        original_sign_in_up_post = original_implementation.sign_in_up_post
-
-        async def sign_in_up_post(
-            provider: Provider,
-            redirect_uri_info: Optional[RedirectUriInfo],
-            oauth_tokens: Optional[dict[str, Any]],
-            session: Optional[SessionContainer],
-            should_try_linking_with_session_user: Union[bool, None],
-            tenant_id: str,
-            api_options: APIOptions,
-            user_context: dict[str, Any],
-        ):
-            try:
-                return await original_sign_in_up_post(
-                    provider,
-                    redirect_uri_info,
-                    oauth_tokens,
-                    session,
-                    should_try_linking_with_session_user,
-                    tenant_id,
-                    api_options,
-                    user_context,
-                )
-            except Exception as e:
-                if str(e) == "Cannot sign up as email already exists":
-                    return GeneralErrorResponse(
-                        "Seems like you already have an account with another social login provider. Please use that instead."
-                    )
-                raise e
-
-        original_implementation.sign_in_up_post = sign_in_up_post
-        return original_implementation
-
-    async def _first_time_tp_sign_up(
-        self, result: ThirdPartyResultType
-    ) -> Union[ThirdPartyResultType, GeneralErrorResponse]:
-        if isinstance(result, ThirdPartySignInUpOkResult):
-            user_info = result.raw_user_info_from_provider.from_user_info_api
-            if (
-                user_info
-                and result.created_new_recipe_user
-                and len(result.user.login_methods) == 1
-            ):
-                is_valid_email = validate_email(
-                    user_info["email"], check_deliverability=True
-                )
-                if isinstance(is_valid_email, EmailNotValidError):
-                    raise EmailNotValidError("Email provided is not valid")
-
-                normalized_email = is_valid_email.normalized
-                await self._set_first_time_member(
-                    result.user.id, user_info["name"], normalized_email
-                )
-
-        return result
 
     async def _set_first_time_member(
         self, id: str, *args: Unpack[tuple[str, str]]
