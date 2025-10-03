@@ -326,6 +326,11 @@ class Kanae(FastAPI):
             docs_url=None,
             lifespan=self.lifespan,
         )
+
+        _tp_handler = ThirdPartyHandler(self)
+        _ep_handler = EmailPasswordHandler(self)
+        _tp_api_handler = ThirdPartyAPIHandler()
+
         supertokens_init(
             app_info=InputAppInfo(
                 app_name="ucmacm-website",
@@ -365,13 +370,13 @@ class Kanae(FastAPI):
                         ]
                     ),
                     override=thirdparty.InputOverrideConfig(
-                        apis=self._tp_api_handler.override_post_register,
-                        functions=self._tp_handler.override_sign_in_up,
+                        apis=_tp_api_handler.override_post_register,
+                        functions=_tp_handler.override_sign_in_up,
                     ),
                 ),
                 emailpassword.init(
                     override=emailpassword.InputOverrideConfig(
-                        functions=self._ep_handler.override_sign_up
+                        functions=_ep_handler.override_sign_up
                     )
                 ),
                 dashboard.init(),
@@ -380,9 +385,6 @@ class Kanae(FastAPI):
             mode="asgi",
         )
 
-        self._tp_handler = ThirdPartyHandler(self)
-        self._ep_handler = EmailPasswordHandler(self)
-        self._tp_api_handler = ThirdPartyAPIHandler()
         self._logger = logging.getLogger("kanae.core")
 
         self.config = config
