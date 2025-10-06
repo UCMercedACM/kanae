@@ -1,29 +1,51 @@
-FROM python:3.13-slim-trixie
+FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim AS build
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Compile bytecode and enable caching
+# Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
+# Ref: https://docs.astral.sh/uv/guides/integration/docker/#caching
+ENV UV_COMPILE_BYTECODE=1 
+ENV UV_LINK_MODE=copy
+
+# Disable Python downloads as the system Python interpreter instead
+ENV UV_PYTHON_DOWNLOADS=0
+
+# Set Tini version
+# Ref: https://github.com/krallin/tini?tab=readme-ov-file#using-tini
 ENV TINI_VERSION=v0.19.0
 
 ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
-RUN chmod +x /tini
 
-WORKDIR /kanae
-COPY /server /kanae/server/
-COPY /requirements.txt /kanae/requirements.txt
+WORKDIR /server/
 
-RUN adduser --disabled-password --gecos "" kanae \
-  && chown -R kanae:kanae /kanae
+COPY requirements.txt /server/
 
-USER kanae
+# Install dependencies
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=requirements.txt,target=requirements.txt \
+    uv venv && uv pip install -r requirements.txt
 
-ENV PATH="${PATH}:/home/kanae/.local/bin"
+# Add project source code
+COPY server /server
 
-RUN pip install --user -r requirements.txt
+FROM python:3.13-slim-trixie
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/server
+
+# Copy the server from the builder
+COPY --from=build --chown=server:server /server /server
+COPY --from=build --chmod=+x /tini /tini
+
+WORKDIR /server/
+
+# Place executables in the environment at the front of the path
+ENV PATH="/server/.venv/bin:$PATH"
 
 EXPOSE 8000
 
 ENTRYPOINT ["/tini", "--"]
 
-CMD ["python3", "/kanae/server/launcher.py"]
+CMD ["python3", "/server/launcher.py"]
 
 STOPSIGNAL SIGTERM
 
