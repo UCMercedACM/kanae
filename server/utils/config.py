@@ -191,17 +191,17 @@ class KanaeUvicornConfig(UvicornConfig):
         handler.setFormatter(self._determine_formatter(handler))
 
         if self.access_log:
-            file_handler = RotatingFileHandler(
-                filename="kanae-access.log",
-                encoding="utf-8",
-                mode="w",
-                maxBytes=max_bytes,
-                backupCount=5,
-            )
             access_logger.setLevel(level)
             access_logger.addHandler(handler)
 
             if not self._is_docker():
+                file_handler = RotatingFileHandler(
+                    filename="kanae-access.log",
+                    encoding="utf-8",
+                    mode="w",
+                    maxBytes=max_bytes,
+                    backupCount=5,
+                )
                 access_logger.addHandler(file_handler)
 
         root.setLevel(level)
