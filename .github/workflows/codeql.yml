@@ -43,10 +43,10 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/.uv-cache
-        key: uv-${{ runner.os }}-codeql-uv-${{ hashFiles('uv.lock') }}
+        key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
         restore-keys: |
           uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          uv-${{ runner.os }}-codeql-uv
+          uv-${{ runner.os }}
   
     - name: Install Dependencies
       if: steps.cache-uv.outputs.cache-hit != 'true'
