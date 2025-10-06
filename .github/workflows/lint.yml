@@ -18,20 +18,37 @@ jobs:
       matrix:
         version: ['3.10', '3.11', '3.12', '3.13']
 
+    env:
+      UV_SYSTEM_PYTHON: 1
+
     steps:
       - name: Checkout Repository  
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.version }}
-      
-      - name: Install Tox
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install dependencies
         run: |
-          pip install "tox>=4.25.0,<5"
+          uv pip install -r requirements-dev.txt
+
+      - name: Check typings
+        run: |
+          pyright server
 
       - name: Lint Codebase
         run: |
-          tox -e lint
+          ruff check server --exit-non-zero-on-fix
+
+      - name: Check for formatting
+        run: |
+          ruff format server --check
 
