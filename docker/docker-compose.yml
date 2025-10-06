@@ -6,9 +6,12 @@ services:
     image: ghcr.io/ucmercedacm/kanae:latest
     volumes:
       # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
-      - ${CONFIG_LOCATION}:/kanae/server/config.yml
+      - ${CONFIG_LOCATION}:/kanae/config.yml
     ports:
       - 8000:8000
+    networks:
+      - default
+      - db_bridge
     depends_on:
       database:
         condition: service_healthy
@@ -16,15 +19,13 @@ services:
       valkey:
         condition: service_healthy
         restart: true
-    env_file:
-      - .env
+      migrate:
+        condition: service_completed_successfully
     restart: always
 
   database:
     container_name: kanae_postgres
-    build:
-      context: ../
-      dockerfile: docker/pg-test/Dockerfile
+    image: postgres:17
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
@@ -32,6 +33,9 @@ services:
       POSTGRES_INITDB_ARGS: '--data-checksums'
     ports:
       - 5432:5432
+    networks:
+      - default
+      - db_bridge
     volumes:
       - database:/var/lib/postgresql/data
     healthcheck:
@@ -48,6 +52,29 @@ services:
       test: valkey-cli PING || exit 1
     ports:
       - 6379:6379
+    restart: always
 
+  migrate:
+    container_name: kanae_migrate
+    image: arigaio/atlas:latest
+    command: >
+      schema apply
+      --auto-approve
+      --to "file://schema.sql"
+      --url "postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/${DB_DATABASE_NAME}?search_path=public&sslmode=disable"
+      --dev-url "postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/postgres?search_path=public&sslmode=disable"
+    networks:
+      - db_bridge
+      - default
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - ../server/schema.sql:/schema.sql
+      
 volumes:
   database:
+
+networks:
+  db_bridge:
+    driver: bridge

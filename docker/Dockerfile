@@ -15,9 +15,9 @@ ENV TINI_VERSION=v0.19.0
 
 ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
 
-WORKDIR /server/
+WORKDIR /kanae/
 
-COPY requirements.txt /server/
+COPY requirements.txt /kanae
 
 # Install dependencies
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -25,27 +25,27 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv && uv pip install -r requirements.txt
 
 # Add project source code
-COPY server /server
+COPY server /kanae
 
 FROM python:3.13-slim-trixie
 
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/server
+ENV PYTHONPATH=/kanae
 
 # Copy the server from the builder
-COPY --from=build --chown=server:server /server /server
+COPY --from=build --chown=kanae:kanae /kanae /kanae
 COPY --from=build --chmod=+x /tini /tini
 
-WORKDIR /server/
+WORKDIR /kanae/
 
 # Place executables in the environment at the front of the path
-ENV PATH="/server/.venv/bin:$PATH"
+ENV PATH="/kanae/.venv/bin:$PATH"
 
 EXPOSE 8000
 
 ENTRYPOINT ["/tini", "--"]
 
-CMD ["python3", "/server/launcher.py"]
+CMD ["python3", "/kanae/launcher.py"]
 
 STOPSIGNAL SIGTERM
 
