@@ -62,3 +62,7 @@ jobs:
       uses: github/codeql-action/analyze@v3
       with:
         upload: true
+
+    - name: Minimize uv cache
+      run: |
+        uv cache prune --ci
