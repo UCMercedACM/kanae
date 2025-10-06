@@ -32,14 +32,21 @@ FROM python:3.13-slim-trixie
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/kanae
 
+# Set up non-root user
+RUN groupadd --system --gid 999 kanae \
+ && useradd --system --gid 999 --uid 999 --no-create-home kanae
+
 # Copy the server from the builder
-COPY --from=build --chown=kanae:kanae /kanae /kanae
-COPY --from=build --chmod=+x /tini /tini
+COPY --from=build --chown=kanae:kanae --chmod=755 /kanae /kanae
+COPY --from=build --chown=kanae:kanae --chmod=+x /tini /tini
 
 WORKDIR /kanae/
 
 # Place executables in the environment at the front of the path
 ENV PATH="/kanae/.venv/bin:$PATH"
+
+# Use non-root user
+USER kanae
 
 EXPOSE 8000
 
