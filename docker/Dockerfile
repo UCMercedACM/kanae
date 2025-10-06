@@ -38,7 +38,7 @@ RUN groupadd --system --gid 999 kanae \
 
 # Copy the server from the builder
 COPY --from=build --chown=kanae:kanae --chmod=755 /kanae /kanae
-COPY --from=build --chown=kanae:kanae --chmod=+x /tini /tini
+COPY --from=build --chmod=+x /tini /tini
 
 WORKDIR /kanae/
 
