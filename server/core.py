@@ -37,7 +37,6 @@ from supertokens_python.recipe import (
 from supertokens_python.recipe.emailpassword import InputFormField
 from supertokens_python.recipe.session.interfaces import SessionContainer
 from supertokens_python.types.base import AccountInfoInput
-from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 
 # isort: off
 # isort is turned off here to clarify the different imports of interfaces and providers
@@ -90,6 +89,7 @@ from supertokens_python.supertokens import Host
 from supertokens_python.types import GeneralErrorResponse
 from utils.config import KanaeConfig
 from utils.limiter.extension import RateLimitExceeded, rate_limit_exceeded_handler
+from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
