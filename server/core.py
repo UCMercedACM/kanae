@@ -4,7 +4,7 @@ import logging
 import re
 import sys
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, NamedTuple, Optional, TypeAlias, Union
+from typing import TYPE_CHECKING, Any, Generator, NamedTuple, Optional, Union
 
 import asyncpg
 import orjson
@@ -118,13 +118,15 @@ Changes can be made without notification, but announcements will be made for maj
 """
 __version__ = "0.1.0a"
 
+EMAIL_INVALID_MESSAGE = "Email provided is invalid"
 
-ThirdPartyResultType: TypeAlias = Union[
+
+ThirdPartyResultType = Union[
     LinkingToSessionUserFailedError,
     ThirdPartySignInUpOkResult,
     ThirdPartySignInUpNotAllowed,
 ]
-EmailResultType: TypeAlias = Union[
+EmailResultType = Union[
     LinkingToSessionUserFailedError,
     EmailPasswordSignUpOkResult,
     EmailPasswordSignUpPostOkResult,
@@ -201,7 +203,7 @@ class ThirdPartyHandler(ThirdPartyRecipeImplementation):
         oauth_tokens: dict[str, Any],
         raw_user_info_from_provider: RawUserInfoFromProvider,
         session: Optional[SessionContainer],
-        should_try_linking_with_session_user: Union[bool, None],
+        should_try_linking_with_session_user: Optional[bool],
         tenant_id: str,
         user_context: dict[str, Any],
     ) -> Union[
@@ -238,7 +240,7 @@ class ThirdPartyHandler(ThirdPartyRecipeImplementation):
                         user_info["email"], check_deliverability=True, strict=True
                     )
                     if isinstance(is_valid_email, EmailNotValidError):
-                        raise EmailNotValidError("Email provided is not valid")
+                        raise EmailNotValidError(EMAIL_INVALID_MESSAGE)
 
                     normalized_email = is_valid_email.normalized
                     await self.app._set_first_time_member(
@@ -286,7 +288,7 @@ class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
         redirect_uri_info: Optional[RedirectUriInfo],
         oauth_tokens: Optional[dict[str, Any]],
         session: Optional[SessionContainer],
-        should_try_linking_with_session_user: Union[bool, None],
+        should_try_linking_with_session_user: Optional[bool],
         tenant_id: str,
         api_options: ThirdPartyAPIOptions,
         user_context: dict[str, Any],
@@ -326,13 +328,13 @@ class EmailPasswordHandler(EmailPasswordImplementation):
         email: str,
         password: str,
         tenant_id: str,
-        session: Union[SessionContainer, None],
-        should_try_linking_with_session_user: Union[bool, None],
+        session: Optional[SessionContainer],
+        should_try_linking_with_session_user: Optional[bool],
         user_context: dict[str, Any],
     ):
         is_valid_email = validate_email(email, check_deliverability=True, strict=True)
         if isinstance(is_valid_email, EmailNotValidError):
-            raise EmailNotValidError("Email provided is not valid")
+            raise EmailNotValidError(EMAIL_INVALID_MESSAGE)
 
         normalized_email = is_valid_email.normalized
         existing_users = await list_users_by_account_info(
@@ -380,8 +382,8 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
         self,
         form_fields: list[FormField],
         tenant_id: str,
-        session: Union[SessionContainer, None],
-        should_try_linking_with_session_user: Union[bool, None],
+        session: Optional[SessionContainer],
+        should_try_linking_with_session_user: Optional[bool],
         api_options: EmailPasswordAPIOptions,
         user_context: dict[str, Any],
     ):
@@ -407,7 +409,7 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
                 user_fields.email, check_deliverability=True, strict=True
             )
             if isinstance(is_valid_email, EmailNotValidError):
-                raise EmailNotValidError("Email provided is not valid")
+                raise EmailNotValidError(EMAIL_INVALID_MESSAGE)
 
             normalized_email = is_valid_email.normalized
 
