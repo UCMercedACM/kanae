@@ -4,7 +4,10 @@ name: kanae_dev
 services:
   database:
     container_name: kanae_postgres
-    image: postgres:17
+    build:
+      dockerfile_inline: |
+        FROM postgres:17
+        COPY supertokens-seed.sql /docker-entrypoint-initdb.d/
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
@@ -21,6 +24,24 @@ services:
       test: valkey-cli PING || exit 1
     ports:
       - 6379:6379
+
+  supertokens:
+    container_name: kanae_supertokens
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - 3567:3567
+    environment:
+      POSTGRESQL_CONNECTION_URI: "postgresql://${DB_USERNAME}:${DB_PASSWORD}@database:5432/supertokens"
+    restart: unless-stopped
+    healthcheck:
+      test: >
+        bash -c 'exec 3<>/dev/tcp/127.0.0.1/3567 && echo -e "GET /hello HTTP/1.1\r\nhost: 127.0.0.1:3567\r\nConnection: close\r\n\r\n" >&3 && cat <&3 | grep "Hello"'
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   database:
