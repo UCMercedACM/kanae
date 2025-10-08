@@ -104,7 +104,8 @@ auth:
 
   # The backend SuperToken managed or core instance.
   # https://try.supertokens.com can be used for demo purposes, but we will be replacing it with a developer version
-  connection_uri: ""
+  connection_uri: 
+    - ""
 
   # API key used for SuperTokens
   # Used on the hosted version
