@@ -1,0 +1,73 @@
+redactions = ["DB_PASSWORD"]
+
+[tools]
+uv = "0.8.23"
+atlas = "latest"
+
+lefthook = "latest"
+
+[settings]
+experimental = true
+pin = true
+
+[hooks]
+postinstall = "lefthook install"
+
+[env]
+_.file = [{ path = "{{ config_root }}/docker/.env" }]
+DATABASE_URL = "postgres://{{env.DB_USERNAME}}:{{env.DB_PASSWORD}}@localhost:5432/{{env.DB_DATABASE_NAME}}?search_path=public&sslmode=disable"
+
+
+# Docker
+[tasks."docker:preview"]
+depends = ["server:check-env"]
+description = "Runs the preview docker compose stack, i.e., runs the server with databases and other services for previewing the application"
+dir = "{{ config_root }}/docker"
+run = "docker compose pull && docker compose up -d"
+
+[tasks."server:start"]
+depends = ["server:docker:up"]
+alias = ["server:up", "server:dev"]
+description = "Start backend development server. Save file(s) to see changes through reloading"
+env._.path = ".venv/bin"
+dir = "{{ config_root }}/server"
+run = "uvicorn launcher:app --reload"
+
+[tasks."server:lint"]
+description = "Lints the codebase by type checking and general linting"
+env._.path = ".venv/bin"
+run = ["pyright server", "ruff check server --fix --exit-non-zero-on-fix"]
+
+[tasks."server:format"]
+description = "Formats the codebase"
+env._.path = ".venv/bin"
+run = "ruff format server"
+
+[tasks."server:check"]
+description = "Lint and format backend codebase. This is necessary to handle import sorting and formatting. TD;LR: Run this task once you are done with development at the end of the PR"
+run = [{ task = "server:lint" }, { task = "server:format" }]
+
+[tasks."server:check-env"]
+hide = true
+run = "test -f {{ config_root }}/docker/.env"
+run_windows = "Test-Path {{ config_root }}/docker/.env"
+
+[tasks."server:schema:plan"]
+depends = ["server:check-env"]
+description = "Plans schema diffs"
+run = "atlas schema plan --to file://server/schema.sql --env dev --var url=$DATABASE_URL"
+
+[tasks."server:schema:apply"]
+depends = ["server:check-env"]
+description = "Applies schema diffs to database"
+run = "atlas schema apply --env dev --var url=$DATABASE_URL"
+
+[tasks."server:docker:up"]
+depends = ["server:check-env"]
+description = "Brings up the development databases through Docker Compose"
+run = "docker compose -f docker/docker-compose.dev.yml up -d"
+
+[tasks."server:docker:stop"]
+depends = ["server:check-env"]
+description = "Stops the development databases through Docker Compose"
+run = "docker compose -f docker/docker-compose.dev.yml stop"
