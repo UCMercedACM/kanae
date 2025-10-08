@@ -76,15 +76,16 @@ from supertokens_python.recipe.emailpassword.api.implementation import (
 from supertokens_python.recipe.emailpassword.recipe_implementation import (
     RecipeImplementation as EmailPasswordImplementation,
 )
+
+from supertokens_python.recipe.userroles.asyncio import (
+    create_new_role_or_add_permissions,
+    get_all_roles,
+)
 # isort: on
 
 from supertokens_python.normalised_url_domain import NormalisedURLDomain
 from supertokens_python.normalised_url_path import NormalisedURLPath
 from supertokens_python.querier import Querier
-from supertokens_python.recipe.userroles.asyncio import (
-    create_new_role_or_add_permissions,
-    get_all_roles,
-)
 from supertokens_python.supertokens import Host
 from supertokens_python.types import GeneralErrorResponse
 from utils.config import KanaeConfig
