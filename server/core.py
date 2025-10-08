@@ -4,10 +4,11 @@ import logging
 import re
 import sys
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, Generator, NamedTuple, Optional, TypeAlias, Union
 
 import asyncpg
 import orjson
+import yarl
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from email_validator import EmailNotValidError, validate_email
@@ -77,6 +78,15 @@ from supertokens_python.recipe.emailpassword.recipe_implementation import (
 )
 # isort: on
 
+from supertokens_python.normalised_url_domain import NormalisedURLDomain
+from supertokens_python.normalised_url_path import NormalisedURLPath
+from supertokens_python.querier import Querier
+from supertokens_python.recipe.userroles.asyncio import (
+    create_new_role_or_add_permissions,
+    get_all_roles,
+)
+from supertokens_python.supertokens import Host
+from supertokens_python.types import GeneralErrorResponse
 from utils.config import KanaeConfig
 from utils.limiter.extension import RateLimitExceeded, rate_limit_exceeded_handler
 from utils.responses.exceptions import (
@@ -97,7 +107,6 @@ if TYPE_CHECKING:
     )
     from utils.request import RouteRequest
 
-from supertokens_python.types import GeneralErrorResponse
 
 __title__ = "Kanae"
 __description__ = """
@@ -109,26 +118,17 @@ Changes can be made without notification, but announcements will be made for maj
 __version__ = "0.1.0a"
 
 
-ThirdPartyResultType = Union[
+ThirdPartyResultType: TypeAlias = Union[
     LinkingToSessionUserFailedError,
     ThirdPartySignInUpOkResult,
     ThirdPartySignInUpNotAllowed,
 ]
-EmailResultType = Union[
+EmailResultType: TypeAlias = Union[
     LinkingToSessionUserFailedError,
     EmailPasswordSignUpOkResult,
     EmailPasswordSignUpPostOkResult,
     EmailAlreadyExistsError,
 ]
-
-from supertokens_python.normalised_url_domain import NormalisedURLDomain
-from supertokens_python.normalised_url_path import NormalisedURLPath
-from supertokens_python.querier import Querier
-from supertokens_python.recipe.userroles.asyncio import (
-    create_new_role_or_add_permissions,
-)
-from supertokens_python.supertokens import Host
-from yarl import URL
 
 
 async def init(conn: asyncpg.Connection):
@@ -167,26 +167,21 @@ class SupertokensQuerier(Querier):
         # This has to be done in a static method as the variable is with the class, not instance. Similar to C/C++
         SupertokensQuerier.__init_called = True
 
-    def _get_normalized_host_supertokens(
-        self, hosts: Union[str, list[str]]
-    ) -> list[Host]:
+    def _get_normalized_host_supertokens(self, hosts: list[str]) -> list[Host]:
         def _build_url(host: str) -> Host:
-            url = URL(host)
+            url = yarl.URL(host)
 
             if not url.host:
                 raise ValueError("No host found in supertokens URL")
 
             domain = NormalisedURLDomain(
-                str(URL.build(scheme=url.scheme, host=url.host, port=url.port))
+                str(yarl.URL.build(scheme=url.scheme, host=url.host, port=url.port))
             )
             path = NormalisedURLPath(url.path_safe)
 
             return Host(domain, path)
 
-        if isinstance(hosts, list):
-            return [_build_url(host) for host in hosts]
-
-        return [_build_url(hosts)]
+        return [_build_url(host) for host in hosts]
 
 
 class ThirdPartyHandler(ThirdPartyRecipeImplementation):
@@ -649,10 +644,14 @@ class Kanae(FastAPI):
 
     @asynccontextmanager
     async def lifespan(self, app: Self):
-        await create_new_role_or_add_permissions("admin", ["read_all", "write_all"])
-        await create_new_role_or_add_permissions(
-            "leads", ["read_projects", "read_events", "write_events"]
-        )
+        all_roles = await get_all_roles()
+
+        if not all_roles.roles:
+            # Create the roles if we don't have them, alongside the permissions
+            await create_new_role_or_add_permissions("admin", ["read_all", "write_all"])
+            await create_new_role_or_add_permissions(
+                "leads", ["read_projects", "read_events", "write_events"]
+            )
 
         async with asyncpg.create_pool(
             dsn=self.config["postgres_uri"], init=init
