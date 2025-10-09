@@ -75,8 +75,9 @@ def has_any_role(*items: str):
             user_roles = await session.get_claim_value(UserRoleClaim)
 
             if not user_roles:
+                missing_roles = ", ".join(role for role in items)
                 raise InvalidClaimsError(
-                    f"User does not any roles listed: {', '.join(role for role in items).rstrip()}",
+                    f"User does not any roles listed: {missing_roles.rstrip()}",
                     [ClaimValidationError(UserRoleClaim.key, None)],
                 )
             if not any(role in user_roles for role in items):
