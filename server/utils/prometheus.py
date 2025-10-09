@@ -218,8 +218,8 @@ class PrometheusMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except Exception as exc:
-            raise exc  # Reraise the error to fix empty responses
+        except Exception:
+            return await self.app(scope, receive, send_wrapper)
         else:
             status = str(status_code)
 
