@@ -219,7 +219,7 @@ class PrometheusMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except Exception:
-            return  # Ignore requests that make an error
+            return await self.app(scope, receive, send_wrapper)
         else:
             status = str(status_code)
 

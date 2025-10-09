@@ -60,12 +60,12 @@ run = "atlas schema plan --to file://server/schema.sql --env dev --var url=$DATA
 [tasks."server:schema:apply"]
 depends = ["server:check-env"]
 description = "Applies schema diffs to database"
-run = "atlas schema apply --env dev --var url=$DATABASE_URL"
+run = "atlas schema apply --auto-approve --env dev --var url=$DATABASE_URL"
 
 [tasks."server:docker:up"]
 depends = ["server:check-env"]
 description = "Brings up the development databases through Docker Compose"
-run = "docker compose -f docker/docker-compose.dev.yml up -d"
+run = "docker compose -f docker/docker-compose.dev.yml build && docker compose -f docker/docker-compose.dev.yml up -d"
 
 [tasks."server:docker:stop"]
 depends = ["server:check-env"]

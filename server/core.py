@@ -469,7 +469,8 @@ class Kanae(FastAPI):
                 website_base_path="/auth",
             ),
             supertokens_config=SupertokensConfig(
-                connection_uri=config["auth"]["connection_uri"],
+                # Force the first one for connection
+                connection_uri=config["auth"]["connection_uri"][0],
                 api_key=config["auth"]["api_key"],
             ),
             framework="fastapi",
