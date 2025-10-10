@@ -30,8 +30,8 @@ depends = ["server:docker:up"]
 alias = ["server:up", "server:dev"]
 description = "Start backend development server. Save file(s) to see changes through reloading"
 env._.path = ".venv/bin"
-dir = "{{ config_root }}/server"
-run = "uvicorn launcher:app --reload"
+dir = "{{ config_root }}"
+run = "uvicorn launcher:app --app-dir=server --reload"
 
 [tasks."server:lint"]
 description = "Lints the codebase by type checking and general linting"

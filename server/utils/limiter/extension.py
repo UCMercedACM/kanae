@@ -282,7 +282,8 @@ class KanaeLimiter:
     ):
         self.logger = logging.getLogger("kanae.limiter")
 
-        self._config = LimiterSettings(**config["kanae"]["limiter"])
+        _kanae_config = config.kanae.model_dump()
+        self._config = LimiterSettings(**_kanae_config["limiter"])
 
         ### Configuration attributes
 
