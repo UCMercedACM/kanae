@@ -1,14 +1,14 @@
 import sys
 from pathlib import Path
-from typing import Literal, Optional, TypedDict, TypeVar
+from typing import Literal, Optional, TypeVar
 
 import yaml
 from pydantic import BaseModel
 
-if sys.version_info >= (3, 11):
-    from typing import Self
+if sys.version_info >= (3, 12):
+    from typing import Self, TypedDict
 else:
-    from typing_extensions import Self
+    from typing_extensions import Self, TypedDict
 
 _T = TypeVar("_T")
 
