@@ -19,7 +19,7 @@ from testcontainers.core.image import DockerImage
 from testcontainers.core.utils import raise_for_deprecated_parameter
 from testcontainers.core.waiting_utils import wait_container_is_ready, wait_for_logs
 from testcontainers.postgres import PostgresContainer
-from utils.config import KanaeConfig
+from utils.config import KanaeConfig, find_config
 from utils.limiter import get_remote_address
 from utils.limiter.extension import (
     KanaeLimiter,
@@ -40,9 +40,9 @@ BE = TypeVar("BE", bound=BaseException)
 
 ROOT = Path(__file__).parents[2]
 DOCKERFILE_PATH = ROOT / "docker" / "pg-test" / "Dockerfile"
-CONFIG_PATH = ROOT / "server" / "config.yml"
+CONFIG_PATH = find_config()
 
-config = KanaeConfig(CONFIG_PATH)
+config = KanaeConfig.load_from_file(CONFIG_PATH)
 
 
 async def _async_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
@@ -109,8 +109,8 @@ class KanaeServices(NamedTuple):
 class KanaeTestClient:
     def __init__(self, app: Kanae, *, base_url: Optional[str] = None):
         self._config = app.config
-        self._host = self._config["kanae"]["host"]
-        self._port = self._config["kanae"]["port"]
+        self._host = self._config.kanae.host
+        self._port = self._config.kanae.port
 
         self._transport = httpx.ASGITransport(app=app)
 
@@ -158,7 +158,7 @@ def valkey() -> Generator[ValkeyContainer, None, None]:
 async def app(
     get_app: Kanae, setup: KanaeServices
 ) -> AsyncGenerator[KanaeTestClient, None]:
-    get_app.config["postgres_uri"] = setup.postgres.get_connection_url(driver=None)
+    get_app.config.postgres_uri = setup.postgres.get_connection_url(driver=None)
     async with (
         LifespanManager(app=get_app),
         KanaeTestClient(app=get_app) as client,
@@ -177,8 +177,8 @@ async def build_fastapi_app(request, valkey: ValkeyContainer):
     def _factory(**limiter_args):
         middleware, exception_handler = request.param
 
-        test_config = KanaeConfig(CONFIG_PATH)
-        test_config["kanae"]["limiter"]["storage_uri"] = valkey.get_connection_url()
+        test_config = KanaeConfig.load_from_file(CONFIG_PATH)
+        test_config.kanae.limiter["storage_uri"] = valkey.get_connection_url()
 
         limiter_args.setdefault("key_func", get_remote_address)
         limiter_args.setdefault("config", test_config)
