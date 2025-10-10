@@ -561,8 +561,8 @@ class Kanae(FastAPI):
         )
 
         if self.is_prometheus_enabled:
-            _host = self.config.kanae.host
-            _port = self.config.kanae.port
+            _host = self.config.kanae.prometheus["host"]
+            _port = self.config.kanae.prometheus["port"]
 
             self.instrumentator.start()
 
