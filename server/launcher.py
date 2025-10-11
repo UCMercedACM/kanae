@@ -1,3 +1,5 @@
+import os
+
 from core import Kanae
 from fastapi_pagination import add_pagination
 from routes import router
@@ -33,7 +35,7 @@ if __name__ == "__main__":
         "launcher:app",
         port=config.kanae.host,
         host=config.kanae.port,
-        workers=2,
+        workers=os.cpu_count() or 2,
         access_log=True,
     )
 
