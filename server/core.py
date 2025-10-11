@@ -37,7 +37,6 @@ from supertokens_python.recipe import (
 from supertokens_python.recipe.emailpassword import InputFormField
 from supertokens_python.recipe.session.interfaces import SessionContainer
 from supertokens_python.types.base import AccountInfoInput
-from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 
 # isort: off
 # isort is turned off here to clarify the different imports of interfaces and providers
@@ -90,6 +89,7 @@ from supertokens_python.supertokens import Host
 from supertokens_python.types import GeneralErrorResponse
 from utils.config import KanaeConfig
 from utils.limiter.extension import RateLimitExceeded, rate_limit_exceeded_handler
+from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
@@ -116,7 +116,7 @@ Kanae is ACM @ UC Merced's API.
 This document details the API as it is right now. 
 Changes can be made without notification, but announcements will be made for major changes. 
 """
-__version__ = "0.1.0a"
+__version__ = "0.1.0"
 
 EMAIL_INVALID_MESSAGE = "Email provided is invalid"
 
@@ -157,7 +157,7 @@ async def init(conn: asyncpg.Connection):
 class SupertokensQuerier(Querier):
     def __init__(self, recipe_id: str, *, config: KanaeConfig):
         super().__init__(
-            self._get_normalized_host_supertokens(config["auth"]["connection_uri"]),
+            self._get_normalized_host_supertokens(config.auth.connection_uri),
             recipe_id,
         )
 
@@ -463,14 +463,15 @@ class Kanae(FastAPI):
         supertokens_init(
             app_info=InputAppInfo(
                 app_name="ucmacm-website",
-                api_domain=config["auth"]["api_domain"],
-                website_domain=config["auth"]["website_domain"],
+                api_domain=config.auth.api_domain,
+                website_domain=config.auth.website_domain,
                 api_base_path="/auth",
                 website_base_path="/auth",
             ),
             supertokens_config=SupertokensConfig(
-                connection_uri=config["auth"]["connection_uri"],
-                api_key=config["auth"]["api_key"],
+                # Force the first one for connection
+                connection_uri=config.auth.connection_uri[0],
+                api_key=config.auth.api_key,
             ),
             framework="fastapi",
             recipe_list=[
@@ -483,13 +484,13 @@ class Kanae(FastAPI):
                                     third_party_id="google",
                                     clients=[
                                         ProviderClientConfig(
-                                            client_id=config["auth"]["providers"][
-                                                "google"
-                                            ]["client_id"],
-                                            client_secret=config["auth"]["providers"][
+                                            client_id=config.auth.providers["google"][
+                                                "client_id"
+                                            ],
+                                            client_secret=config.auth.providers[
                                                 "google"
                                             ]["client_secret"],
-                                            scope=config["auth"]["providers"]["google"][
+                                            scope=config.auth.providers["google"][
                                                 "scopes"
                                             ],
                                         ),
@@ -525,7 +526,7 @@ class Kanae(FastAPI):
         self._logger = logging.getLogger("kanae.core")
 
         self.config = config
-        self.is_prometheus_enabled: bool = config["kanae"]["prometheus"]["enabled"]
+        self.is_prometheus_enabled: bool = config.kanae.prometheus["enabled"]
 
         _instrumentator_settings = InstrumentatorSettings(metric_namespace="kanae")
         self.instrumentator = PrometheusInstrumentator(
@@ -560,8 +561,8 @@ class Kanae(FastAPI):
         )
 
         if self.is_prometheus_enabled:
-            _host = self.config["kanae"]["host"]
-            _port = self.config["kanae"]["port"]
+            _host = self.config.kanae.prometheus["host"]
+            _port = self.config.kanae.prometheus["port"]
 
             self.instrumentator.start()
 
@@ -657,7 +658,7 @@ class Kanae(FastAPI):
             )
 
         async with asyncpg.create_pool(
-            dsn=self.config["postgres_uri"], init=init
+            dsn=self.config.postgres_uri, init=init
         ) as app.pool:
             yield
 

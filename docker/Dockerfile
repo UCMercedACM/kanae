@@ -37,7 +37,7 @@ RUN groupadd --system --gid 999 kanae \
  && useradd --system --gid 999 --uid 999 --no-create-home kanae
 
 # Copy the server from the builder
-COPY --from=build --chmod=755 /kanae /kanae
+COPY --from=build /kanae /kanae
 COPY --from=build --chmod=+x /tini /tini
 
 WORKDIR /kanae/

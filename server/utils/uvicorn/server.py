@@ -5,8 +5,8 @@ import socket
 from typing import Optional
 
 import uvicorn
-from utils.config import KanaeUvicornConfig
 from utils.handler import InterruptHandler
+from utils.uvicorn.config import KanaeUvicornConfig
 
 if os.name == "nt":
     from winloop import new_event_loop, run

@@ -165,7 +165,6 @@ class PrometheusMiddleware:
                 multiprocess_mode="livesum",
             )
 
-    # TODO: fix this properly
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
@@ -219,7 +218,7 @@ class PrometheusMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except Exception:
-            return  # Ignore requests that make an error
+            return await self.app(scope, receive, send_wrapper)
         else:
             status = str(status_code)
 

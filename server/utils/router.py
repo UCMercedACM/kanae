@@ -1,12 +1,8 @@
-from pathlib import Path
-
 from fastapi import APIRouter
 from utils.limiter import KanaeLimiter
 from utils.limiter.utils import get_remote_address
 
-from .config import KanaeConfig
-
-CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
+from .config import KanaeConfig, find_config
 
 
 class KanaeRouter(APIRouter):
@@ -14,7 +10,7 @@ class KanaeRouter(APIRouter):
         super().__init__(**kwargs)
 
         # This isn't my favorite implementation, but will do for now - Noelle
-        self._config = KanaeConfig(CONFIG_PATH)
+        self._config = KanaeConfig.load_from_file(find_config())
         self.limiter: KanaeLimiter = KanaeLimiter(
             get_remote_address, config=self._config
         )
