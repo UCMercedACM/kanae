@@ -614,9 +614,9 @@ class Kanae(FastAPI):
     ) -> ORJSONResponse:
         # The errors seem to be extremely inconsistent
         # For now, we'll log them down for further analysis
-        encoded = orjson.dumps(exc.errors()).decode("utf-8")
-        message = RequestValidationErrorResponse(errors=encoded)
-        self._logger.warning("Request Validation Error! Message:\n%s", encoded)
+        errors = exc.errors()
+        message = RequestValidationErrorResponse(errors=errors)
+        self._logger.warning("Request Validation Error! Message:\n%s", errors)
         return ORJSONResponse(
             content=message.model_dump(), status_code=status.HTTP_400_BAD_REQUEST
         )
