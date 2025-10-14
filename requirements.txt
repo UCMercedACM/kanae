@@ -1,18 +1,18 @@
-fastapi>=0.115.13,<1
-uvicorn>=0.34.3,<1
-httptools>=0.6.4,<1
-uvloop>=0.21.0,<1 ; sys_platform != "win32"
-winloop>=0.1.8,<1 ; sys_platform == "win32"
+fastapi>=0.119.0,<1
+uvicorn>=0.37.0,<1
+httptools>=0.7.1,<1
+uvloop @ git+https://github.com/MagicStack/uvloop@46456b6abd7e98b70e1dd38252272a98533cc75b ; sys_platform != "win32"
+winloop>=0.2.3,<1 ; sys_platform == "win32"
+typing-extensions>=4.15.0,<5 ; python_version < '3.11'
 asyncpg>=0.30.0,<1
-typing-extensions>=4.14.0,<5 ; python_version < '3.11'
-valkey[libvalkey]>=6.1.0,<7
-limits>=5.4.0,<6
-orjson>=3.10.18,<4
-fastapi-pagination>=0.13.2,<1
-supertokens-python>=0.29.2,<1
+valkey>=6.1.1,<7
+limits>=5.6.0,<6
+orjson>=3.11.3,<4
+fastapi-pagination>=0.14.3,<1
+supertokens-python>=0.30.2,<1
 argon2-cffi>=25.1.0,<26
 pybase62>=1.0.0,<2
-email-validator>=2.2.0,<3
-PyYAML>=6.0.2,<7
+email-validator>=2.3.0,<3
+PyYAML>=6.0.3,<7
 gunicorn>=23.0.0,<24
 prometheus-fastapi-instrumentator>=7.1.0,<8
