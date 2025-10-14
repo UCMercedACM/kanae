@@ -435,25 +435,3 @@ async def modify_member(
     """
     await request.app.pool.execute(query, id, req.id, req.role)
     return DeleteResponse()
-
-
-@router.get("/projects/me", responses={200: {"model": Projects}})
-@router.limiter.limit("15/minute")
-async def get_my_projects(
-    request: RouteRequest,
-    session: Annotated[SessionContainer, Depends(verify_session())],
-) -> list[Projects]:
-    """Get all projects associated with the authenticated user"""
-    query = """
-    SELECT 
-        projects.id, projects.name, projects.description, projects.link,
-        projects.type, projects.active, projects.founded_at
-    FROM projects
-    INNER JOIN project_members ON project_members.project_id = projects.id
-    INNER JOIN members ON project_members.member_id = members.id
-    WHERE members.id = $1
-    GROUP BY projects.id;
-    """
-
-    records = await request.app.pool.fetch(query, session.get_user_id())
-    return [Projects(**dict(row)) for row in records]
