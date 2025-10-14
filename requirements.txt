@@ -1,4 +1,4 @@
-fastapi>=0.119.0 ,<1
+fastapi>=0.119.0,<1
 uvicorn>=0.37.0,<1
 httptools>=0.7.1,<1
 uvloop @ git+https://github.com/MagicStack/uvloop@46456b6abd7e98b70e1dd38252272a98533cc75b ; sys_platform != "win32"
