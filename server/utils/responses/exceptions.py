@@ -1,3 +1,5 @@
+from typing import Any, Sequence
+
 from pydantic import BaseModel
 
 from . import HTTP_404_DETAIL
@@ -42,7 +44,7 @@ class ConflictResponse(ErrorResponse, frozen=True):
 
 class RequestValidationErrorResponse(BaseModel, frozen=True):
     result: str = "error"
-    errors: str
+    errors: Sequence[Any]
 
 
 # Any status codes
