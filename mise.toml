@@ -1,7 +1,7 @@
 redactions = ["DB_PASSWORD"]
 
 [tools]
-uv = "0.9.2"
+uv = "0.9.5"
 atlas = "latest"
 
 lefthook = "latest"
