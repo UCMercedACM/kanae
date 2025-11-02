@@ -1,18 +1,17 @@
 -r requirements.txt
 
 # Development libraries
-pyright[nodejs]>=1.1.398,<2
-ruff>=0.11.2,<1
-tox>=4.25.0,<5
+pyright[nodejs]>=1.1.406,<2
+ruff>=0.14.0,<1
 
 # Testing
 httpx>=0.28.1,<1
-pytest>=8.3.5,<9
-pytest-asyncio>=1.0.0,<2
-testcontainers>=4.10.0,<5
+pytest>=8.4.2,<9
+pytest-asyncio>=1.2.0,<2
+testcontainers>=4.13.2,<5
 asgi-lifespan>=2.1.0,<3
 hiro>=1.1.1,<2
 
 # Additional utils only used for development
 colorama>=0.4.6,<5 ; sys_platform == "win32"
-watchfiles>=1.0.5,<2
+watchfiles>=1.1.0,<2
