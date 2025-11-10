@@ -6,7 +6,7 @@ ruff>=0.14.0,<1
 
 # Testing
 httpx>=0.28.1,<1
-pytest>=8.4.2,<9
+pytest>=8.4.2,<10
 pytest-asyncio>=1.2.0,<2
 testcontainers>=4.13.2,<5
 asgi-lifespan>=2.1.0,<3
