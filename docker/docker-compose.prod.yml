@@ -52,7 +52,7 @@ services:
 
   valkey:
     container_name: kanae_valkey
-    image: valkey/valkey:8-alpine@sha256:cb3339abbd6e18942cd8ac3349f0c371a82ba5b6204b242563ba299e7956cbd0
+    image: valkey/valkey:9-alpine@sha256:84c96f47ebe197e635cd3ddbe3ab74e8bdf783cf3befbfb1c36387275c1cd5d5
     healthcheck:
       test: valkey-cli PING || exit 1
     ports:
