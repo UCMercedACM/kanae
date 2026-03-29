@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim@sha256:a554594ed855eef823e91d7cb390eca2bc516634d1ecb621fcade63ac335d72d AS build
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim AS build
 
 # Compile bytecode and enable caching
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
@@ -9,25 +9,29 @@ ENV UV_LINK_MODE=copy
 # Disable Python downloads as the system Python interpreter instead
 ENV UV_PYTHON_DOWNLOADS=0
 
-# Set Tini version
-# Ref: https://github.com/krallin/tini?tab=readme-ov-file#using-tini
-ENV TINI_VERSION=v0.19.0
+# Do not install development dependencies
+ENV UV_NO_DEV=1
 
-ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
+# Server is used here to explicitly denote what this application is
+# "App" is too vague of a wording, and oftentimes leads to incorrect paths  
+WORKDIR /app/
 
-WORKDIR /kanae/
+COPY pyproject.toml uv.lock gunicorn.conf.py /app/
 
-COPY requirements.txt /kanae
-
-# Install dependencies
+# Install dependencies through lockfile
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=requirements.txt,target=requirements.txt \
-    uv venv && uv pip install -r requirements.txt
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project
 
 # Add project source code
-COPY server /kanae
+COPY ./server /app
 
-FROM python:3.14-slim-trixie@sha256:fb83750094b46fd6b8adaa80f66e2302ecbe45d513f6cece637a841e1025b4ca
+# Install the rest (this allows for optimal caching)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
+
+FROM python:3.14-slim-trixie
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/kanae
@@ -37,8 +41,7 @@ RUN groupadd --system --gid 999 kanae \
  && useradd --system --gid 999 --uid 999 --no-create-home kanae
 
 # Copy the server from the builder
-COPY --from=build /kanae /kanae
-COPY --from=build --chmod=+x /tini /tini
+COPY --from=build /app /kanae
 
 WORKDIR /kanae/
 
@@ -50,11 +53,7 @@ USER kanae
 
 EXPOSE 8000
 
-ENTRYPOINT ["/tini", "--"]
-
-CMD ["python3", "/kanae/launcher.py"]
-
-STOPSIGNAL SIGTERM
+CMD ["gunicorn", "--bind", "0.0.0.0:8000"]
 
 LABEL org.opencontainers.image.title="Kanae"
 LABEL org.opencontainers.image.description="Internal backend server for ACM @ UC Merced"

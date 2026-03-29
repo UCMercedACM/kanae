@@ -2,16 +2,13 @@ redactions = ["DB_PASSWORD"]
 
 [tools]
 uv = "0.11.2"
-atlas = "latest"
+atlas = "1.1.0"
 
-lefthook = "latest"
 
 [settings]
 experimental = true
 pin = true
 
-[hooks]
-postinstall = "lefthook install"
 
 [env]
 _.file = [{ path = "{{ config_root }}/docker/.env" }]
