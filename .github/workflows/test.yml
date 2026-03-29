@@ -17,11 +17,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        version: ['3.12', '3.13', '3.14']
 
     env:
       TESTCONTAINER_DOCKER_NETWORK: kanae-testcontainers
-      UV_SYSTEM_PYTHON: 1
+      UV_NO_DEV: true
+      UV_NO_DEFAULT_GROUPS: true
 
     steps:
       - name: Checkout Repository
@@ -41,7 +42,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv pip install -r requirements-dev.txt
+          uv sync --frozen --group test
 
       - name: Set up server configuration
         run: |
@@ -52,4 +53,4 @@ jobs:
 
       - name: Run Tests
         run: |
-          pytest
+          uv run pytest
