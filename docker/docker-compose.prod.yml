@@ -52,7 +52,7 @@ services:
 
   valkey:
     container_name: kanae_valkey
-    image: valkey/valkey:8-alpine
+    image: valkey/valkey:8-alpine@sha256:cb3339abbd6e18942cd8ac3349f0c371a82ba5b6204b242563ba299e7956cbd0
     healthcheck:
       test: valkey-cli PING || exit 1
     ports:
@@ -61,7 +61,7 @@ services:
 
   supertokens:
     container_name: kanae_supertokens
-    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest@sha256:664b4a7abb5988d271d96d7d37fa4df2c1ea19d0f6c40545c5050f3bfe320da0
     depends_on:
       database:
         condition: service_healthy
@@ -82,7 +82,7 @@ services:
 
   migrate:
     container_name: kanae_migrate
-    image: arigaio/atlas:latest
+    image: arigaio/atlas:latest@sha256:8acb53e6b44ad0e677b7caac53e4c6c5e9536fe4c4b43c60450ae7984c8cceff
     command: >
       schema apply
       --auto-approve
@@ -102,7 +102,7 @@ services:
     container_name: kanae_prometheus
     ports:
       - 9090:9090
-    image: prom/prometheus:latest
+    image: prom/prometheus:latest@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
@@ -114,7 +114,7 @@ services:
     command: ['./run.sh', '-disable-reporting']
     ports:
       - 3000:3000
-    image: grafana/grafana-enterprise:latest-ubuntu
+    image: grafana/grafana-enterprise:latest-ubuntu@sha256:4d98622ac89a77cbc9e75e40b7d406a813d252954bb13c9e339b87550c147ef7
     volumes:
       - grafana-data:/var/lib/grafana
 
