@@ -2,7 +2,9 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    "docker:pinDigests"
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigests",
+    "abandonments:recommended"
   ],
   "dependencyDashboard": false,
   "lockFileMaintenance": {
@@ -16,9 +18,9 @@
         "mise",
         "dockerfile"
       ],
-      "groupName": "uv",
+      "groupName": "python/uv",
       "schedule": [
-        "* * * * 1"
+        "* 0-3 * * 1"
       ],
       "automerge": true
     },
@@ -26,9 +28,9 @@
       "matchManagers": [
         "github-actions"
       ],
-      "groupName": "actions",
+      "groupName": "github-actions",
       "schedule": [
-        "* * 1 * *"
+        "* 0-3 1 * *"
       ],
       "automerge": true
     }
