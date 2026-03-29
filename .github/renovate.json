@@ -6,7 +6,8 @@
   ],
   "dependencyDashboard": false,
   "lockFileMaintenance": {
-    "enabled": true
+    "enabled": true,
+    "automerge": true
   },
   "packageRules": [
     {
