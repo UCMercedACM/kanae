@@ -21,8 +21,6 @@ jobs:
 
     env:
       TESTCONTAINER_DOCKER_NETWORK: kanae-testcontainers
-      UV_NO_DEV: true
-      UV_NO_DEFAULT_GROUPS: true
 
     steps:
       - name: Checkout Repository
