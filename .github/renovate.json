@@ -2,11 +2,11 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    "docker:pinDigests",
     "helpers:pinGitHubActionDigests",
     "abandonments:recommended"
   ],
   "dependencyDashboard": false,
+  "separateMajorMinor": false,
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true
@@ -15,10 +15,9 @@
     {
       "matchManagers": [
         "pip_requirements",
-        "mise",
-        "dockerfile"
+        "mise"
       ],
-      "groupName": "python/uv",
+      "groupName": "uv dependencies",
       "schedule": [
         "* 0-3 * * 1"
       ],
