@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim AS build
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim@sha256:a554594ed855eef823e91d7cb390eca2bc516634d1ecb621fcade63ac335d72d AS build
 
 # Compile bytecode and enable caching
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Add project source code
 COPY server /kanae
 
-FROM python:3.14-slim-trixie
+FROM python:3.14-slim-trixie@sha256:fb83750094b46fd6b8adaa80f66e2302ecbe45d513f6cece637a841e1025b4ca
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/kanae
