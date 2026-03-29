@@ -24,7 +24,7 @@ services:
 
   valkey:
     container_name: kanae_valkey
-    image: valkey/valkey:8-alpine
+    image: valkey/valkey:8-alpine@sha256:cb3339abbd6e18942cd8ac3349f0c371a82ba5b6204b242563ba299e7956cbd0
     healthcheck:
       test: valkey-cli PING || exit 1
     ports:
@@ -32,7 +32,7 @@ services:
 
   supertokens:
     container_name: kanae_supertokens
-    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest@sha256:664b4a7abb5988d271d96d7d37fa4df2c1ea19d0f6c40545c5050f3bfe320da0
     depends_on:
       database:
         condition: service_healthy
