@@ -14,7 +14,8 @@
   "packageRules": [
     {
       "matchManagers": [
-        "pip_requirements",
+        "pep621",
+        "uv",
         "mise"
       ],
       "groupName": "uv dependencies",
