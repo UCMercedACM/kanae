@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Optional
 
 from fastapi.requests import Request
-from fastapi.responses import Response
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.base import (
     BaseHTTPMiddleware,
@@ -13,7 +12,10 @@ from starlette.middleware.base import (
 from starlette.routing import BaseRoute, Match
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
     from core import Kanae
+    from fastapi.responses import Response
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .extension import KanaeLimiter, rate_limit_exceeded_handler
@@ -30,7 +32,7 @@ def _find_route_handler(
     return handler
 
 
-def _get_route_name(handler: Callable):
+def _get_route_name(handler: Callable) -> str:
     return f"{handler.__module__}.{handler.__name__}"
 
 
@@ -46,10 +48,7 @@ def _should_exempt(limiter: KanaeLimiter, handler: Optional[Callable]) -> bool:
         return True
 
     # there is a decorator for this route we let the decorator handle it
-    if name in limiter._route_limits:
-        return True
-
-    return False
+    return name in limiter._route_limits
 
 
 async def _check_limits(
@@ -59,8 +58,8 @@ async def _check_limits(
         request.state, "_rate_limiting_complete", False
     ):
         try:
-            await limiter._check_request_limit(request, handler, True)
-        except Exception as exc:
+            await limiter._check_request_limit(request, handler, in_middleware=True)
+        except Exception as exc:  # noqa: BLE001
             # handle the exception since the global exception handler won't pick it up if we call_next
             exception_handler = app.exception_handlers.get(
                 exc, rate_limit_exceeded_handler
@@ -110,6 +109,7 @@ class LimiterASGIMiddleware:
             return await self.app(scope, receive, send)
 
         await _ASGIMiddlewareResponder(self.app)(scope, receive, send)
+        return None
 
 
 class _ASGIMiddlewareResponder:

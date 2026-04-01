@@ -1,6 +1,6 @@
 import datetime
 import uuid
-from typing import Annotated, Optional, Union
+from typing import Annotated, Optional
 
 import asyncpg
 from email_validator import EmailNotValidError, validate_email
@@ -28,7 +28,7 @@ from supertokens_python.recipe.passwordless.interfaces import (
 from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.asyncio import revoke_all_sessions_for_user
 from supertokens_python.recipe.session.framework.fastapi import verify_session
-from supertokens_python.types.base import AccountInfoInput
+from supertokens_python.types.base import AccountInfoInput, User
 from utils.exceptions import (
     BadRequestException,
     ConflictException,
@@ -61,7 +61,7 @@ class ClientMember(BaseModel, frozen=True):
 
 
 async def get_member_info(
-    id: Union[str, uuid.UUID], *, pool: asyncpg.Pool
+    member_id: str | uuid.UUID, *, pool: asyncpg.Pool
 ) -> ClientMember:
     query = """
     SELECT members.id,
@@ -96,7 +96,7 @@ async def get_member_info(
     WHERE members.id = $1
     GROUP BY members.id;
     """
-    rows = await pool.fetchrow(query, id)
+    rows = await pool.fetchrow(query, member_id)
     if not rows:
         raise NotFoundException
     return ClientMember(**(dict(rows)))
@@ -116,13 +116,13 @@ async def get_logged_member(
 
 
 @router.get(
-    "/members/{id}",
+    "/members/{member_id}",
     responses={200: {"model": ClientMember}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("10/minute")
-async def get_member(request: RouteRequest, id: uuid.UUID) -> ClientMember:
+async def get_member(request: RouteRequest, member_id: uuid.UUID) -> ClientMember:
     """Obtain details pertaining to the specified user"""
-    return await get_member_info(id, pool=request.app.pool)
+    return await get_member_info(member_id, pool=request.app.pool)
 
 
 @router.get("/members/me/projects", responses={200: {"model": Projects}})
@@ -148,7 +148,7 @@ async def get_logged_projects(
         query = """
         SELECT projects.*
         FROM members
-            INNER JOIN project_members ON members.id = project_members.member_id 
+            INNER JOIN project_members ON members.id = project_members.member_id
             AND project_members.joined_at >= $2
             INNER JOIN projects ON project_members.project_id = projects.id
         WHERE members.id = $1
@@ -165,6 +165,7 @@ async def get_logged_projects(
 async def get_logged_events(
     request: RouteRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
+    *,
     planned: Optional[bool] = None,
     attended: Optional[bool] = None,
 ) -> list[Events]:
@@ -207,6 +208,115 @@ class ModifiedClient(BaseModel, frozen=True):
     new_password: Optional[str] = None
 
 
+async def _update_password(
+    request: RouteRequest,
+    req: ModifiedClient,
+    session: SessionContainer,
+    member_info: User,
+) -> SuccessResponse:
+    login_method = next(
+        (
+            method
+            for method in member_info.login_methods
+            if method.recipe_user_id.get_as_string() == session.get_recipe_user_id()
+            and method.recipe_id == "emailpassword"
+        ),
+        None,
+    )
+
+    if not login_method or not login_method.email or not req.old_password:
+        raise NotFoundException(detail="No email found or invalid login method used")
+
+    is_valid_password = await verify_credentials(
+        "public", login_method.email, req.old_password
+    )
+    if isinstance(is_valid_password, WrongCredentialsError):
+        msg = "Wrong credentials provided"
+        raise UnauthorizedException(msg)
+
+    response = await update_email_or_password(
+        session.get_recipe_user_id(),
+        password=req.new_password,
+        tenant_id_for_password_policy=session.get_tenant_id(),
+    )
+    if isinstance(response, PasswordPolicyViolationError):
+        msg = "Password conflicts with current password policy"
+        raise ConflictException(msg)
+
+    await revoke_all_sessions_for_user(session.get_user_id())
+    await session.revoke_session()
+
+    return SuccessResponse(
+        message="Password successfully changed. Log in again to use your new password"
+    )
+
+
+async def _check_email_conflicts(
+    session: SessionContainer, normalized_email: str
+) -> None:
+    member = await get_user(session.get_user_id())
+
+    if member:
+        for tenant_id in member.tenant_ids:
+            members_with_same_email = await list_users_by_account_info(
+                tenant_id, AccountInfoInput(email=normalized_email)
+            )
+            for curr_member in members_with_same_email:
+                if curr_member.id != session.get_user_id():
+                    msg = "Requested email conflicts with other members"
+                    raise ConflictException(msg)
+
+
+async def _update_email(
+    request: RouteRequest,
+    req: ModifiedClient,
+    session: SessionContainer,
+) -> SuccessResponse:
+    if not req.email:
+        msg = "Email is required"
+        raise BadRequestException(msg)
+
+    is_valid_email = validate_email(req.email, check_deliverability=True)
+    if isinstance(is_valid_email, EmailNotValidError):
+        msg = "Email is not valid"
+        raise BadRequestException(msg)
+
+    normalized_email = is_valid_email.normalized
+    is_verified = is_email_verified(session.get_recipe_user_id(), normalized_email)
+
+    if not is_verified:
+        if not is_email_change_allowed(
+            session.get_recipe_user_id(), normalized_email, False
+        ):
+            msg = "Email change not allowed"
+            raise BadRequestException(msg)
+
+        await _check_email_conflicts(session, normalized_email)
+
+        await send_email_verification_email(
+            session.get_tenant_id(),
+            session.get_user_id(),
+            session.get_recipe_user_id(),
+            normalized_email,
+        )
+        return SuccessResponse(
+            message="Sent email verification message. Please check your email and spam folder"
+        )
+
+    response = await update_user(session.get_recipe_user_id(), email=normalized_email)
+
+    if isinstance(response, UpdateUserOkResult):
+        query = "UPDATE members SET email = $2 WHERE id = $1;"
+        await request.app.pool.execute(query, session.get_user_id(), normalized_email)
+        return SuccessResponse(message="Successfully changed email")
+
+    if isinstance(response, UpdateUserEmailAlreadyExistsError):
+        msg = "Email already exists, try another one"
+        raise ConflictException(msg)
+
+    raise HTTPException(status_code=500, detail="How...")
+
+
 @router.put(
     "/members/me/update",
     responses={
@@ -230,96 +340,14 @@ async def update_logged_member(
         raise NotFoundException
 
     if req.old_password and req.new_password:
-        login_method = next(
-            (
-                method
-                for method in member_info.login_methods
-                if method.recipe_user_id.get_as_string() == session.get_recipe_user_id()
-                and method.recipe_id == "emailpassword"
-            ),
-            None,
-        )
+        return await _update_password(request, req, session, member_info)
 
-        if login_method and login_method.email:
-            is_valid_password = await verify_credentials(
-                "public", login_method.email, req.old_password
-            )
-            if isinstance(is_valid_password, WrongCredentialsError):
-                raise UnauthorizedException("Wrong credentials provided")
-
-            response = await update_email_or_password(
-                session.get_recipe_user_id(),
-                password=req.new_password,
-                tenant_id_for_password_policy=session.get_tenant_id(),
-            )
-            if isinstance(response, PasswordPolicyViolationError):
-                raise ConflictException(
-                    "Password conflicts with current password policy"
-                )
-
-            await revoke_all_sessions_for_user(session.get_user_id())
-            await session.revoke_session()
-
-            return SuccessResponse(
-                message="Password successfully changed. Log in again to use your new password"
-            )
-
-        raise NotFoundException(detail="No email found or invalid login method used")
-
-    elif req.name:
+    if req.name:
         query = "UPDATE members SET name = $2 WHERE id = $1"
         await request.app.pool.execute(query, session.get_user_id(), req.name)
         return SuccessResponse(message="Name successfully changed")
 
-    elif req.email:
-        is_valid_email = validate_email(req.email, check_deliverability=True)
-        if isinstance(is_valid_email, EmailNotValidError):
-            raise BadRequestException("Email is not valid")
-
-        normalized_email = is_valid_email.normalized
-        is_verified = is_email_verified(session.get_recipe_user_id(), normalized_email)
-
-        if not is_verified:
-            if not is_email_change_allowed(
-                session.get_recipe_user_id(), normalized_email, False
-            ):
-                raise BadRequestException("Email change not allowed")
-
-            member = await get_user(session.get_user_id())
-
-            if member:
-                for tenant_id in member.tenant_ids:
-                    members_with_same_email = await list_users_by_account_info(
-                        tenant_id, AccountInfoInput(email=normalized_email)
-                    )
-                    for curr_member in members_with_same_email:
-                        if curr_member.id != session.get_user_id():
-                            raise ConflictException(
-                                "Requested email conflicts with other members"
-                            )
-
-                await send_email_verification_email(
-                    session.get_tenant_id(),
-                    session.get_user_id(),
-                    session.get_recipe_user_id(),
-                    normalized_email,
-                )
-                return SuccessResponse(
-                    message="Sent email verification message. Please check your email and spam folder"
-                )
-
-        response = await update_user(
-            session.get_recipe_user_id(), email=normalized_email
-        )
-
-        if isinstance(response, UpdateUserOkResult):
-            query = "UPDATE members SET email = $2 WHERE id = $1;"
-            await request.app.pool.execute(
-                query, session.get_user_id(), normalized_email
-            )
-            return SuccessResponse(message="Successfully changed email")
-
-        if isinstance(response, UpdateUserEmailAlreadyExistsError):
-            raise ConflictException("Email already exists, try another one")
+    if req.email:
+        return await _update_email(request, req, session)
 
     raise HTTPException(status_code=500, detail="How...")

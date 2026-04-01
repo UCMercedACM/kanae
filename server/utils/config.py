@@ -1,16 +1,8 @@
-import sys
 from pathlib import Path
-from typing import Literal, Optional, TypeVar
+from typing import Literal, Optional, Self, TypedDict
 
 import yaml
 from pydantic import BaseModel
-
-if sys.version_info >= (3, 12):
-    from typing import Self, TypedDict
-else:
-    from typing_extensions import Self, TypedDict
-
-_T = TypeVar("_T")
 
 
 def find_config() -> Optional[Path]:
@@ -18,7 +10,7 @@ def find_config() -> Optional[Path]:
     alternative_path = config_path.parent.joinpath("server", "config.yml")
 
     if not config_path.exists() and not alternative_path.exists():
-        return
+        return None
 
     if not config_path.exists():
         return alternative_path.resolve()
@@ -96,8 +88,9 @@ class KanaeConfig(BaseModel):
     @classmethod
     def load_from_file(cls, path: Optional[Path]) -> Self:
         if not path:
-            raise FileNotFoundError("Config file not found")
+            msg = "Config file not found"
+            raise FileNotFoundError(msg)
 
-        with open(path, "r") as f:
+        with path.open() as f:
             decoded = yaml.safe_load(f.read())
             return cls(**decoded)

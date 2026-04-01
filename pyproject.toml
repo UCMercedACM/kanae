@@ -69,16 +69,26 @@ extend-include = [
     "launcher.py",
     "utils/**"
 ]
-extend-exclude = ["**/__pycache__"]
+extend-exclude = ["**/__pycache__", "server/tests"]
 
 [tool.ruff.lint]
+select = [
+    "A", "ANN", "ASYNC", "B", "BLE", "C4", "COM", "DTZ", "E",
+    "EM", "ERA", "F", "FA", "FAST", "FBT", "FLY", "FURB", "G", "I", "ICN", "ISC", "LOG", "NPY",
+    "PD", "PERF", "PGH", "PIE", "PLC", "PLE", "PLR", "PLW", "PTH", "PYI",
+    "Q", "Q003", "RET", "RSE", "RUF", "S", "SIM", "SLOT", "T20", "TC", "TID",
+    "TRY", "UP", "W", "YTT"
+]
 ignore = [
-    "E501", 
-    "N999", 
-    "E402", 
-    "S311", 
-    "ASYNC109",
-    "S101",
+    "B904",     # Niche standard
+    "E501",     # Ruff suggested format
+    "FBT003",   # Inherently incorrect to enforce this 
+    "PGH003",   # I'm too lazy - Will be removed when migrating over to ty
+    "PLR0913",  # Violations of these are not related to bad code
+    "PLR2004",  # Magic numbers are fine sometimes
+    "SIM105",   # Prefer not to use due to stylistic choices
+    "UP045",    # Explicitly use typing.Optional to not confuse between union operators.
+                # See https://discuss.python.org/t/clarification-for-pep-604-is-foo-int-none-to-replace-all-use-of-foo-optional-int/26945/19
     
     # These are recommended by Ruff if the formatter is to be used: https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
     "W191",
@@ -95,10 +105,12 @@ ignore = [
     "COM819",
     "ISC001",
     "ISC002"
-    ]
-select = ["E", "F", "N", "ASYNC", "S", "ERA", "I"]
+]
 fixable = ["ALL"]
-
+unfixable = [
+    "E501",   # Ruff suggests their own formatting
+    "ERA"     # Leave commented-out code for reference purposes
+]
 [tool.ruff.lint.isort]
 combine-as-imports = true
 force-wrap-aliases = true
@@ -110,7 +122,7 @@ docstring-code-format = true
 minversion = "9.0"
 addopts = "-ra"
 testpaths = [
-    "server/tests"
+    "tests"
 ]
 pythonpath = ["server"]
 asyncio_default_fixture_loop_scope = "function"
