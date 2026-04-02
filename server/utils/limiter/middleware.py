@@ -28,12 +28,12 @@ def _find_route_handler(
     for route in routes:
         match, _ = route.matches(scope)
         if match == Match.FULL and hasattr(route, "endpoint"):
-            handler = route.endpoint  # type: ignore
-    return handler
+            handler = route.endpoint
+    return handler  # ty: ignore[invalid-return-type]
 
 
 def _get_route_name(handler: Callable) -> str:
-    return f"{handler.__module__}.{handler.__name__}"
+    return f"{handler.__module__}.{handler.__name__}"  # ty: ignore[unresolved-attribute]
 
 
 def _should_exempt(limiter: KanaeLimiter, handler: Optional[Callable]) -> bool:

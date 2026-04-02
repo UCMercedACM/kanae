@@ -83,7 +83,7 @@ class KanaePages[T](AbstractPage[T]):
     __params_type__ = KanaeParams
 
     @classmethod
-    def create(  # type: ignore
+    def create(  # ty: ignore[invalid-method-override]
         cls,
         items: Sequence[T],
         params: KanaeParams,
@@ -96,6 +96,6 @@ class KanaePages[T](AbstractPage[T]):
             raise ValueError(msg)
 
         return cls(
-            data=items,  # type: ignore[call-arg]
-            total=total,  # type: ignore[call-arg]
+            data=list(items),
+            total=total,
         )

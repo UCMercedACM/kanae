@@ -14,7 +14,7 @@ from email_validator import EmailNotValidError, validate_email
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import ORJSONResponse, Response
+from fastapi.responses import Response
 from fastapi.utils import is_body_allowed_for_status_code
 from supertokens_python import (
     InputAppInfo,
@@ -22,9 +22,6 @@ from supertokens_python import (
     init as supertokens_init,
 )
 from supertokens_python.asyncio import list_users_by_account_info
-from supertokens_python.auth_utils import (
-    LinkingToSessionUserFailedError,  # type: ignore
-)
 from supertokens_python.exceptions import GeneralError
 from supertokens_python.recipe import (
     dashboard,
@@ -34,6 +31,9 @@ from supertokens_python.recipe import (
     userroles,
 )
 from supertokens_python.recipe.emailpassword import InputFormField
+from supertokens_python.types.auth_utils import (
+    LinkingToSessionUserFailedError,
+)
 from supertokens_python.types.base import AccountInfoInput
 
 # isort: off
@@ -44,6 +44,8 @@ from supertokens_python.recipe.thirdparty.interfaces import (
     RecipeInterface as ThirdPartyRecipeInterface,
     SignInUpNotAllowed as ThirdPartySignInUpNotAllowed,
     SignInUpOkResult as ThirdPartySignInUpOkResult,
+    SignInUpPostNoEmailGivenByProviderResponse as ThirdPartyNoEmailGivenByProviderResponse,
+    SignInUpPostOkResult as ThirdPartySignInUpPostOkResult,
 )
 from supertokens_python.recipe.thirdparty.provider import (
     Provider,
@@ -65,6 +67,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
     APIOptions as EmailPasswordAPIOptions,
     RecipeInterface as EmailPasswordInterface,
     SignUpOkResult as EmailPasswordSignUpOkResult,
+    SignUpPostNotAllowedResponse as EmailPasswordSignUpPostNotAllowedResponse,
     SignUpPostOkResult as EmailPasswordSignUpPostOkResult,
 )
 from supertokens_python.recipe.emailpassword.api.implementation import (
@@ -96,6 +99,7 @@ from utils.responses.exceptions import (
     HTTPExceptionResponse,
     RequestValidationErrorResponse,
 )
+from utils.responses.orjson import ORJSONResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -279,7 +283,7 @@ class ThirdPartyHandler(ThirdPartyRecipeImplementation):
     def override_sign_in_up(
         self, implementation: ThirdPartyRecipeInterface
     ) -> ThirdPartyRecipeInterface:
-        implementation.sign_in_up = self._register  # type: ignore
+        implementation.sign_in_up = self._register  # ty: ignore[invalid-assignment]
         return implementation
 
 
@@ -296,13 +300,13 @@ class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
         api_options: ThirdPartyAPIOptions,
         user_context: dict[str, Any],
     ) -> (
-        ThirdPartySignInUpOkResult
+        ThirdPartySignInUpPostOkResult
+        | ThirdPartyNoEmailGivenByProviderResponse
         | ThirdPartySignInUpNotAllowed
-        | LinkingToSessionUserFailedError
         | GeneralErrorResponse
     ):
         try:
-            return await self.sign_in_up_post(  # type: ignore[return-value]
+            return await self.sign_in_up_post(
                 provider,
                 redirect_uri_info,
                 oauth_tokens,
@@ -320,7 +324,7 @@ class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
     def override_post_register(
         self, implementation: ThirdPartyAPIInterface
     ) -> ThirdPartyAPIInterface:
-        implementation.sign_in_up_post = self._post_register  # type: ignore[assignment]
+        implementation.sign_in_up_post = self._post_register  # ty: ignore[invalid-assignment]
         return implementation
 
 
@@ -377,7 +381,7 @@ class EmailPasswordHandler(EmailPasswordImplementation):
     def override_sign_up(
         self, implementation: EmailPasswordInterface
     ) -> EmailPasswordInterface:
-        implementation.sign_up = self._register  # type: ignore[assignment]
+        implementation.sign_up = self._register  # ty: ignore[invalid-assignment]
         return implementation
 
 
@@ -401,7 +405,10 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
         api_options: EmailPasswordAPIOptions,
         user_context: dict[str, Any],
     ) -> (
-        EmailPasswordSignUpPostOkResult | EmailAlreadyExistsError | GeneralErrorResponse
+        EmailPasswordSignUpPostOkResult
+        | EmailAlreadyExistsError
+        | EmailPasswordSignUpPostNotAllowedResponse
+        | GeneralErrorResponse
     ):
         result = await self.sign_up_post(
             form_fields,
@@ -429,7 +436,7 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
                 result.user.id, user_fields.name, normalized_email
             )
 
-        return result  # type: ignore[return-value]
+        return result
 
     async def validate_name(self, value: str, tenant_id: str) -> Optional[str]:
         if self.validate_name_regex.fullmatch(value):
@@ -440,7 +447,7 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
     def override_post_register(
         self, implementation: EmailPasswordAPIInterface
     ) -> EmailPasswordAPIInterface:
-        implementation.sign_up_post = self._post_register  # type: ignore[assignment]
+        implementation.sign_up_post = self._post_register  # ty: ignore[invalid-assignment]
 
         return implementation
 
@@ -549,27 +556,27 @@ class Kanae(FastAPI):
 
         self.add_exception_handler(
             HTTPException,
-            self.http_exception_handler,  # type: ignore
+            self.http_exception_handler,  # ty: ignore[invalid-argument-type]
         )
         self.add_exception_handler(
             RequestValidationError,
-            self.request_validation_error_handler,  # type: ignore
+            self.request_validation_error_handler,  # ty: ignore[invalid-argument-type]
         )
         self.add_exception_handler(
             GeneralError,
-            self.general_error_handler,  # type: ignore
+            self.general_error_handler,  # ty: ignore[invalid-argument-type]
         )
         self.add_exception_handler(
             VerificationError,
-            self.verification_error_handler,  # type: ignore
+            self.verification_error_handler,  # ty: ignore[invalid-argument-type]
         )
         self.add_exception_handler(
             RateLimitExceeded,
-            rate_limit_exceeded_handler,  # type: ignore
+            rate_limit_exceeded_handler,  # ty: ignore[invalid-argument-type]
         )
         self.add_exception_handler(
             EmailNotValidError,
-            self.email_invalid_error_handler,  # type: ignore
+            self.email_invalid_error_handler,  # ty: ignore[invalid-argument-type]
         )
 
         if self.is_prometheus_enabled:
