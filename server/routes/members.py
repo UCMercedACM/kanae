@@ -209,7 +209,6 @@ class ModifiedClient(BaseModel, frozen=True):
 
 
 async def _update_password(
-    request: RouteRequest,
     req: ModifiedClient,
     session: SessionContainer,
     member_info: User,
@@ -340,7 +339,7 @@ async def update_logged_member(
         raise NotFoundException
 
     if req.old_password and req.new_password:
-        return await _update_password(request, req, session, member_info)
+        return await _update_password(req, session, member_info)
 
     if req.name:
         query = "UPDATE members SET name = $2 WHERE id = $1"

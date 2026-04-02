@@ -9,9 +9,7 @@ from functools import wraps
 from typing import (
     Literal,
     Optional,
-    ParamSpec,
     Self,
-    TypeVar,
 )
 
 from dateutil.parser import parse
@@ -29,8 +27,6 @@ from utils.config import KanaeConfig
 # Define an alias for the most commonly used type
 StrOrCallableStr = str | Callable[..., str]
 
-P = ParamSpec("P")
-T = TypeVar("T")
 
 
 ### Exceptions and handler
@@ -92,7 +88,7 @@ class LimiterSettings(BaseModel, frozen=True):
     headers_enabled: bool
     auto_check: bool
     swallow_errors: bool
-    retry_after: Optional[Literal["http-date", "delta-seconds"]]
+    retry_after: Optional[Literal["http-date", "delta-seconds"]] = None
     default_limits: list[str]
     application_limits: list[str]
     in_memory_fallback: InMemorySettings
@@ -432,10 +428,8 @@ class KanaeLimiter:
                 # Redis can't decode this if it's not cast into an int for some reason
                 if not await self.limiter.hit(lim.limit, *args, cost=int(cost)):
                     self.logger.warning(
-                        "ratelimit %s (%s) exceeded at endpoint: %s",
+                        "ratelimit %s exceeded",
                         lim.limit,
-                        limit_key,
-                        limit_scope,
                     )
                     failed_limit = lim
                     limit_for_header = (lim.limit, args)
@@ -452,7 +446,6 @@ class KanaeLimiter:
 
     async def _collect_limits(
         self,
-        request: Request,
         endpoint_func_name: str,
         *,
         in_middleware: bool,
@@ -535,7 +528,6 @@ class KanaeLimiter:
 
         try:
             all_limits = await self._collect_limits(
-                request,
                 endpoint_func_name,
                 in_middleware=in_middleware,
                 limits=limits,
@@ -656,7 +648,7 @@ class KanaeLimiter:
 
     ### Decorators
 
-    def _limit_decorator(
+    def _limit_decorator[P, T](
         self,
         limit_value: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
@@ -723,7 +715,7 @@ class KanaeLimiter:
             if inspect.iscoroutinefunction(func):
                 # Handle async request/response functions.
                 @functools.wraps(func)
-                async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+                async def async_wrapper[**_P, _T](*args: _P.args, **kwargs: _P.kwargs) -> _T:
                     # get the request object from the decorated endpoint function
                     request = kwargs.get("request")
 
@@ -764,7 +756,7 @@ class KanaeLimiter:
 
         return decorator
 
-    def limit(
+    def limit[P, T](
         self,
         limit_value: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
@@ -805,7 +797,7 @@ class KanaeLimiter:
             override_defaults=override_defaults,
         )
 
-    def shared_limit(
+    def shared_limit[P, T](
         self,
         limit_value: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
@@ -844,7 +836,7 @@ class KanaeLimiter:
             override_defaults=override_defaults,
         )
 
-    def exempt(self, func: Callable[P, T]) -> Callable[P, T]:
+    def exempt[P, T](self, func: Callable[P, T]) -> Callable[P, T]:
         """A decorator that marks a function as exempt from all rate limits
 
         Args:
@@ -860,13 +852,13 @@ class KanaeLimiter:
         if inspect.iscoroutinefunction(func):
 
             @wraps(func)
-            async def __async_inner(*a: P.args, **k: P.kwargs) -> T:
+            async def __async_inner[**_P, _T](*a: _P.args, **k: _P.kwargs) -> _T:
                 return await func(*a, **k)
 
             return __async_inner  # type: ignore[return-value]
 
         @wraps(func)
-        def __inner(*a: P.args, **k: P.kwargs) -> T:
+        def __inner[**_P, _T](*a: _P.args, **k: _P.kwargs) -> _T:
             return func(*a, **k)
 
         return __inner
