@@ -26,6 +26,17 @@
     },
     {
       "matchManagers": [
+        "docker"
+      ],
+      "groupName": "docker digests",
+      "schedule": [
+        "* 0-3 1 * *"
+      ],
+      "automerge": true
+    },
+    {
+      
+      "matchManagers": [
         "github-actions"
       ],
       "groupName": "github-actions",
