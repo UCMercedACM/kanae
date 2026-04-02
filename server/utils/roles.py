@@ -10,12 +10,10 @@
 #   projects
 # ---------------
 # And current roles: admin, leads
-from __future__ import annotations
-
 import functools
 import inspect
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Optional, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Optional
 
 from supertokens_python.exceptions import GeneralError
 from supertokens_python.recipe.session.exceptions import (
@@ -27,11 +25,8 @@ from supertokens_python.recipe.userroles import UserRoleClaim
 if TYPE_CHECKING:
     from supertokens_python.recipe.session import SessionContainer
 
-T = TypeVar("T")
-P = ParamSpec("P")
-
-Coro = Coroutine[None, None, T]
-CoroFunc = Callable[P, Coro[T]]
+type Coro[T] = Coroutine[None, None, T]
+type CoroFunc[**P, T] = Callable[P, Coro[T]]
 
 
 def validate_parameters(func: Callable[..., object]) -> None:
@@ -41,7 +36,7 @@ def validate_parameters(func: Callable[..., object]) -> None:
         raise GeneralError(msg)
 
 
-def has_role(item: str, /) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
+def has_role[**P, T](item: str, /) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
     def decorator(func: CoroFunc[P, T]) -> CoroFunc[P, T]:
         validate_parameters(func)
 
@@ -70,7 +65,7 @@ def has_role(item: str, /) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
     return decorator
 
 
-def has_any_role(*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
+def has_any_role[**P, T](*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
     def decorator(func: CoroFunc[P, T]) -> CoroFunc[P, T]:
         validate_parameters(func)
 
@@ -87,7 +82,7 @@ def has_any_role(*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
             user_roles = await session.get_claim_value(UserRoleClaim)
 
             if not user_roles:
-                missing_roles = ", ".join(role for role in items)
+                missing_roles = ", ".join(items)
                 msg = f"User does not any roles listed: {missing_roles.rstrip()}"
                 raise InvalidClaimsError(
                     msg,
@@ -108,9 +103,9 @@ def has_any_role(*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
     return decorator
 
 
-def has_admin_role() -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
+def has_admin_role[**P, T]() -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
     return has_role("admin")
 
 
-def has_leads_role() -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
+def has_leads_role[**P, T]() -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
     return has_role("leads")
