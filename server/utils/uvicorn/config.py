@@ -2,12 +2,11 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
-from typing import Any, Optional, TypeVar, Union
+from pathlib import Path
+from typing import IO, ClassVar, Optional
 
 from uvicorn.config import Config as UvicornConfig
 from uvicorn.logging import TRACE_LOG_LEVEL
-
-_T = TypeVar("_T")
 
 LOG_LEVELS: dict[str, int] = {
     "critical": logging.CRITICAL,
@@ -34,7 +33,7 @@ class _ColourFormatter(logging.Formatter):
     # 100-107 are the same as the bright ones but for the background.
     # 1 means bold, 2 means dim, 0 means reset, and 4 means underline.
 
-    LEVEL_COLOURS = [
+    LEVEL_COLOURS: ClassVar[list[tuple[int, str]]] = [
         (logging.DEBUG, "\x1b[40;1m"),
         (logging.INFO, "\x1b[34;1m"),
         (logging.WARNING, "\x1b[33;1m"),
@@ -42,7 +41,7 @@ class _ColourFormatter(logging.Formatter):
         (logging.CRITICAL, "\x1b[41m"),
     ]
 
-    FORMATS = {
+    FORMATS: ClassVar[dict[int, logging.Formatter]] = {
         level: logging.Formatter(
             f"\x1b[30;1m%(asctime)s\x1b[0m {colour}%(levelname)-8s\x1b[0m \x1b[0m %(message)s",
             "%Y-%m-%d %H:%M:%S",
@@ -50,7 +49,7 @@ class _ColourFormatter(logging.Formatter):
         for level, colour in LEVEL_COLOURS
     }
 
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         formatter = self.FORMATS.get(record.levelno)
         if formatter is None:
             formatter = self.FORMATS[logging.DEBUG]
@@ -71,33 +70,29 @@ class _ColourFormatter(logging.Formatter):
 
 
 class KanaeUvicornConfig(UvicornConfig):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def setup_event_loop(self) -> None:
         pass
 
     ### Private utilities
 
-    def _determine_level(self, level: Optional[Union[str, int]]) -> int:
+    def _determine_level(self, level: Optional[str | int]) -> int:
         # Force return info level
         if not level:
             return logging.INFO
 
         if isinstance(level, str):
             return LOG_LEVELS[level]
-        else:
-            return level
+        return level
 
     # Pulled from https://github.com/Rapptz/discord.py/blob/0e4f06103ee20d06fb6c0d64f75b1fc475905b95/discord/utils.py#L1285
     def _is_docker(self) -> bool:
-        path = "/proc/self/cgroup"
-        return os.path.exists("/.dockerenv") or (
-            os.path.isfile(path) and any("docker" in line for line in open(path))
+        path = Path("/proc/self/cgroup")
+        return Path("/.dockerenv").exists() or (
+            path.is_file() and any("docker" in line for line in path.open())
         )
 
     # Pulled from https://github.com/Rapptz/discord.py/blob/0e4f06103ee20d06fb6c0d64f75b1fc475905b95/discord/utils.py#L1290
-    def _stream_supports_colour(self, stream: Any) -> bool:
+    def _stream_supports_colour(self, stream: IO[str]) -> bool:
         is_a_tty = hasattr(stream, "isatty") and stream.isatty()
 
         # Pycharm and Vscode support colour in their inbuilt editors
@@ -113,7 +108,7 @@ class KanaeUvicornConfig(UvicornConfig):
         return is_a_tty and ("ANSICON" in os.environ or "WT_SESSION" in os.environ)
 
     def _determine_formatter(
-        self, handler: Union[logging.StreamHandler, RotatingFileHandler]
+        self, handler: logging.StreamHandler | RotatingFileHandler
     ) -> logging.Formatter:
         if isinstance(handler, logging.StreamHandler) and self._stream_supports_colour(
             handler.stream

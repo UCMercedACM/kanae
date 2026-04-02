@@ -6,11 +6,12 @@ from fastapi import Request
 
 if TYPE_CHECKING:
     from core import Kanae
+    from starlette.types import Receive, Scope, Send
 
 
 class RouteRequest(Request):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        super().__init__(scope, receive, send)
 
     @property
     def app(self) -> Kanae:

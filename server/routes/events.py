@@ -1,8 +1,7 @@
 import datetime
-import sys
 import uuid
 from dataclasses import asdict
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Literal, Optional, Self
 
 import asyncpg
 import base62
@@ -26,11 +25,6 @@ from utils.responses.exceptions import (
 from utils.responses.success import DeleteResponse, JoinResponse, SuccessResponse
 from utils.roles import has_any_role
 from utils.router import KanaeRouter
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
 
 _TYPE_TO_NAME = {Type.ID: "argon2id", Type.I: "argon2i", Type.D: "argon2d"}
 _REQUIRED_KEYS = ("v", "m", "t", "p")
@@ -66,21 +60,21 @@ def compile_params(params: Parameters) -> str:
 
 
 class EventTimezone:
-    __slots__ = "pool"
+    __slots__ = ("pool",)
 
-    def __init__(self, *, pool: asyncpg.Pool):
+    def __init__(self, *, pool: asyncpg.Pool) -> None:
         self.pool = pool
 
-    async def get_raw_timezone(self, id: uuid.UUID) -> str:
+    async def get_raw_timezone(self, event_id: uuid.UUID) -> str:
         query = "SELECT timezone FROM events WHERE id = $1;"
-        row = await self.pool.fetchrow(query, id)
+        row = await self.pool.fetchrow(query, event_id)
         if not row:
             return "UTC"
         return row["timezone"]
 
-    async def get_tzinfo(self, id: uuid.UUID) -> datetime.tzinfo:
-        raw_tz = await self.get_raw_timezone(id)
-        return tz.gettz(raw_tz) or datetime.timezone.utc
+    async def get_tzinfo(self, event_id: uuid.UUID) -> datetime.tzinfo:
+        raw_tz = await self.get_raw_timezone(event_id)
+        return tz.gettz(raw_tz) or datetime.UTC
 
 
 class Events(BaseModel, frozen=True):
@@ -126,15 +120,15 @@ async def list_events(
         ORDER BY similarity(name, $1) DESC
         """
 
-    args = (name) if name else ()
+    args = name or ()
     return await paginate(request.app.pool, query, *args, params=params)
 
 
 @router.get(
-    "/events/{id}",
+    "/events/{event_id}",
     responses={200: {"model": Events}, 404: {"model": NotFoundResponse}},
 )
-async def get_event(request: RouteRequest, id: uuid.UUID) -> Events:
+async def get_event(request: RouteRequest, event_id: uuid.UUID) -> Events:
     """Retrieve event details via ID"""
     query = """
     SELECT id, name, description, start_at, end_at, location, type, timezone, creator_id
@@ -142,11 +136,11 @@ async def get_event(request: RouteRequest, id: uuid.UUID) -> Events:
     WHERE id = $1;
     """
 
-    rows = await request.app.pool.fetchrow(query, id)
+    rows = await request.app.pool.fetchrow(query, event_id)
     if not rows:
         raise NotFoundException
     event_tz = EventTimezone(pool=request.app.pool)
-    return Events(**dict(rows), timezone=await event_tz.get_raw_timezone(id))
+    return Events(**dict(rows), timezone=await event_tz.get_raw_timezone(event_id))
 
 
 class ModifiedEvent(BaseModel, frozen=True):
@@ -162,21 +156,21 @@ class ModifiedEventWithDatetime(ModifiedEvent, frozen=True):
 
 
 @router.put(
-    "/events/{id}",
+    "/events/{event_id}",
     responses={200: {"model": Events}, 404: {"model": NotFoundResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def edit_event(
     request: RouteRequest,
-    id: uuid.UUID,
-    req: Union[ModifiedEvent, ModifiedEventWithDatetime],
+    event_id: uuid.UUID,
+    req: ModifiedEvent | ModifiedEventWithDatetime,
     session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> Events:
     """Updates the specified event"""
     query = """
     UPDATE events
-    SET 
+    SET
         name = $3,
         description = $4,
         location = $5
@@ -187,7 +181,7 @@ async def edit_event(
     if isinstance(req, ModifiedEventWithDatetime):
         query = """
         UPDATE events
-        SET 
+        SET
             name = $3,
             description = $4,
             location = $5,
@@ -203,7 +197,7 @@ async def edit_event(
     )
     async with request.app.pool.acquire() as connection:
         rows = await connection.fetchrow(
-            query, id, session.get_user_id(), *req.model_dump().values()
+            query, event_id, session.get_user_id(), *req.model_dump().values()
         )
         if not rows:
             raise NotFoundException(
@@ -214,23 +208,23 @@ async def edit_event(
         if request.app.ph.check_needs_rehash(full_hash):
             await connection.execute(
                 update_hash_query,
-                id,
+                event_id,
                 session.get_user_id(),
-                request.app.ph.hash(str(id)),
+                request.app.ph.hash(str(event_id)),
             )
 
         return Events(**dict(rows))
 
 
 @router.delete(
-    "/events/{id}",
+    "/events/{event_id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def delete_event(
     request: RouteRequest,
-    id: uuid.UUID,
+    event_id: uuid.UUID,
     session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Deletes the specified event"""
@@ -239,7 +233,7 @@ async def delete_event(
     WHERE id = $1 AND creator_id = $2;
     """
 
-    status = await request.app.pool.execute(query, id, session.get_user_id())
+    status = await request.app.pool.execute(query, event_id, session.get_user_id())
     if status[-1] == "0":
         raise NotFoundException
     return DeleteResponse()
@@ -264,7 +258,7 @@ async def create_events(
     """
     attendance_query = """
     UPDATE events
-    SET 
+    SET
         attendance_hash = $3,
         attendance_code = $4
     WHERE id = $1 AND creator_id = $2;
@@ -289,14 +283,15 @@ async def create_events(
             )
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise ConflictException("Requested project already exists")
+            msg = "Requested project already exists"
+            raise ConflictException(msg)
         else:
             await tr.commit()
             return Events(**dict(rows))
 
 
 @router.post(
-    "/events/{id}/join",
+    "/events/{event_id}/join",
     responses={
         200: {"model": JoinResponse},
         403: {"model": ForbiddenResponse},
@@ -307,7 +302,7 @@ async def create_events(
 @router.limiter.limit("5/minute")
 async def join_event(
     request: RouteRequest,
-    id: uuid.UUID,
+    event_id: uuid.UUID,
     session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> JoinResponse:
     """Registers and joins an upcoming event"""
@@ -322,27 +317,26 @@ async def join_event(
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
 
-        rows = await connection.fetchrow(query, id)
+        rows = await connection.fetchrow(query, event_id)
         if not rows:
-            raise NotFoundException("Should not happen")
+            msg = "Should not happen"
+            raise NotFoundException(msg)
 
         zone = EventTimezone(pool=request.app.pool)
 
-        now = datetime.datetime.now(await zone.get_tzinfo(id))
+        now = datetime.datetime.now(await zone.get_tzinfo(event_id))
         if now > rows["end_at"]:
-            raise ForbiddenException(
-                "The event has ended. You can't join an finished event."
-            )
+            msg = "The event has ended. You can't join an finished event."
+            raise ForbiddenException(msg)
 
         await tr.start()
 
         try:
-            await connection.execute(insert_query, id, session.get_user_id())
+            await connection.execute(insert_query, event_id, session.get_user_id())
         except asyncpg.UniqueViolationError:
             await tr.rollback()
-            raise ConflictException(
-                "Authenticated member has already joined the requested event"
-            )
+            msg = "Authenticated member has already joined the requested event"
+            raise ConflictException(msg)
         else:
             await tr.commit()
             return JoinResponse()
@@ -358,13 +352,14 @@ class VerifyRequest(BaseModel, frozen=True):
     @model_validator(mode="before")
     def check_code_length(self) -> Self:
         if len(self.code) > 8:
-            raise ValueError("Must be 8 characters or less")
+            msg = "Must be 8 characters or less"
+            raise ValueError(msg)
         return self
 
 
 # Would this have the classic retry behavior of Twitter/X? Need to test
 @router.post(
-    "/events/{id}/verify",
+    "/events/{event_id}/verify",
     responses={
         200: {"model": SuccessResponse},
         403: {"model": VerifyFailedResponse},
@@ -374,10 +369,10 @@ class VerifyRequest(BaseModel, frozen=True):
 @router.limiter.limit("5/second")
 async def verify_attendance(
     request: RouteRequest,
-    id: uuid.UUID,
+    event_id: uuid.UUID,
     req: VerifyRequest,
     session: Annotated[SessionContainer, Depends(verify_session())],
-):
+) -> SuccessResponse:
     """Verify an authenticated user's attendance to the requested event"""
     query = "SELECT start_at, end_at, attendance_hash FROM events WHERE substring(attendance_code for 8) = $1;"
     record = await request.app.pool.fetchrow(query, req.code)
@@ -390,25 +385,24 @@ async def verify_attendance(
 
     zone = EventTimezone(pool=request.app.pool)
 
-    now = datetime.datetime.now(await zone.get_tzinfo(id))
+    now = datetime.datetime.now(await zone.get_tzinfo(event_id))
 
     # As of now, the buffer times for registering would be:
     # - between the start and end at times
     # - one our before the event
     buffer = record["start_at"] + relativedelta(hours=-1)
     if not (now >= record["start_at"] and now <= record["end_at"]) or (now <= buffer):
-        raise NotFoundException(
-            "You must verify your hash either during the event or one hour beforehand. Please try again."
-        )
+        msg = "You must verify your hash either during the event or one hour beforehand. Please try again."
+        raise NotFoundException(msg)
 
     # should raise a error directly, which would need to be handled.
-    if request.app.ph.verify(full_hash, str(id)):
+    if request.app.ph.verify(full_hash, str(event_id)):
         verify_query = """
         INSERT INTO events_members (event_id, member_id, attended)
         VALUES ($1, $2, TRUE)
         ON CONFLICT (event_id, member_id) DO UPDATE
         SET attended = excluded.attended;
         """
-        await request.app.pool.execute(verify_query, id, session.get_user_id())
+        await request.app.pool.execute(verify_query, event_id, session.get_user_id())
 
     return SuccessResponse(message="Successfully verified attendance!")

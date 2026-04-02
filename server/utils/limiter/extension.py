@@ -2,17 +2,14 @@ import functools
 import inspect
 import itertools
 import logging
-import sys
 import time
+from collections.abc import Callable, Iterator
 from email.utils import formatdate
 from functools import wraps
 from typing import (
-    Any,
-    Callable,
-    Iterator,
     Literal,
     Optional,
-    Union,
+    Self,
 )
 
 from dateutil.parser import parse
@@ -27,13 +24,8 @@ from pydantic import BaseModel
 from starlette.datastructures import MutableHeaders
 from utils.config import KanaeConfig
 
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 # Define an alias for the most commonly used type
-StrOrCallableStr = Union[str, Callable[..., str]]
+StrOrCallableStr = str | Callable[..., str]
 
 
 ### Exceptions and handler
@@ -54,10 +46,9 @@ async def rate_limit_exceeded_handler(
     response = ORJSONResponse(
         {"error": f"Rate limit exceeded: {exc.detail}"}, status_code=429
     )
-    injected_response = await request.app.state.limiter._inject_headers(
+    return await request.app.state.limiter._inject_headers(
         response, request.state.view_rate_limit
     )
-    return injected_response
 
 
 class RateLimitExceeded(HTTPException):
@@ -69,7 +60,7 @@ class RateLimitExceeded(HTTPException):
 
     limit = None
 
-    def __init__(self, limit: "LimitItem"):
+    def __init__(self, limit: "LimitItem") -> None:
         self.limit = limit
         self.description = str(limit.limit)
 
@@ -80,9 +71,7 @@ class RateLimitExceeded(HTTPException):
                 else limit.error_message()
             )
 
-        super(RateLimitExceeded, self).__init__(
-            status_code=429, detail=self.description
-        )
+        super().__init__(status_code=429, detail=self.description)
 
 
 ### Limit configuration models
@@ -98,7 +87,7 @@ class LimiterSettings(BaseModel, frozen=True):
     headers_enabled: bool
     auto_check: bool
     swallow_errors: bool
-    retry_after: Optional[Literal["http-date", "delta-seconds"]]
+    retry_after: Optional[Literal["http-date", "delta-seconds"]] = None
     default_limits: list[str]
     application_limits: list[str]
     in_memory_fallback: InMemorySettings
@@ -118,12 +107,12 @@ class LimitItem:
         limit: RateLimitItem,
         key_func: Callable[..., str],
         *,
-        scope: Optional[Union[str, Callable[..., str]]] = None,
+        scope: Optional[str | Callable[..., str]] = None,
         per_method: bool = False,
         methods: Optional[list[str]] = None,
-        error_message: Optional[Union[str, Callable[..., str]]] = None,
+        error_message: Optional[str | Callable[..., str]] = None,
         exempt_when: Optional[Callable[..., bool]] = None,
-        cost: Union[int, Callable[..., int]] = 1,
+        cost: int | Callable[..., int] = 1,
         override_defaults: bool = False,
     ) -> None:
         self.limit = limit
@@ -167,7 +156,7 @@ class LimitItem:
         """
         if not self.exempt_when:
             return False
-        elif self._exempt_when_takes_request and request:
+        if self._exempt_when_takes_request and request:
             return self.exempt_when(request)
         return self.exempt_when()
 
@@ -177,22 +166,22 @@ class LimitGroup:
 
     def __init__(
         self,
-        limit_provider: Union[str, Callable[..., str]],
+        limit_provider: str | Callable[..., str],
         key_function: Callable[..., str],
         *,
-        scope: Optional[Union[str, Callable[..., str]]] = None,
+        scope: Optional[str | Callable[..., str]] = None,
         per_method: bool = False,
         methods: Optional[list[str]] = None,
-        error_message: Optional[Union[str, Callable[..., str]]] = None,
+        error_message: Optional[str | Callable[..., str]] = None,
         exempt_when: Optional[Callable[..., bool]] = None,
-        cost: Union[int, Callable[..., int]] = 1,
+        cost: int | Callable[..., int] = 1,
         override_defaults: bool = False,
-    ):
+    ) -> None:
         self.__limit_provider = limit_provider
         self.__scope = scope
         self.key_function = key_function
         self.per_method = per_method
-        self.methods = methods and [m.lower() for m in methods] or methods
+        self.methods = (methods and [m.lower() for m in methods]) or methods
         self.error_message = error_message
         self.exempt_when = exempt_when
         self.cost = cost
@@ -202,16 +191,15 @@ class LimitGroup:
     def __iter__(self) -> Iterator[LimitItem]:
         if callable(self.__limit_provider):
             if (
-                "key" in inspect.signature(self.__limit_provider).parameters.keys()
-                and "request"
-                not in inspect.signature(self.key_function).parameters.keys()
+                "key" in inspect.signature(self.__limit_provider).parameters
+                and "request" not in inspect.signature(self.key_function).parameters
             ):
-                raise ValueError(
-                    f"Limit provider function {self.key_function.__name__} needs a `request` argument"
-                )
+                msg = f"Limit provider function {self.key_function.__name__} needs a `request` argument"
+                raise ValueError(msg)
 
             if not self.request:
-                raise ValueError("`request` object can't be None")
+                msg = "`request` object can't be None"
+                raise ValueError(msg)
 
             limit_raw = self.__limit_provider(self.key_function(self.request))
 
@@ -279,7 +267,7 @@ class KanaeLimiter:
         enabled: bool = True,
         headers_enabled: bool = False,
         key_style: Literal["endpoint", "url"] = "url",
-    ):
+    ) -> None:
         self.logger = logging.getLogger("kanae.limiter")
 
         _kanae_config = config.kanae.model_dump()
@@ -367,10 +355,10 @@ class KanaeLimiter:
         """
         if self._storage_dead and self._in_memory_fallback_enabled:
             if not self._fallback_limiter:
-                raise RuntimeError("Fallback limiter cannot be None")
+                msg = "Fallback limiter cannot be None"
+                raise RuntimeError(msg)
             return self._fallback_limiter
-        else:
-            return self._limiter
+        return self._limiter
 
     ### Internal utilities
 
@@ -411,17 +399,15 @@ class KanaeLimiter:
         failed_limit = None
         limit_for_header = None
         for lim in limits:
-            if (
-                lim.is_exempt(request)
-                or lim.methods is not None
-                and request.method.lower() not in lim.methods
+            if lim.is_exempt(request) or (
+                lim.methods is not None and request.method.lower() not in lim.methods
             ):
                 continue
 
             limit_scope = lim.scope or endpoint
             limit_key = (
                 lim.key_func(request)
-                if "request" in inspect.signature(lim.key_func).parameters.keys()
+                if "request" in inspect.signature(lim.key_func).parameters
                 else lim.key_func()
             )
 
@@ -441,10 +427,8 @@ class KanaeLimiter:
                 # Redis can't decode this if it's not cast into an int for some reason
                 if not await self.limiter.hit(lim.limit, *args, cost=int(cost)):
                     self.logger.warning(
-                        "ratelimit %s (%s) exceeded at endpoint: %s",
+                        "ratelimit %s exceeded",
                         lim.limit,
-                        limit_key,
-                        limit_scope,
                     )
                     failed_limit = lim
                     limit_for_header = (lim.limit, args)
@@ -459,10 +443,54 @@ class KanaeLimiter:
         if failed_limit:
             raise RateLimitExceeded(failed_limit)
 
+    async def _collect_limits(
+        self,
+        endpoint_func_name: str,
+        *,
+        in_middleware: bool,
+        limits: list[LimitItem],
+        dynamic_limits: list[LimitItem],
+    ) -> list[LimitItem]:
+        all_limits: list[LimitItem] = []
+
+        if (
+            self._storage_dead
+            and self._fallback_limiter
+            and not (in_middleware and endpoint_func_name in self._marked_for_limiting)
+        ):
+            if self._should_check_backend() and await self._storage.check():
+                self.logger.info("Rate limit storage recovered")
+                self._storage_dead = False
+                self._check_backend_count = 0
+            else:
+                all_limits = list(itertools.chain(*self._in_memory_fallback))
+
+        if not all_limits:
+            route_limits: list[LimitItem] = limits + dynamic_limits
+            all_limits = (
+                list(itertools.chain(*self._application_limits))
+                if in_middleware
+                else []
+            )
+            all_limits += route_limits
+            combined_defaults = all(
+                not limit.override_defaults for limit in route_limits
+            )
+            if (
+                not route_limits
+                and not (
+                    in_middleware and endpoint_func_name in self._marked_for_limiting
+                )
+            ) or combined_defaults:
+                all_limits += list(itertools.chain(*self._default_limits))
+
+        return all_limits
+
     async def _check_request_limit(
         self,
         request: Request,
-        endpoint_func: Optional[Callable[..., Any]],
+        endpoint_func: Optional[Callable[..., object]],
+        *,
         in_middleware: bool = True,
     ) -> None:
         endpoint_url = request["path"] or ""
@@ -476,8 +504,6 @@ class KanaeLimiter:
         if (
             not _endpoint_key
             or not self.enabled
-            # or we are sending a static file
-            # or view_func == current_app.send_static_file
             or endpoint_func_name in self._exempt_routes
             or any(fn() for fn in self._request_filters)
         ):
@@ -486,11 +512,7 @@ class KanaeLimiter:
         dynamic_limits: list[LimitItem] = []
 
         if not in_middleware:
-            limits = (
-                self._route_limits[endpoint_func_name]
-                if endpoint_func_name in self._route_limits
-                else []
-            )
+            limits = self._route_limits.get(endpoint_func_name, [])
             dynamic_limits = []
             if endpoint_func_name in self._dynamic_route_limits:
                 for lim in self._dynamic_route_limits[endpoint_func_name]:
@@ -504,42 +526,12 @@ class KanaeLimiter:
                         )
 
         try:
-            all_limits: list[LimitItem] = []
-
-            if (
-                self._storage_dead
-                and self._fallback_limiter
-                and not (
-                    in_middleware and endpoint_func_name in self._marked_for_limiting
-                )
-            ):
-                if self._should_check_backend() and await self._storage.check():
-                    self.logger.info("Rate limit storage recovered")
-                    self._storage_dead = False
-                    self._check_backend_count = 0
-                else:
-                    all_limits = list(itertools.chain(*self._in_memory_fallback))
-
-            if not all_limits:
-                route_limits: list[LimitItem] = limits + dynamic_limits
-                all_limits = (
-                    list(itertools.chain(*self._application_limits))
-                    if in_middleware
-                    else []
-                )
-                all_limits += route_limits
-                combined_defaults = all(
-                    not limit.override_defaults for limit in route_limits
-                )
-                if (
-                    not route_limits
-                    and not (
-                        in_middleware
-                        and endpoint_func_name in self._marked_for_limiting
-                    )
-                    or combined_defaults
-                ):
-                    all_limits += list(itertools.chain(*self._default_limits))
+            all_limits = await self._collect_limits(
+                endpoint_func_name,
+                in_middleware=in_middleware,
+                limits=limits,
+                dynamic_limits=dynamic_limits,
+            )
             # actually check the limits, so far we've only computed the list of limits to check
             await self._evaluate_limits(request, _endpoint_key, all_limits)
         except Exception as e:
@@ -551,7 +543,9 @@ class KanaeLimiter:
                     "Rate limit storage unreachable - falling back to in-memory storage"
                 )
                 self._storage_dead = True
-                await self._check_request_limit(request, endpoint_func, in_middleware)
+                await self._check_request_limit(
+                    request, endpoint_func, in_middleware=in_middleware
+                )
 
             elif self._swallow_errors:
                 self.logger.exception("Failed to rate limit. Swallowing error")
@@ -600,7 +594,7 @@ class KanaeLimiter:
                     self._storage_dead = True
                     response = await self._inject_headers(response, current_limit)
                 elif self._swallow_errors:
-                    self.logger.error(
+                    self.logger.exception(
                         "Failed to update rate limit headers. Swallowing error"
                     )
 
@@ -646,29 +640,30 @@ class KanaeLimiter:
                     self._storage_dead = True
                     headers = await self._inject_asgi_headers(headers, current_limit)
                 elif self._swallow_errors:
-                    self.logger.error(
+                    self.logger.exception(
                         "Failed to update rate limit headers. Swallowing error"
                     )
         return headers
 
     ### Decorators
 
-    def _limit_decorator(
+    def _limit_decorator[**P, T](
         self,
         limit_value: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
+        *,
         shared: bool = False,
         scope: Optional[StrOrCallableStr] = None,
         per_method: bool = False,
         methods: Optional[list[str]] = None,
         error_message: Optional[str] = None,
         exempt_when: Optional[Callable[..., bool]] = None,
-        cost: Union[int, Callable[..., int]] = 1,
+        cost: int | Callable[..., int] = 1,
         override_defaults: bool = True,
-    ) -> Callable[..., Any]:
+    ) -> Callable[[Callable[P, T]], Callable[P, T]]:
         _scope = scope if shared else None
 
-        def decorator(func: Callable[..., Response]):
+        def decorator(func: Callable[P, T]) -> Callable[P, T]:
             limit_key_func = key_func or self._key_func
             name = f"{func.__module__}.{func.__name__}"
             dynamic_limit = None
@@ -713,28 +708,30 @@ class KanaeLimiter:
             sig = inspect.signature(func)
 
             if "request" not in sig.parameters:
-                raise ValueError(
-                    f"Missing or invalid `request` argument specified on {func}"
-                )
+                msg = f"Missing or invalid `request` argument specified on {func}"
+                raise ValueError(msg)
 
             if inspect.iscoroutinefunction(func):
                 # Handle async request/response functions.
                 @functools.wraps(func)
-                async def async_wrapper(*args: Any, **kwargs: Any) -> Response:
+                async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
                     # get the request object from the decorated endpoint function
                     request = kwargs.get("request")
 
                     if not isinstance(request, Request):
-                        raise ValueError(
+                        msg = (
                             "parameter `request` must be an instance of fastapi.Request"
                         )
+                        raise TypeError(msg)
 
                     if (
                         self.enabled
                         and self._auto_check
                         and not getattr(request.state, "_rate_limiting_complete", False)
                     ):
-                        await self._check_request_limit(request, func, False)
+                        await self._check_request_limit(
+                            request, func, in_middleware=False
+                        )
                         request.state._rate_limiting_complete = True
 
                     response = await func(*args, **kwargs)
@@ -743,7 +740,7 @@ class KanaeLimiter:
                         if not isinstance(response, Response):
                             # get the response object from the decorated endpoint function
                             await self._inject_asgi_headers(
-                                kwargs["response"].headers,
+                                kwargs["response"].headers,  # type: ignore[union-attr]
                                 request.state.view_rate_limit,
                             )
                             return response
@@ -751,13 +748,14 @@ class KanaeLimiter:
                         await self._inject_asgi_headers(
                             response.headers, request.state.view_rate_limit
                         )
-                    return response
+                    return response  # type: ignore[return-value]
 
-                return async_wrapper
+                return async_wrapper  # type: ignore[return-value]
+            return func
 
         return decorator
 
-    def limit(
+    def limit[**P, T](
         self,
         limit_value: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
@@ -767,8 +765,8 @@ class KanaeLimiter:
         methods: Optional[list[str]] = None,
         error_message: Optional[str] = None,
         exempt_when: Optional[Callable[..., bool]] = None,
-        cost: Union[int, Callable[..., int]] = 1,
-    ) -> Callable[..., Any]:
+        cost: int | Callable[..., int] = 1,
+    ) -> Callable[[Callable[P, T]], Callable[P, T]]:
         """A decorator that attaches an limit to the specified individual route
 
         Args:
@@ -798,17 +796,17 @@ class KanaeLimiter:
             override_defaults=override_defaults,
         )
 
-    def shared_limit(
+    def shared_limit[**P, T](
         self,
         limit_value: StrOrCallableStr,
         key_func: Optional[Callable[..., str]] = None,
         *,
         scope: StrOrCallableStr,
-        cost: Union[int, Callable[..., int]] = 1,
+        cost: int | Callable[..., int] = 1,
         override_defaults: bool = True,
         error_message: Optional[str] = None,
         exempt_when: Optional[Callable[..., bool]] = None,
-    ) -> Callable[..., Any]:
+    ) -> Callable[[Callable[P, T]], Callable[P, T]]:
         """A decorator that attaches a limit with the same rate limit that is shared amongst multiple routes
 
         Args:
@@ -829,38 +827,37 @@ class KanaeLimiter:
         return self._limit_decorator(
             limit_value,
             key_func,
-            True,
-            scope,
+            shared=True,
+            scope=scope,
             error_message=error_message,
             exempt_when=exempt_when,
             cost=cost,
             override_defaults=override_defaults,
         )
 
-    def exempt(self, func: Callable[..., Any]) -> Callable[..., Any]:
+    def exempt[**P, T](self, func: Callable[P, T]) -> Callable[P, T]:
         """A decorator that marks a function as exempt from all rate limits
 
         Args:
-            func (Callable[..., Any]): Provided function to mark as exempt
+            func (Callable[P, T]): Provided function to mark as exempt
 
         Returns:
-            Callable[..., Any]: A decorator that injects an exempt clause and returns the original function
+            Callable[P, T]: A decorator that injects an exempt clause and returns the original function
         """
-        name = "%s.%s" % (func.__module__, func.__name__)
+        name = f"{func.__module__}.{func.__name__}"
 
         self._exempt_routes.add(name)
 
         if inspect.iscoroutinefunction(func):
 
             @wraps(func)
-            async def __async_inner(*a, **k):
+            async def __async_inner(*a: P.args, **k: P.kwargs) -> T:
                 return await func(*a, **k)
 
-            return __async_inner
-        else:
+            return __async_inner  # type: ignore[return-value]
 
-            @wraps(func)
-            def __inner(*a, **k):
-                return func(*a, **k)
+        @wraps(func)
+        def __inner(*a: P.args, **k: P.kwargs) -> T:
+            return func(*a, **k)
 
-            return __inner
+        return __inner

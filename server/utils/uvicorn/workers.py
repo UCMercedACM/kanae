@@ -35,12 +35,19 @@ import logging
 import os
 import signal
 import sys
-from typing import Any
+from typing import TYPE_CHECKING
 
 from gunicorn.arbiter import Arbiter
 from gunicorn.workers.base import Worker
 from uvicorn.config import Config
 from uvicorn.server import Server
+
+if TYPE_CHECKING:
+    import socket
+
+    from gunicorn.app.base import Application as GunicornApplication
+    from gunicorn.config import Config as GunicornConfig
+    from gunicorn.glogging import Logger as GunicornLogger
 
 if os.name == "nt":
     from winloop import run
@@ -54,8 +61,17 @@ class KanaeWorker(Worker):
     Also modifies code to remove setting the event loop.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        age: int,
+        ppid: int,
+        sockets: list[socket.socket],
+        app: GunicornApplication,
+        timeout: int,
+        cfg: GunicornConfig,
+        log: GunicornLogger,
+    ) -> None:
+        super().__init__(age, ppid, sockets, app, timeout, cfg, log)
 
         logger = logging.getLogger("uvicorn.error")
         logger.handlers = self.log.error_log.handlers

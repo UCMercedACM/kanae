@@ -21,7 +21,7 @@ app.add_middleware(
     allow_origins=config.auth.allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "PUT", "POST", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["Content-Type"] + get_all_cors_headers(),
+    allow_headers=["Content-Type", *get_all_cors_headers()],
 )
 add_pagination(app)
 app.state.limiter = router.limiter
@@ -33,8 +33,8 @@ if app.is_prometheus_enabled:
 if __name__ == "__main__":
     config = KanaeUvicornConfig(
         "launcher:app",
-        port=config.kanae.host,
-        host=config.kanae.port,
+        port=config.kanae.port,
+        host=config.kanae.host,
         workers=os.cpu_count() or 2,
         access_log=True,
     )

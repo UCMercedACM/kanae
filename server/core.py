@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Generator, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 
 import asyncpg
 import orjson
@@ -35,7 +34,6 @@ from supertokens_python.recipe import (
     userroles,
 )
 from supertokens_python.recipe.emailpassword import InputFormField
-from supertokens_python.recipe.session.interfaces import SessionContainer
 from supertokens_python.types.base import AccountInfoInput
 
 # isort: off
@@ -82,12 +80,16 @@ from supertokens_python.recipe.userroles.asyncio import (
 )
 # isort: on
 
+from typing import Self
+
 from supertokens_python.normalised_url_domain import NormalisedURLDomain
 from supertokens_python.normalised_url_path import NormalisedURLPath
 from supertokens_python.querier import Querier
+from supertokens_python.recipe.thirdparty.types import (
+    ThirdPartyInfo,
+)
 from supertokens_python.supertokens import Host
 from supertokens_python.types import GeneralErrorResponse
-from utils.config import KanaeConfig
 from utils.limiter.extension import RateLimitExceeded, rate_limit_exceeded_handler
 from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 from utils.responses.exceptions import (
@@ -95,17 +97,15 @@ from utils.responses.exceptions import (
     RequestValidationErrorResponse,
 )
 
-if sys.version_info >= (3, 11):
-    from typing import Self, Unpack
-else:
-    from typing_extensions import Self, Unpack
-
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Generator
+
     from supertokens_python.recipe.emailpassword.types import FormField
+    from supertokens_python.recipe.session.interfaces import SessionContainer
     from supertokens_python.recipe.thirdparty.types import (
         RawUserInfoFromProvider,
-        ThirdPartyInfo,
     )
+    from utils.config import KanaeConfig
     from utils.request import RouteRequest
 
 
@@ -113,33 +113,33 @@ __title__ = "Kanae"
 __description__ = """
 Kanae is ACM @ UC Merced's API.
 
-This document details the API as it is right now. 
-Changes can be made without notification, but announcements will be made for major changes. 
+This document details the API as it is right now.
+Changes can be made without notification, but announcements will be made for major changes.
 """
 __version__ = "0.1.0"
 
 EMAIL_INVALID_MESSAGE = "Email provided is invalid"
 
 
-ThirdPartyResultType = Union[
-    LinkingToSessionUserFailedError,
-    ThirdPartySignInUpOkResult,
-    ThirdPartySignInUpNotAllowed,
-]
-EmailResultType = Union[
-    LinkingToSessionUserFailedError,
-    EmailPasswordSignUpOkResult,
-    EmailPasswordSignUpPostOkResult,
-    EmailAlreadyExistsError,
-]
+ThirdPartyResultType = (
+    LinkingToSessionUserFailedError
+    | ThirdPartySignInUpOkResult
+    | ThirdPartySignInUpNotAllowed
+)
+EmailResultType = (
+    LinkingToSessionUserFailedError
+    | EmailPasswordSignUpOkResult
+    | EmailPasswordSignUpPostOkResult
+    | EmailAlreadyExistsError
+)
 
 
-async def init(conn: asyncpg.Connection):
+async def init(conn: asyncpg.Connection) -> None:
     # Refer to https://github.com/MagicStack/asyncpg/issues/140#issuecomment-301477123
-    def _encode_jsonb(value):
+    def _encode_jsonb(value: Any) -> bytes:  # noqa: ANN401
         return b"\x01" + orjson.dumps(value)
 
-    def _decode_jsonb(value):
+    def _decode_jsonb(value: bytes) -> Any:  # noqa: ANN401
         return orjson.loads(value[1:].decode("utf-8"))
 
     await conn.set_type_codec(
@@ -155,7 +155,7 @@ async def init(conn: asyncpg.Connection):
 
 
 class SupertokensQuerier(Querier):
-    def __init__(self, recipe_id: str, *, config: KanaeConfig):
+    def __init__(self, recipe_id: str, *, config: KanaeConfig) -> None:
         super().__init__(
             self._get_normalized_host_supertokens(config.auth.connection_uri),
             recipe_id,
@@ -175,7 +175,8 @@ class SupertokensQuerier(Querier):
             url = yarl.URL(host)
 
             if not url.host:
-                raise ValueError("No host found in supertokens URL")
+                msg = "No host found in supertokens URL"
+                raise ValueError(msg)
 
             domain = NormalisedURLDomain(
                 str(yarl.URL.build(scheme=url.scheme, host=url.host, port=url.port))
@@ -190,7 +191,7 @@ class SupertokensQuerier(Querier):
 class ThirdPartyHandler(ThirdPartyRecipeImplementation):
     RECIPE_ID = "thirdparty"
 
-    def __init__(self, app: Kanae, config: KanaeConfig):
+    def __init__(self, app: Kanae, config: KanaeConfig) -> None:
         self.app = app
         self.querier = SupertokensQuerier(self.RECIPE_ID, config=config)
 
@@ -199,6 +200,7 @@ class ThirdPartyHandler(ThirdPartyRecipeImplementation):
         third_party_id: str,
         third_party_user_id: str,
         email: str,
+        *,
         is_verified: bool,
         oauth_tokens: dict[str, Any],
         raw_user_info_from_provider: RawUserInfoFromProvider,
@@ -206,12 +208,12 @@ class ThirdPartyHandler(ThirdPartyRecipeImplementation):
         should_try_linking_with_session_user: Optional[bool],
         tenant_id: str,
         user_context: dict[str, Any],
-    ) -> Union[
-        ThirdPartySignInUpOkResult,
-        ThirdPartySignInUpNotAllowed,
-        LinkingToSessionUserFailedError,
-        GeneralErrorResponse,
-    ]:
+    ) -> (
+        ThirdPartySignInUpOkResult
+        | ThirdPartySignInUpNotAllowed
+        | LinkingToSessionUserFailedError
+        | GeneralErrorResponse
+    ):
         existing_users = await list_users_by_account_info(
             tenant_id, AccountInfoInput(email=email)
         )
@@ -220,13 +222,13 @@ class ThirdPartyHandler(ThirdPartyRecipeImplementation):
                 third_party_id,
                 third_party_user_id,
                 email,
-                is_verified,
-                oauth_tokens,
-                raw_user_info_from_provider,
-                session,
-                should_try_linking_with_session_user,
-                tenant_id,
-                user_context,
+                is_verified=is_verified,
+                oauth_tokens=oauth_tokens,
+                raw_user_info_from_provider=raw_user_info_from_provider,
+                session=session,
+                should_try_linking_with_session_user=should_try_linking_with_session_user,
+                tenant_id=tenant_id,
+                user_context=user_context,
             )
 
             if isinstance(result, ThirdPartySignInUpOkResult):
@@ -258,21 +260,21 @@ class ThirdPartyHandler(ThirdPartyRecipeImplementation):
             )
             for user in existing_users
         ):
-            result = await self.sign_in_up(
+            return await self.sign_in_up(
                 third_party_id,
                 third_party_user_id,
                 email,
-                is_verified,
-                oauth_tokens,
-                raw_user_info_from_provider,
-                session,
-                should_try_linking_with_session_user,
-                tenant_id,
-                user_context,
+                is_verified=is_verified,
+                oauth_tokens=oauth_tokens,
+                raw_user_info_from_provider=raw_user_info_from_provider,
+                session=session,
+                should_try_linking_with_session_user=should_try_linking_with_session_user,
+                tenant_id=tenant_id,
+                user_context=user_context,
             )
-            return result
 
-        raise GeneralError("Cannot sign up as email already exists")
+        msg = "Cannot sign up as email already exists"
+        raise GeneralError(msg)
 
     def override_sign_in_up(
         self, implementation: ThirdPartyRecipeInterface
@@ -288,21 +290,27 @@ class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
         redirect_uri_info: Optional[RedirectUriInfo],
         oauth_tokens: Optional[dict[str, Any]],
         session: Optional[SessionContainer],
+        *,
         should_try_linking_with_session_user: Optional[bool],
         tenant_id: str,
         api_options: ThirdPartyAPIOptions,
         user_context: dict[str, Any],
+    ) -> (
+        ThirdPartySignInUpOkResult
+        | ThirdPartySignInUpNotAllowed
+        | LinkingToSessionUserFailedError
+        | GeneralErrorResponse
     ):
         try:
-            return await self.sign_in_up_post(
+            return await self.sign_in_up_post(  # type: ignore[return-value]
                 provider,
                 redirect_uri_info,
                 oauth_tokens,
                 session,
-                should_try_linking_with_session_user,
-                tenant_id,
-                api_options,
-                user_context,
+                should_try_linking_with_session_user=should_try_linking_with_session_user,
+                tenant_id=tenant_id,
+                api_options=api_options,
+                user_context=user_context,
             )
         except GeneralError:
             return GeneralErrorResponse(
@@ -312,14 +320,14 @@ class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
     def override_post_register(
         self, implementation: ThirdPartyAPIInterface
     ) -> ThirdPartyAPIInterface:
-        implementation.sign_in_up_post = self._post_register
+        implementation.sign_in_up_post = self._post_register  # type: ignore[assignment]
         return implementation
 
 
 class EmailPasswordHandler(EmailPasswordImplementation):
     RECIPE_ID = "emailpassword"
 
-    def __init__(self, app: Kanae, config: KanaeConfig):
+    def __init__(self, app: Kanae, config: KanaeConfig) -> None:
         self.app = app
         self.querier = SupertokensQuerier(self.RECIPE_ID, config=config)
 
@@ -329,8 +337,13 @@ class EmailPasswordHandler(EmailPasswordImplementation):
         password: str,
         tenant_id: str,
         session: Optional[SessionContainer],
+        *,
         should_try_linking_with_session_user: Optional[bool],
         user_context: dict[str, Any],
+    ) -> (
+        EmailPasswordSignUpOkResult
+        | EmailAlreadyExistsError
+        | LinkingToSessionUserFailedError
     ):
         is_valid_email = validate_email(email, check_deliverability=True, strict=True)
         if isinstance(is_valid_email, EmailNotValidError):
@@ -364,7 +377,7 @@ class EmailPasswordHandler(EmailPasswordImplementation):
     def override_sign_up(
         self, implementation: EmailPasswordInterface
     ) -> EmailPasswordInterface:
-        implementation.sign_up = self._register
+        implementation.sign_up = self._register  # type: ignore[assignment]
         return implementation
 
 
@@ -374,7 +387,7 @@ class UserFields(NamedTuple):
 
 
 class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
-    def __init__(self, app: Kanae):
+    def __init__(self, app: Kanae) -> None:
         self.app = app
         self.validate_name_regex = re.compile(r"^[-\w\s]+$")
 
@@ -383,26 +396,25 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
         form_fields: list[FormField],
         tenant_id: str,
         session: Optional[SessionContainer],
+        *,
         should_try_linking_with_session_user: Optional[bool],
         api_options: EmailPasswordAPIOptions,
         user_context: dict[str, Any],
+    ) -> (
+        EmailPasswordSignUpPostOkResult | EmailAlreadyExistsError | GeneralErrorResponse
     ):
         result = await self.sign_up_post(
             form_fields,
             tenant_id,
             session,
-            should_try_linking_with_session_user,
-            api_options,
-            user_context,
+            should_try_linking_with_session_user=should_try_linking_with_session_user,
+            api_options=api_options,
+            user_context=user_context,
         )
 
         if isinstance(result, EmailPasswordSignUpPostOkResult):
             user_fields = UserFields(
-                *(
-                    field.value
-                    for field in form_fields
-                    if field.id == "name" or field.id == "email"
-                )
+                *(field.value for field in form_fields if field.id in {"name", "email"})
             )
 
             is_valid_email = validate_email(
@@ -417,18 +429,18 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
                 result.user.id, user_fields.name, normalized_email
             )
 
-        return result
+        return result  # type: ignore[return-value]
 
     async def validate_name(self, value: str, tenant_id: str) -> Optional[str]:
         if self.validate_name_regex.fullmatch(value):
-            return
+            return None
 
         return "Invalid name detected"
 
     def override_post_register(
         self, implementation: EmailPasswordAPIInterface
     ) -> EmailPasswordAPIInterface:
-        implementation.sign_up_post = self._post_register
+        implementation.sign_up_post = self._post_register  # type: ignore[assignment]
 
         return implementation
 
@@ -441,7 +453,7 @@ class Kanae(FastAPI):
         self,
         *,
         config: KanaeConfig,
-    ):
+    ) -> None:
         super().__init__(
             title=__title__,
             description=__description__,
@@ -573,8 +585,8 @@ class Kanae(FastAPI):
     # SuperTokens related utils
 
     async def _set_first_time_member(
-        self, id: str, *args: Unpack[tuple[str, str]]
-    ) -> Union[ThirdPartyResultType, EmailResultType, GeneralErrorResponse, None]:
+        self, member_id: str, *args: *tuple[str, str]
+    ) -> ThirdPartyResultType | EmailResultType | GeneralErrorResponse | None:
         query = """
         INSERT INTO members (id, name, email)
         VALUES ($1, $2, $3);
@@ -583,18 +595,18 @@ class Kanae(FastAPI):
             tr = connection.transaction()
             await tr.start()
             try:
-                await connection.execute(query, id, *args)
+                await connection.execute(query, member_id, *args)
             except asyncpg.UniqueViolationError:
                 await tr.rollback()
                 return LinkingToSessionUserFailedError(
                     reason="RECIPE_USER_ID_ALREADY_LINKED_WITH_ANOTHER_PRIMARY_USER_ID_ERROR"
                 )
-            except Exception as e:
+            except asyncpg.PostgresError as e:
                 await tr.rollback()
                 return GeneralErrorResponse(str(e))
             else:
                 await tr.commit()
-                return
+                return None
 
     ### Exception Handlers
 
@@ -647,7 +659,7 @@ class Kanae(FastAPI):
     ### Server-related utilities
 
     @asynccontextmanager
-    async def lifespan(self, app: Self):
+    async def lifespan(self, app: Self) -> AsyncGenerator[None]:
         all_roles = await get_all_roles()
 
         if not all_roles.roles:

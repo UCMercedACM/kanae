@@ -15,7 +15,7 @@ else:
 
 
 class KanaeUvicornServer(uvicorn.Server):
-    def __init__(self, config: KanaeUvicornConfig):
+    def __init__(self, config: KanaeUvicornConfig) -> None:
         super().__init__(config)
 
     def run(self, sockets: Optional[list[socket.socket]] = None) -> None:

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Generic, Optional, Sequence, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Optional
 
-import asyncpg
 from fastapi import Query
 from fastapi_pagination.api import apply_items_transformer, create_page
 from fastapi_pagination.bases import AbstractPage, AbstractParams, RawParams
-from fastapi_pagination.types import AdditionalData, AsyncItemsTransformer
 from fastapi_pagination.utils import verify_params
 
-T = TypeVar("T")
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import asyncpg
+    from fastapi_pagination.types import AdditionalData, AsyncItemsTransformer
 
 
 def create_paginate_query_from_text(query: str, params: AbstractParams) -> str:
@@ -31,11 +33,11 @@ def create_count_query_from_text(query: str) -> str:
 async def paginate(
     pool: asyncpg.Pool,
     query: str,
-    *args: Any,
+    *args: object,
     transformer: Optional[AsyncItemsTransformer] = None,
     params: Optional[KanaeParams] = None,
     additional_data: Optional[AdditionalData] = None,
-) -> Any:
+) -> AbstractPage[Any]:
     params, raw_params = verify_params(params, "limit-offset")
 
     if raw_params.include_total:
@@ -62,7 +64,7 @@ class KanaeParams(AbstractParams):
     page: Annotated[int, Query(default=1, ge=1)]
     size: Annotated[int, Query(default=50, ge=1, le=100)]
 
-    def __init__(self, page: int = 1, size: int = 50):
+    def __init__(self, page: int = 1, size: int = 50) -> None:
         self.page = page
         self.size = size
 
@@ -74,7 +76,7 @@ class KanaeParams(AbstractParams):
         )
 
 
-class KanaePages(AbstractPage[T], Generic[T]):
+class KanaePages[T](AbstractPage[T]):
     data: list[T]
     total: int
 
@@ -87,11 +89,13 @@ class KanaePages(AbstractPage[T], Generic[T]):
         params: KanaeParams,
         *,
         total: Optional[int] = None,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> KanaePages[T]:
-        assert total is not None, "total must be provided"
+        if total is None:
+            msg = "total must be provided"
+            raise ValueError(msg)
 
         return cls(
-            data=items,
-            total=total,
+            data=items,  # type: ignore[call-arg]
+            total=total,  # type: ignore[call-arg]
         )

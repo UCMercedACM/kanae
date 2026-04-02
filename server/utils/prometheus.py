@@ -6,13 +6,7 @@ import re
 import time
 from typing import (
     TYPE_CHECKING,
-    Any,
-    Awaitable,
-    Callable,
     Optional,
-    Sequence,
-    Tuple,
-    Union,
     cast,
 )
 
@@ -31,6 +25,8 @@ from pydantic import BaseModel
 from starlette.datastructures import Headers
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Sequence
+
     from core import Kanae
     from starlette.types import Message, Receive, Scope, Send
 
@@ -98,14 +94,14 @@ class PrometheusMiddleware:
         settings: InstrumentatorSettings,
         round_latency_decimals: int = 4,
         should_only_respect_2xx_for_higher: bool = False,
-        excluded_handlers: Sequence[Union[re.Pattern[str], str]] = (),
-        body_handlers: Sequence[Union[re.Pattern[str], str]] = (),
+        excluded_handlers: Sequence[re.Pattern[str] | str] = (),
+        body_handlers: Sequence[re.Pattern[str] | str] = (),
         instrumentations: Sequence[Callable[[metrics.Info], None]] = (),
         async_instrumentations: Sequence[
             Callable[[metrics.Info], Awaitable[None]]
         ] = (),
-        latency_higher_buckets: Sequence[Union[float, str]] = LATENCY_HIGHER_BUCKETS,
-        latency_lower_buckets: Sequence[Union[float, str]] = LATENCY_LOWER_BUCKETS,
+        latency_higher_buckets: Sequence[float | str] = LATENCY_HIGHER_BUCKETS,
+        latency_lower_buckets: Sequence[float | str] = LATENCY_LOWER_BUCKETS,
         registry: CollectorRegistry = REGISTRY,
         custom_labels: Optional[dict] = None,
     ) -> None:
@@ -123,7 +119,7 @@ class PrometheusMiddleware:
         self.in_progress_name = settings.in_progress_name
         self.in_progress_labels = settings.in_progress_labels
         self.registry = registry
-        self.custom_labels = {} if not custom_labels else custom_labels
+        self.custom_labels = custom_labels or {}
 
         self.excluded_handlers = [re.compile(path) for path in excluded_handlers]
         self.body_handlers = [re.compile(path) for path in body_handlers]
@@ -173,7 +169,7 @@ class PrometheusMiddleware:
         start_time = time.perf_counter()
 
         handler, is_templated = self._get_handler(request)
-        is_excluded = self._is_handler_excluded(handler, is_templated)
+        is_excluded = self._is_handler_excluded(handler, is_templated=is_templated)
         handler = (
             "none" if not is_templated and self.should_group_not_templated else handler
         )
@@ -185,88 +181,98 @@ class PrometheusMiddleware:
                 else self.in_progress
             )
             in_progress.inc()
+        else:
+            in_progress = None
 
         status_code = 500
         headers = []
         body = b""
         response_start_time = None
 
-        # Message body collected for handlers matching body_handlers patterns.
-        if any(pattern.search(handler) for pattern in self.body_handlers):
+        collect_body = any(pattern.search(handler) for pattern in self.body_handlers)
 
-            async def send_wrapper(message: Message) -> None:
-                if message["type"] == "http.response.start":
-                    nonlocal status_code, headers, response_start_time
-                    headers = message["headers"]
-                    status_code = message["status"]
-                    response_start_time = time.perf_counter()
-                elif message["type"] == "http.response.body" and message["body"]:
-                    nonlocal body
-                    body += message["body"]
-                await send(message)
-
-        else:
-
-            async def send_wrapper(message: Message) -> None:
-                if message["type"] == "http.response.start":
-                    nonlocal status_code, headers, response_start_time
-                    headers = message["headers"]
-                    status_code = message["status"]
-                    response_start_time = time.perf_counter()
-                await send(message)
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code, headers, response_start_time, body
+            if message["type"] == "http.response.start":
+                headers = message["headers"]
+                status_code = message["status"]
+                response_start_time = time.perf_counter()
+            elif (
+                collect_body
+                and message["type"] == "http.response.body"
+                and message["body"]
+            ):
+                body += message["body"]
+            await send(message)
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return await self.app(scope, receive, send_wrapper)
         else:
-            status = str(status_code)
-
             if not is_excluded:
-                duration = max(time.perf_counter() - start_time, 0.0)
-                duration_without_streaming = 0.0
-
-                if response_start_time:
-                    duration_without_streaming = max(
-                        response_start_time - start_time, 0.0
-                    )
-
-                if self.should_instrument_requests_in_progress:
-                    in_progress.dec()  # type: ignore
-
-                if self.should_round_latency_decimals:
-                    duration = round(duration, self.round_latency_decimals)
-                    duration_without_streaming = round(
-                        duration_without_streaming, self.round_latency_decimals
-                    )
-
-                status = status[0] + "xx" if self.should_group_status_codes else status
-
-                response = Response(
-                    content=body, headers=Headers(raw=headers), status_code=status_code
+                await self._record_metrics(
+                    request,
+                    handler,
+                    status_code,
+                    headers,
+                    body,
+                    start_time,
+                    response_start_time,
+                    in_progress,
                 )
 
-                info = metrics.Info(
-                    request=request,
-                    response=response,
-                    method=request.method,
-                    modified_handler=handler,
-                    modified_status=status,
-                    modified_duration=duration,
-                    modified_duration_without_streaming=duration_without_streaming,
-                )
+    async def _record_metrics(
+        self,
+        request: Request,
+        handler: str,
+        status_code: int,
+        headers: list,
+        body: bytes,
+        start_time: float,
+        response_start_time: Optional[float],
+        in_progress: Optional[Gauge],
+    ) -> None:
+        status = str(status_code)
+        duration = max(time.perf_counter() - start_time, 0.0)
+        duration_without_streaming = 0.0
 
-                for instrumentation in self.instrumentations:
-                    instrumentation(info)
+        if response_start_time:
+            duration_without_streaming = max(response_start_time - start_time, 0.0)
 
-                await asyncio.gather(
-                    *[
-                        instrumentation(info)
-                        for instrumentation in self.async_instrumentations
-                    ]
-                )
+        if self.should_instrument_requests_in_progress:
+            in_progress.dec()  # type: ignore
 
-    def _get_handler(self, request: Request) -> Tuple[str, bool]:
+        if self.should_round_latency_decimals:
+            duration = round(duration, self.round_latency_decimals)
+            duration_without_streaming = round(
+                duration_without_streaming, self.round_latency_decimals
+            )
+
+        status = status[0] + "xx" if self.should_group_status_codes else status
+
+        response = Response(
+            content=body, headers=Headers(raw=headers), status_code=status_code
+        )
+
+        info = metrics.Info(
+            request=request,
+            response=response,
+            method=request.method,
+            modified_handler=handler,
+            modified_status=status,
+            modified_duration=duration,
+            modified_duration_without_streaming=duration_without_streaming,
+        )
+
+        for instrumentation in self.instrumentations:
+            instrumentation(info)
+
+        await asyncio.gather(
+            *[instrumentation(info) for instrumentation in self.async_instrumentations]
+        )
+
+    def _get_handler(self, request: Request) -> tuple[str, bool]:
         """Extracts either template or (if no template) path.
 
         Args:
@@ -278,9 +284,9 @@ class PrometheusMiddleware:
                 if the path is templated or not.
         """
         route_name = routing.get_route_name(request)
-        return route_name or request.url.path, True if route_name else False
+        return route_name or request.url.path, bool(route_name)
 
-    def _is_handler_excluded(self, handler: str, is_templated: bool) -> bool:
+    def _is_handler_excluded(self, handler: str, *, is_templated: bool) -> bool:
         """Determines if the handler should be ignored.
 
         Args:
@@ -294,10 +300,7 @@ class PrometheusMiddleware:
         if not is_templated and self.should_ignore_not_templated:
             return True
 
-        if any(pattern.search(handler) for pattern in self.excluded_handlers):
-            return True
-
-        return False
+        return bool(any(pattern.search(handler) for pattern in self.excluded_handlers))
 
 
 class PrometheusInstrumentator:
@@ -318,10 +321,14 @@ class PrometheusInstrumentator:
         *,
         settings: InstrumentatorSettings,
         round_latency_decimals: int = 4,
-        excluded_handlers: list[str] = [],
-        body_handlers: list[str] = [],
+        excluded_handlers: list[str] | None = None,
+        body_handlers: list[str] | None = None,
         registry: Optional[CollectorRegistry] = None,
     ) -> None:
+        if body_handlers is None:
+            body_handlers = []
+        if excluded_handlers is None:
+            excluded_handlers = []
         self.app = app
         self.settings = settings
 
@@ -342,7 +349,7 @@ class PrometheusInstrumentator:
         self.metric_subsystem = settings.metric_subsystem
 
         self.round_latency_decimals = round_latency_decimals
-        self.registry = registry if registry else REGISTRY
+        self.registry = registry or REGISTRY
 
         self.excluded_handlers = [re.compile(path) for path in excluded_handlers]
         self.body_handlers = [re.compile(path) for path in body_handlers]
@@ -353,9 +360,10 @@ class PrometheusInstrumentator:
 
     def add_middleware(
         self,
+        *,
         should_only_respect_2xx_for_higher: bool = False,
-        latency_higher_buckets: Sequence[Union[float, str]] = LATENCY_HIGHER_BUCKETS,
-        latency_lower_buckets: Sequence[Union[float, str]] = LATENCY_LOWER_BUCKETS,
+        latency_higher_buckets: Sequence[float | str] = LATENCY_HIGHER_BUCKETS,
+        latency_lower_buckets: Sequence[float | str] = LATENCY_LOWER_BUCKETS,
     ) -> None:
         """Injects the middleware into the application
 
@@ -381,7 +389,7 @@ class PrometheusInstrumentator:
     def add(
         self,
         *instrumentation_function: Optional[
-            Callable[[metrics.Info], Union[None, Awaitable[None]]]
+            Callable[[metrics.Info], None | Awaitable[None]]
         ],
     ) -> None:
         """Adds a function to list of instrumentations
@@ -398,26 +406,30 @@ class PrometheusInstrumentator:
                 if asyncio.iscoroutinefunction(func):
                     self.async_instrumentations.append(
                         cast(
-                            Callable[[metrics.Info], Awaitable[None]],
+                            "Callable[[metrics.Info], Awaitable[None]]",
                             func,
                         )
                     )
                 else:
                     self.instrumentations.append(
-                        cast(Callable[[metrics.Info], None], func)
+                        cast("Callable[[metrics.Info], None]", func)
                     )
 
     def start(
         self,
         endpoint: str = "/metrics",
+        *,
         include_in_schema: bool = False,
-        **kwargs: Any,
+        methods: list[str] | None = None,
+        name: str | None = None,
     ) -> None:
         """Starts the instrumentator by injecting the metrics route into the application
 
         Args:
             endpoint (str, optional): The path of the endpoint to serve. Defaults to "/metrics".
             include_in_schema (bool, optional): Whether to include the endpoint into the OpenAPI definitions. Defaults to False.
+            methods (list[str] | None, optional): The HTTP methods to allow. Defaults to None.
+            name (str | None, optional): The name of the route. Defaults to None.
         """
 
         def metrics(request: Request) -> Response:
@@ -432,5 +444,9 @@ class PrometheusInstrumentator:
             return resp
 
         self.app.add_route(
-            path=endpoint, route=metrics, include_in_schema=include_in_schema, **kwargs
+            path=endpoint,
+            route=metrics,
+            include_in_schema=include_in_schema,
+            methods=methods,
+            name=name,
         )

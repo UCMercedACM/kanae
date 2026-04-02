@@ -42,16 +42,16 @@ async def get_tags(
         ORDER BY similarity(title, $1) DESC
         """
 
-    args = (title) if title else ()
+    args = title or ()
     records = await request.app.pool.fetch(query, *args)
     return [Tags(**dict(row)) for row in records]
 
 
 @router.get(
-    "/tags/{id}",
+    "/tags/{tag_id}",
     responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
 )
-async def get_tag_by_id(request: RouteRequest, id: int) -> Tags:
+async def get_tag_by_id(request: RouteRequest, tag_id: int) -> Tags:
     """Get tag via ID"""
     query = """
     SELECT id, title, description
@@ -59,7 +59,7 @@ async def get_tag_by_id(request: RouteRequest, id: int) -> Tags:
     WHERE id = $1;
     """
 
-    rows = await request.app.pool.fetchrow(query, id)
+    rows = await request.app.pool.fetchrow(query, tag_id)
     if not rows:
         raise NotFoundException
     return Tags(**dict(rows))
@@ -71,14 +71,14 @@ class ModifiedTag(BaseModel):
 
 
 @router.put(
-    "/tags/{id}",
+    "/tags/{tag_id}",
     responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
 async def edit_tag(
     request: RouteRequest,
-    id: int,
+    tag_id: int,
     req: ModifiedTag,
     session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> Tags:
@@ -91,21 +91,21 @@ async def edit_tag(
     WHERE id = $1
     RETURNING *;
     """
-    rows = await request.app.pool.fetchrow(query, id, *req.model_dump().values())
+    rows = await request.app.pool.fetchrow(query, tag_id, *req.model_dump().values())
     if not rows:
         raise NotFoundException(detail="Resource cannot be updated")
     return Tags(**dict(rows))
 
 
 @router.delete(
-    "/tags/{id}",
+    "/tags/{tag_id}",
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @has_admin_role()
 @router.limiter.limit("5/minute")
 async def delete_tag(
     request: RouteRequest,
-    id: int,
+    tag_id: int,
     session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Remove specified tag"""
@@ -114,7 +114,7 @@ async def delete_tag(
     WHERE id = $1;
     """
 
-    query_status = await request.app.pool.execute(query, id)
+    query_status = await request.app.pool.execute(query, tag_id)
     if query_status[-1] == "0":
         raise NotFoundException
     return DeleteResponse()
