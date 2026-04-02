@@ -28,7 +28,6 @@ from utils.config import KanaeConfig
 StrOrCallableStr = str | Callable[..., str]
 
 
-
 ### Exceptions and handler
 
 
