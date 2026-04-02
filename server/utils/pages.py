@@ -96,6 +96,6 @@ class KanaePages[T](AbstractPage[T]):
             raise ValueError(msg)
 
         return cls(
-            data=items,  # type: ignore[call-arg]
+            data=list(items),  # type: ignore[call-arg]
             total=total,  # type: ignore[call-arg]
         )

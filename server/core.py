@@ -22,9 +22,6 @@ from supertokens_python import (
     init as supertokens_init,
 )
 from supertokens_python.asyncio import list_users_by_account_info
-from supertokens_python.auth_utils import (
-    LinkingToSessionUserFailedError,  # type: ignore
-)
 from supertokens_python.exceptions import GeneralError
 from supertokens_python.recipe import (
     dashboard,
@@ -34,6 +31,9 @@ from supertokens_python.recipe import (
     userroles,
 )
 from supertokens_python.recipe.emailpassword import InputFormField
+from supertokens_python.types.auth_utils import (
+    LinkingToSessionUserFailedError,
+)
 from supertokens_python.types.base import AccountInfoInput
 
 # isort: off
@@ -44,6 +44,8 @@ from supertokens_python.recipe.thirdparty.interfaces import (
     RecipeInterface as ThirdPartyRecipeInterface,
     SignInUpNotAllowed as ThirdPartySignInUpNotAllowed,
     SignInUpOkResult as ThirdPartySignInUpOkResult,
+    SignInUpPostNoEmailGivenByProviderResponse as ThirdPartyNoEmailGivenByProviderResponse,
+    SignInUpPostOkResult as ThirdPartySignInUpPostOkResult,
 )
 from supertokens_python.recipe.thirdparty.provider import (
     Provider,
@@ -65,6 +67,7 @@ from supertokens_python.recipe.emailpassword.interfaces import (
     APIOptions as EmailPasswordAPIOptions,
     RecipeInterface as EmailPasswordInterface,
     SignUpOkResult as EmailPasswordSignUpOkResult,
+    SignUpPostNotAllowedResponse as EmailPasswordSignUpPostNotAllowedResponse,
     SignUpPostOkResult as EmailPasswordSignUpPostOkResult,
 )
 from supertokens_python.recipe.emailpassword.api.implementation import (
@@ -296,13 +299,13 @@ class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
         api_options: ThirdPartyAPIOptions,
         user_context: dict[str, Any],
     ) -> (
-        ThirdPartySignInUpOkResult
+        ThirdPartySignInUpPostOkResult
+        | ThirdPartyNoEmailGivenByProviderResponse
         | ThirdPartySignInUpNotAllowed
-        | LinkingToSessionUserFailedError
         | GeneralErrorResponse
     ):
         try:
-            return await self.sign_in_up_post(  # type: ignore[return-value]
+            return await self.sign_in_up_post(
                 provider,
                 redirect_uri_info,
                 oauth_tokens,
@@ -320,7 +323,7 @@ class ThirdPartyAPIHandler(ThirdPartyAPIImplementation):
     def override_post_register(
         self, implementation: ThirdPartyAPIInterface
     ) -> ThirdPartyAPIInterface:
-        implementation.sign_in_up_post = self._post_register  # type: ignore[assignment]
+        implementation.sign_in_up_post = self._post_register  # type: ignore
         return implementation
 
 
@@ -377,7 +380,7 @@ class EmailPasswordHandler(EmailPasswordImplementation):
     def override_sign_up(
         self, implementation: EmailPasswordInterface
     ) -> EmailPasswordInterface:
-        implementation.sign_up = self._register  # type: ignore[assignment]
+        implementation.sign_up = self._register  # type: ignore
         return implementation
 
 
@@ -401,7 +404,10 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
         api_options: EmailPasswordAPIOptions,
         user_context: dict[str, Any],
     ) -> (
-        EmailPasswordSignUpPostOkResult | EmailAlreadyExistsError | GeneralErrorResponse
+        EmailPasswordSignUpPostOkResult
+        | EmailAlreadyExistsError
+        | EmailPasswordSignUpPostNotAllowedResponse
+        | GeneralErrorResponse
     ):
         result = await self.sign_up_post(
             form_fields,
@@ -429,7 +435,7 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
                 result.user.id, user_fields.name, normalized_email
             )
 
-        return result  # type: ignore[return-value]
+        return result
 
     async def validate_name(self, value: str, tenant_id: str) -> Optional[str]:
         if self.validate_name_regex.fullmatch(value):
@@ -440,7 +446,7 @@ class EmailPasswordAPIHandler(EmailPasswordAPIImplementation):
     def override_post_register(
         self, implementation: EmailPasswordAPIInterface
     ) -> EmailPasswordAPIInterface:
-        implementation.sign_up_post = self._post_register  # type: ignore[assignment]
+        implementation.sign_up_post = self._post_register  # type: ignore
 
         return implementation
 

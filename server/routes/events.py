@@ -121,7 +121,7 @@ async def list_events(
         """
 
     args = name or ()
-    return await paginate(request.app.pool, query, *args, params=params)
+    return await paginate(request.app.pool, query, *args, params=params)  # type: ignore
 
 
 @router.get(

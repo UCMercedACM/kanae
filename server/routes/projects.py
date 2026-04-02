@@ -120,7 +120,7 @@ async def list_projects(
     {constraint}
     """
 
-    return await paginate(request.app.pool, query, *args, params=params)
+    return await paginate(request.app.pool, query, *args, params=params)  # type: ignore
 
 
 @router.get(

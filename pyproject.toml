@@ -34,6 +34,7 @@ dev = [
 lint = [
     "pyright[nodejs]~=1.1.408",
     "ruff~=0.15.8",
+    "ty~=0.0.27",
 ]
 test = [
     "asgi-lifespan~=2.1.0",
@@ -44,23 +45,14 @@ test = [
     "testcontainers~=4.14.2",
 ]
 
-
-[tool.pyright]
-include = [
-    "utils/**",
-    "core.py",
-    "launcher.py"
-]
+[tool.ty.src]
+include = ["server"]
 exclude = [
-    "**/__pycache__", 
-    "**/.mypy_cache", 
-    "**/.dmpypy.json", 
+    "__pycache__", 
     "docs",
-    "docker"
+    "docker",
+    "tests"
 ]
-reportMissingImports = "error"
-typeCheckingMode = "standard"
-reportUnnecessaryTypeIgnoreComment = "warning"
 
 [tool.ruff]
 line-length = 88
@@ -69,7 +61,7 @@ extend-include = [
     "launcher.py",
     "utils/**"
 ]
-extend-exclude = ["**/__pycache__", "server/tests"]
+extend-exclude = ["**/__pycache__", "tests"]
 
 [tool.ruff.lint]
 select = [

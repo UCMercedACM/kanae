@@ -110,8 +110,10 @@ class KanaeUvicornConfig(UvicornConfig):
     def _determine_formatter(
         self, handler: logging.StreamHandler | RotatingFileHandler
     ) -> logging.Formatter:
-        if isinstance(handler, logging.StreamHandler) and self._stream_supports_colour(
-            handler.stream
+        if (
+            isinstance(handler, logging.StreamHandler)
+            and handler.stream is not None
+            and self._stream_supports_colour(handler.stream)
         ):
             return _ColourFormatter()
 

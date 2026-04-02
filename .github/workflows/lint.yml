@@ -43,7 +43,7 @@ jobs:
           
       - name: Check typing
         run: |
-          uv run pyright server
+          uv run ty check server --error-on-warning
 
       - name: Check codebase
         run: |

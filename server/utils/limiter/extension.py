@@ -65,11 +65,10 @@ class RateLimitExceeded(HTTPException):
         self.description = str(limit.limit)
 
         if limit.error_message:
-            self.description: str = (
-                limit.error_message
-                if not callable(limit.error_message)
-                else limit.error_message()
-            )
+            if callable(limit.error_message):
+                self.description = limit.error_message()  # type: ignore
+            else:
+                self.description = limit.error_message
 
         super().__init__(status_code=429, detail=self.description)
 
@@ -194,14 +193,14 @@ class LimitGroup:
                 "key" in inspect.signature(self.__limit_provider).parameters
                 and "request" not in inspect.signature(self.key_function).parameters
             ):
-                msg = f"Limit provider function {self.key_function.__name__} needs a `request` argument"
+                msg = f"Limit provider function {getattr(self.key_function, '__name__', repr(self.key_function))} needs a `request` argument"
                 raise ValueError(msg)
 
             if not self.request:
                 msg = "`request` object can't be None"
                 raise ValueError(msg)
 
-            limit_raw = self.__limit_provider(self.key_function(self.request))
+            limit_raw = self.__limit_provider(self.key_function(self.request))  # type: ignore
 
         else:
             limit_raw = self.__limit_provider
@@ -422,7 +421,7 @@ class KanaeLimiter:
                 if not limit_for_header or lim.limit < limit_for_header[0]:
                     limit_for_header = (lim.limit, args)
 
-                cost = lim.cost(request) if callable(lim.cost) else lim.cost
+                cost = lim.cost(request) if callable(lim.cost) else lim.cost  # type: ignore
 
                 # Redis can't decode this if it's not cast into an int for some reason
                 if not await self.limiter.hit(lim.limit, *args, cost=int(cost)):
@@ -497,7 +496,7 @@ class KanaeLimiter:
         view_func = endpoint_func
 
         endpoint_func_name = (
-            f"{view_func.__module__}.{view_func.__name__}" if view_func else ""
+            f"{view_func.__module__}.{view_func.__name__}" if view_func else ""  # type: ignore
         )
         _endpoint_key = endpoint_url if self._key_style == "url" else endpoint_func_name
         # cases where we don't need to check the limits
@@ -665,7 +664,7 @@ class KanaeLimiter:
 
         def decorator(func: Callable[P, T]) -> Callable[P, T]:
             limit_key_func = key_func or self._key_func
-            name = f"{func.__module__}.{func.__name__}"
+            name = f"{func.__module__}.{func.__name__}"  # type: ignore
             dynamic_limit = None
             static_limits: list[LimitItem] = []
             if callable(limit_value):
@@ -734,13 +733,13 @@ class KanaeLimiter:
                         )
                         request.state._rate_limiting_complete = True
 
-                    response = await func(*args, **kwargs)
+                    response = await func(*args, **kwargs)  # type: ignore
 
                     if self._headers_enabled:
                         if not isinstance(response, Response):
                             # get the response object from the decorated endpoint function
                             await self._inject_asgi_headers(
-                                kwargs["response"].headers,  # type: ignore[union-attr]
+                                kwargs["response"].headers,  # type: ignore
                                 request.state.view_rate_limit,
                             )
                             return response
@@ -750,10 +749,10 @@ class KanaeLimiter:
                         )
                     return response  # type: ignore[return-value]
 
-                return async_wrapper  # type: ignore[return-value]
+                return async_wrapper  # type: ignore
             return func
 
-        return decorator
+        return decorator  # type: ignore
 
     def limit[**P, T](
         self,
@@ -844,7 +843,7 @@ class KanaeLimiter:
         Returns:
             Callable[P, T]: A decorator that injects an exempt clause and returns the original function
         """
-        name = f"{func.__module__}.{func.__name__}"
+        name = f"{func.__module__}.{func.__name__}"  # type: ignore
 
         self._exempt_routes.add(name)
 
@@ -854,7 +853,7 @@ class KanaeLimiter:
             async def __async_inner(*a: P.args, **k: P.kwargs) -> T:
                 return await func(*a, **k)
 
-            return __async_inner  # type: ignore[return-value]
+            return __async_inner  # type: ignore
 
         @wraps(func)
         def __inner(*a: P.args, **k: P.kwargs) -> T:

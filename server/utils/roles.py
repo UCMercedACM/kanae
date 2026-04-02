@@ -13,7 +13,7 @@
 import functools
 import inspect
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, cast
 
 from supertokens_python.exceptions import GeneralError
 from supertokens_python.recipe.session.exceptions import (
@@ -32,7 +32,7 @@ type CoroFunc[**P, T] = Callable[P, Coro[T]]
 def validate_parameters(func: Callable[..., object]) -> None:
     sig = inspect.signature(func)
     if not sig.parameters.get("session"):
-        msg = f"No <session> argument found within function <{func.__name__}>"
+        msg = f"No <session> argument found within function <{func.__name__}>"  # type: ignore
         raise GeneralError(msg)
 
 
@@ -45,7 +45,7 @@ def has_role[**P, T](item: str, /) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]
             *args: P.args,
             **kwargs: P.kwargs,
         ) -> T:
-            session: Optional[SessionContainer] = kwargs.get("session")  # type: ignore[assignment]
+            session = cast("SessionContainer | None", kwargs.get("session"))
             if not session:
                 msg = "Must have valid session"
                 raise GeneralError(msg)
@@ -58,11 +58,11 @@ def has_role[**P, T](item: str, /) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]
                     [ClaimValidationError(UserRoleClaim.key, None)],
                 )
 
-            return await func(*args, **kwargs)
+            return await func(*args, **kwargs)  # type: ignore
 
-        return wrapper
+        return wrapper  # type: ignore
 
-    return decorator
+    return decorator  # type: ignore
 
 
 def has_any_role[**P, T](*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
@@ -74,7 +74,7 @@ def has_any_role[**P, T](*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, 
             *args: P.args,
             **kwargs: P.kwargs,
         ) -> T:
-            session: Optional[SessionContainer] = kwargs.get("session")  # type: ignore[assignment]
+            session = cast("SessionContainer | None", kwargs.get("session"))
             if not session:
                 msg = "Must have valid session"
                 raise GeneralError(msg)
@@ -96,11 +96,11 @@ def has_any_role[**P, T](*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, 
                     [ClaimValidationError(UserRoleClaim.key, None)],
                 )
 
-            return await func(*args, **kwargs)
+            return await func(*args, **kwargs)  # type: ignore
 
-        return wrapper
+        return wrapper  # type: ignore
 
-    return decorator
+    return decorator  # type: ignore
 
 
 def has_admin_role[**P, T]() -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
