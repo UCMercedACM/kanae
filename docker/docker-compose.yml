@@ -82,7 +82,7 @@ services:
 
   migrate:
     container_name: kanae_migrate
-    image: arigaio/atlas:latest@sha256:bf4cfd599bb67b5fc9317fda666af73d40064bf94f776a45dc912de3b754018e
+    image: arigaio/atlas:latest@sha256:bdeea54e7b6ce38bf0598ec569a5e79bb5bf841f69d2575f1b774a69b6632493
     command: >
       schema apply
       --auto-approve
