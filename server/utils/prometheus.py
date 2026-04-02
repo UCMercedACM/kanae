@@ -241,7 +241,7 @@ class PrometheusMiddleware:
             duration_without_streaming = max(response_start_time - start_time, 0.0)
 
         if self.should_instrument_requests_in_progress:
-            in_progress.dec()  # type: ignore
+            in_progress.dec()  # ty: ignore[unresolved-attribute]
 
         if self.should_round_latency_decimals:
             duration = round(duration, self.round_latency_decimals)
@@ -373,7 +373,7 @@ class PrometheusInstrumentator:
             latency_lower_buckets (Sequence[Union[float, str]], optional): Optional sequence of buckets for lower latency. Defaults to `LATENCY_LOWER_BUCKETS`, which is a predefined constant
         """
         self.app.add_middleware(
-            PrometheusMiddleware,  # type: ignore (This is actually correct)
+            PrometheusMiddleware,  # ty: ignore[invalid-argument-type]
             settings=self.settings,
             round_latency_decimals=self.round_latency_decimals,
             instrumentations=self.instrumentations,

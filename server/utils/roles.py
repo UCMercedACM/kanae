@@ -32,7 +32,7 @@ type CoroFunc[**P, T] = Callable[P, Coro[T]]
 def validate_parameters(func: Callable[..., object]) -> None:
     sig = inspect.signature(func)
     if not sig.parameters.get("session"):
-        msg = f"No <session> argument found within function <{func.__name__}>"  # type: ignore
+        msg = f"No <session> argument found within function <{func.__name__}>"  # ty: ignore[unresolved-attribute]
         raise GeneralError(msg)
 
 
@@ -58,11 +58,11 @@ def has_role[**P, T](item: str, /) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]
                     [ClaimValidationError(UserRoleClaim.key, None)],
                 )
 
-            return await func(*args, **kwargs)  # type: ignore
+            return await func(*args, **kwargs)  # ty: ignore[invalid-return-type,invalid-argument-type]
 
-        return wrapper  # type: ignore
+        return wrapper  # ty: ignore[invalid-return-type]
 
-    return decorator  # type: ignore
+    return decorator  # ty: ignore[invalid-return-type]
 
 
 def has_any_role[**P, T](*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:
@@ -96,11 +96,11 @@ def has_any_role[**P, T](*items: str) -> Callable[[CoroFunc[P, T]], CoroFunc[P, 
                     [ClaimValidationError(UserRoleClaim.key, None)],
                 )
 
-            return await func(*args, **kwargs)  # type: ignore
+            return await func(*args, **kwargs)  # ty: ignore[invalid-return-type,invalid-argument-type]
 
-        return wrapper  # type: ignore
+        return wrapper  # ty: ignore[invalid-return-type]
 
-    return decorator  # type: ignore
+    return decorator  # ty: ignore[invalid-return-type]
 
 
 def has_admin_role[**P, T]() -> Callable[[CoroFunc[P, T]], CoroFunc[P, T]]:

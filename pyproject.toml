@@ -75,7 +75,6 @@ ignore = [
     "B904",     # Niche standard
     "E501",     # Ruff suggested format
     "FBT003",   # Inherently incorrect to enforce this 
-    "PGH003",   # I'm too lazy - Will be removed when migrating over to ty
     "PLR0913",  # Violations of these are not related to bad code
     "PLR2004",  # Magic numbers are fine sometimes
     "SIM105",   # Prefer not to use due to stylistic choices

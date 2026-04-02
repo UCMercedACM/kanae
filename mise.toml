@@ -33,7 +33,7 @@ run = "uvicorn launcher:app --app-dir=server --reload"
 [tasks."server:lint"]
 description = "Lints the codebase by type checking and general linting"
 env._.path = ".venv/bin"
-run = ["ty check server", "ruff check server --fix --exit-non-zero-on-fix"]
+run = ["ty check server --error-on-warning", "ruff check server --fix --exit-non-zero-on-fix"]
 
 [tasks."server:format"]
 description = "Formats the codebase"
