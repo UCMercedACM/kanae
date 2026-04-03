@@ -85,7 +85,9 @@ async def get_member_info(
                 'type',
                 events.type,
                 'timezone',
-                events.timezone
+                events.timezone,
+                'creator_id',
+                events.creator_id
             )
         ) AS events
     FROM members
@@ -190,7 +192,7 @@ async def get_logged_events(
     # This error says "possible SQL injection", but the variables are not passed in to the query directly
     # Instead, they are used to check for the constraint query
     query = f"""
-    SELECT events.id, events.name, events.description, events.start_at, events.end_at, events.location, events.type, events.timezone
+    SELECT events.id, events.name, events.description, events.start_at, events.end_at, events.location, events.type, events.timezone, events.creator_id
     FROM members
         INNER JOIN events_members ON members.id = events_members.member_id {constraint}
         INNER JOIN events ON events_members.event_id = events.id
