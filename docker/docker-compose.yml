@@ -3,10 +3,7 @@ name: kanae
 services:
   kanae:
     container_name: kanae
-    # image: ghcr.io/ucmercedacm/kanae:latest
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/ucmercedacm/kanae:latest
     volumes:
       # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
       - ${CONFIG_LOCATION}:/kanae/config.yml
