@@ -196,7 +196,7 @@ async def edit_project(
         # Effectively admins can override projects
         query = """
         WITH project_member AS (
-            SELECT members.id, members.role
+            SELECT members.id, project_members.role
             FROM projects
             INNER JOIN project_members ON project_members.project_id = projects.id
             INNER JOIN members ON project_members.member_id = members.id

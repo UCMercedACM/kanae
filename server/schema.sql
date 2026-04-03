@@ -35,14 +35,20 @@ CREATE TABLE IF NOT EXISTS events (
     location TEXT,
     type event_type DEFAULT 'misc',
     creator_id UUID REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
-    attendance_hash TEXT,
-    attendance_code TEXT,
     timezone TEXT DEFAULT 'UTC',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
 
 -- This would allow for faster lookups for events
+-- Separate table for attendance verification to enforce 3NF
+-- (attendance_hash is derived from attendance_code, creating a transitive dependency)
+CREATE TABLE IF NOT EXISTS event_attendance_codes (
+    event_id UUID PRIMARY KEY REFERENCES events (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    attendance_hash TEXT NOT NULL,
+    attendance_code TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS events_name_idx ON events (name);
 CREATE INDEX IF NOT EXISTS events_name_lower_idx ON events (LOWER(name));
 CREATE INDEX IF NOT EXISTS events_creator_idx ON events (creator_id);

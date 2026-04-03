@@ -91,6 +91,7 @@ class Events(BaseModel, frozen=True):
         "sig_cyber",
         "sig_data",
         "sig_arch",
+        "sig_graph",
         "social",
         "misc",
     ]
@@ -193,7 +194,10 @@ async def edit_event(
         """
 
     update_hash_query = (
-        "UPDATE events SET attendance_hash = $3 WHERE id = $1 AND creator_id = $2;"
+        "UPDATE event_attendance_codes SET attendance_hash = $2 WHERE event_id = $1;"
+    )
+    fetch_hash_query = (
+        "SELECT attendance_hash FROM event_attendance_codes WHERE event_id = $1;"
     )
     async with request.app.pool.acquire() as connection:
         rows = await connection.fetchrow(
@@ -204,14 +208,17 @@ async def edit_event(
                 detail="Resource cannot be updated"
             )  # Not sure if this is correct by RFC 9110 standards
 
-        full_hash = compile_params(request.app.ph._parameters) + rows["attendance_hash"]
-        if request.app.ph.check_needs_rehash(full_hash):
-            await connection.execute(
-                update_hash_query,
-                event_id,
-                session.get_user_id(),
-                request.app.ph.hash(str(event_id)),
+        hash_row = await connection.fetchrow(fetch_hash_query, event_id)
+        if hash_row:
+            full_hash = (
+                compile_params(request.app.ph._parameters) + hash_row["attendance_hash"]
             )
+            if request.app.ph.check_needs_rehash(full_hash):
+                await connection.execute(
+                    update_hash_query,
+                    event_id,
+                    request.app.ph.hash(str(event_id)),
+                )
 
         return Events(**dict(rows))
 
@@ -257,11 +264,11 @@ async def create_events(
     RETURNING *;
     """
     attendance_query = """
-    UPDATE events
-    SET
-        attendance_hash = $3,
-        attendance_code = $4
-    WHERE id = $1 AND creator_id = $2;
+    INSERT INTO event_attendance_codes (event_id, attendance_hash, attendance_code)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (event_id) DO UPDATE
+    SET attendance_hash = EXCLUDED.attendance_hash,
+        attendance_code = EXCLUDED.attendance_code;
     """
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
@@ -277,7 +284,6 @@ async def create_events(
             await request.app.pool.execute(
                 attendance_query,
                 rows["id"],
-                session.get_user_id(),
                 "$".join(encoded_hash.split("$")[-2:]),
                 base62.encodebytes(encoded_hash.split("$")[-1].encode("utf-8")),
             )
@@ -374,7 +380,12 @@ async def verify_attendance(
     session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> SuccessResponse:
     """Verify an authenticated user's attendance to the requested event"""
-    query = "SELECT start_at, end_at, attendance_hash FROM events WHERE substring(attendance_code for 8) = $1;"
+    query = """
+    SELECT events.start_at, events.end_at, event_attendance_codes.attendance_hash
+    FROM events
+    JOIN event_attendance_codes ON events.id = event_attendance_codes.event_id
+    WHERE substring(event_attendance_codes.attendance_code for 8) = $1;
+    """
     record = await request.app.pool.fetchrow(query, req.code)
     if not record:
         raise NotFoundException(

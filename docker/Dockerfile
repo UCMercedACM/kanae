@@ -35,6 +35,7 @@ FROM python:3.14-slim-trixie
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/kanae
+ENV HOME=/tmp
 
 # Set up non-root user
 RUN groupadd --system --gid 999 kanae \
@@ -42,6 +43,7 @@ RUN groupadd --system --gid 999 kanae \
 
 # Copy the server from the builder
 COPY --from=build /app /kanae
+COPY --chmod=005 deploy/launcher.sh /kanae/launcher.sh
 
 WORKDIR /kanae/
 
@@ -53,7 +55,7 @@ USER kanae
 
 EXPOSE 8000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000"]
+CMD ["/kanae/launcher.sh", "--bind", "0.0.0.0:8000"]
 
 LABEL org.opencontainers.image.title="Kanae"
 LABEL org.opencontainers.image.description="Internal backend server for ACM @ UC Merced"
