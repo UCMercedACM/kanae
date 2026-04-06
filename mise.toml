@@ -1,7 +1,7 @@
 redactions = ["DB_PASSWORD"]
 
 [tools]
-uv = "0.11.2"
+uv = "0.11.3"
 atlas = "1.1.0"
 
 
