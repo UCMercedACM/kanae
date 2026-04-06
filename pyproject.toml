@@ -18,7 +18,7 @@ dependencies = [
     "pybase62~=1.0.0",
     "pyyaml~=6.0.3",
     "supertokens-python~=0.31.2",
-    "uvicorn~=0.42.0",
+    "uvicorn~=0.43.0",
     "uvloop~=0.22.1 ; sys_platform != 'win32'",
     "valkey~=6.1.1",
     "winloop~=0.6.0 ; sys_platform == 'win32'",
