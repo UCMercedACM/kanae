@@ -29,7 +29,7 @@ services:
     container_name: kanae_postgres
     build:
       dockerfile_inline: |
-        FROM postgres:17
+        FROM postgres:18
         COPY supertokens-seed.sql /docker-entrypoint-initdb.d/
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -42,7 +42,7 @@ services:
       - default
       - db_bridge
     volumes:
-      - database:/var/lib/postgresql/data
+      - database:/var/lib/postgresql/18/docker
     healthcheck:
       test: pg_isready --dbname='${DB_DATABASE_NAME}' --username='${DB_USERNAME}' || exit 1; Chksum="$$(psql --dbname='${DB_DATABASE_NAME}' --username='${DB_USERNAME}' --tuples-only --no-align --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database')"; echo "checksum failure count is $$Chksum"; [ "$$Chksum" = '0' ] || exit 1
       interval: 5m
@@ -52,7 +52,7 @@ services:
 
   valkey:
     container_name: kanae_valkey
-    image: valkey/valkey:9-alpine@sha256:e1095c6c76ee982cb2d1e07edbb7fb2a53606630a1d810d5a47c9f646b708bf5
+    image: valkey/valkey:9-alpine
     healthcheck:
       test: valkey-cli PING || exit 1
     ports:
@@ -61,7 +61,7 @@ services:
 
   supertokens:
     container_name: kanae_supertokens
-    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest@sha256:46373b70bcd7df61de3574b215eadb23dc037ca486f529bb815e71bb917e0942
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest
     depends_on:
       database:
         condition: service_healthy
@@ -82,7 +82,7 @@ services:
 
   migrate:
     container_name: kanae_migrate
-    image: arigaio/atlas:latest@sha256:4b18b2740bbc563a5acfc848463f2e04932f121adc233c8a8875d640c75a2d58
+    image: arigaio/atlas:latest
     command: >
       schema apply
       --auto-approve
