@@ -61,7 +61,7 @@ services:
 
   supertokens:
     container_name: kanae_supertokens
-    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest@sha256:46373b70bcd7df61de3574b215eadb23dc037ca486f529bb815e71bb917e0942
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:latest@sha256:d4fdb7468ca16b7feb14e7c6436e0c43a5b8dabb606ec18f88c1084345046ef9
     depends_on:
       database:
         condition: service_healthy
