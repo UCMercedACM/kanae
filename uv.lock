@@ -840,7 +840,7 @@ requires-dist = [
     { name = "uvicorn", specifier = "~=0.44.0" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = "~=0.22.1" },
     { name = "valkey", specifier = "~=6.1.1" },
-    { name = "winloop", marker = "sys_platform == 'win32'", specifier = "~=0.6.0" },
+    { name = "winloop", marker = "sys_platform == 'win32'", specifier = "~=0.6.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -849,22 +849,22 @@ dev = [
     { name = "colorama", marker = "sys_platform == 'win32'", specifier = "~=0.4.6" },
     { name = "hiro", specifier = "~=1.1.1" },
     { name = "httpx", specifier = "~=0.28.1" },
-    { name = "pytest", specifier = "~=9.0.2" },
+    { name = "pytest", specifier = "~=9.0.3" },
     { name = "pytest-asyncio", specifier = "~=1.3.0" },
-    { name = "ruff", specifier = "~=0.15.9" },
+    { name = "ruff", specifier = "~=0.15.11" },
     { name = "testcontainers", specifier = "~=4.14.2" },
-    { name = "ty", specifier = "~=0.0.28" },
+    { name = "ty", specifier = "~=0.0.31" },
     { name = "watchfiles", specifier = "~=1.1.1" },
 ]
 lint = [
-    { name = "ruff", specifier = "~=0.15.9" },
-    { name = "ty", specifier = "~=0.0.28" },
+    { name = "ruff", specifier = "~=0.15.11" },
+    { name = "ty", specifier = "~=0.0.31" },
 ]
 test = [
     { name = "asgi-lifespan", specifier = "~=2.1.0" },
     { name = "hiro", specifier = "~=1.1.1" },
     { name = "httpx", specifier = "~=0.28.1" },
-    { name = "pytest", specifier = "~=9.0.2" },
+    { name = "pytest", specifier = "~=9.0.3" },
     { name = "pytest-asyncio", specifier = "~=1.3.0" },
     { name = "testcontainers", specifier = "~=4.14.2" },
 ]
