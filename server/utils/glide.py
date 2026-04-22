@@ -35,19 +35,13 @@ class GlideKwargs(TypedDict, total=False):
 
 
 class GlideManager:
-    """Async context manager owning the lifecycle of a :class:`glide.GlideClient`.
+    """Manager that aids with the lifecycle of `GlideClient`
 
-    :param uri: uri of the form:
+    This takes in the following forms of URIs:
 
-     - ``async+valkey://[:password]@host:port``
-     - ``async+valkey://[:password]@host:port/db``
-     - ``async+valkeys://[:password]@host:port``
-     - ``async+redis://[:password]@host:port``
-
-     The URI is parsed to build a :class:`glide.GlideClientConfiguration`.
-    :param kwargs: keyword arguments forwarded to
-     :class:`glide.GlideClientConfiguration` (e.g. ``request_timeout``,
-     ``client_name``, ``protocol``).
+    - ``valkey://[:password]@host:port``
+    - ``valkey://[:password]@host:port/db``
+    - ``valkeys://[:password]@host:port``
     """
 
     def __init__(self, uri: str, **kwargs: Unpack[GlideKwargs]) -> None:
