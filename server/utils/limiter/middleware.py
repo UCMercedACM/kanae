@@ -76,7 +76,7 @@ class LimiterMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         app: Kanae = request.app
-        limiter: KanaeLimiter = app.state.limiter
+        limiter = app.limiter
 
         if not limiter.enabled:
             return await call_next(request)
@@ -130,9 +130,9 @@ class _ASGIMiddlewareResponder:
                 self.initial_message["status"] = self.error_response.status_code
 
             if self.inject_headers:
-                headers = MutableHeaders(raw=self.initial_message["headers"])
-                headers = await self.limiter._inject_asgi_headers(
-                    headers, self.request.state.view_rate_limit
+                raw_headers = MutableHeaders(raw=self.initial_message["headers"])
+                await self.limiter._inject_asgi_headers(
+                    raw_headers, self.request.state.view_rate_limit
                 )
 
             # send the http.response.start message just before the http.response.body one,
@@ -144,7 +144,7 @@ class _ASGIMiddlewareResponder:
         self.send = send
 
         _app: Kanae = scope["app"]
-        limiter: KanaeLimiter = _app.state.limiter
+        limiter = _app.limiter
 
         if not limiter.enabled:
             return await self.app(scope, receive, self.send)
