@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import functools
 import inspect
 import itertools
@@ -7,6 +9,7 @@ from collections.abc import Callable, Iterator
 from email.utils import formatdate
 from functools import wraps
 from typing import (
+    TYPE_CHECKING,
     Literal,
     Optional,
     Self,
@@ -17,13 +20,18 @@ from fastapi.exceptions import HTTPException
 from fastapi.requests import Request
 from fastapi.responses import Response
 from limits import RateLimitItem, parse_many
-from limits.aio.storage import MemoryStorage, RedisStorage
+from limits.aio.storage import MemoryStorage
 from limits.aio.strategies import FixedWindowRateLimiter, RateLimiter
 from limits.errors import StorageError
 from pydantic import BaseModel
-from starlette.datastructures import MutableHeaders
-from utils.config import KanaeConfig
+from utils.limiter.storage import ValkeyStorage
 from utils.responses.orjson import ORJSONResponse
+
+if TYPE_CHECKING:
+    from core import Kanae
+    from starlette.datastructures import MutableHeaders
+    from utils.config import KanaeConfig
+    from utils.glide import GlideManager
 
 # Define an alias for the most commonly used type
 StrOrCallableStr = str | Callable[..., str]
@@ -33,7 +41,7 @@ StrOrCallableStr = str | Callable[..., str]
 
 
 async def rate_limit_exceeded_handler(
-    request: Request, exc: "RateLimitExceeded"
+    request: Request, exc: RateLimitExceeded
 ) -> Response:
     """Builds a JSON response that includes the details of the rate limit that was hit.
 
@@ -47,9 +55,8 @@ async def rate_limit_exceeded_handler(
     response = ORJSONResponse(
         {"error": f"Rate limit exceeded: {exc.detail}"}, status_code=429
     )
-    return await request.app.state.limiter._inject_headers(
-        response, request.state.view_rate_limit
-    )
+    app: Kanae = request.app
+    return await app.limiter._inject_headers(response, request.state.view_rate_limit)
 
 
 class RateLimitExceeded(HTTPException):
@@ -61,7 +68,7 @@ class RateLimitExceeded(HTTPException):
 
     limit = None
 
-    def __init__(self, limit: "LimitItem") -> None:
+    def __init__(self, limit: LimitItem) -> None:
         self.limit = limit
         self.description = str(limit.limit)
 
@@ -281,18 +288,16 @@ class KanaeLimiter:
         self._swallow_errors = self._config.swallow_errors
         self._retry_after = self._config.retry_after
         self._key_prefix = self._config.key_prefix
-        self._storage_uri = self._config.storage_uri
+        self.storage_uri = self._config.storage_uri
 
         self._key_func = key_func
         self._key_style = key_style
 
         ### Primary limiter
 
-        self._storage = RedisStorage(
-            uri=self._storage_uri,
-            implementation="valkey",
-            decode_responses=True,
-            protocol=3,
+        self._storage = ValkeyStorage(
+            uri=self.storage_uri,
+            key_prefix=self._key_prefix,
         )
         self._limiter = FixedWindowRateLimiter(self._storage)
 
@@ -359,6 +364,10 @@ class KanaeLimiter:
                 raise RuntimeError(msg)
             return self._fallback_limiter
         return self._limiter
+
+    def attach(self, manager: GlideManager) -> None:
+        """Bind an entered :class:`GlideManager` to the underlying storage."""
+        self._storage.attach(manager)
 
     ### Internal utilities
 

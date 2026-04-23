@@ -50,31 +50,9 @@ class InternalKanaeConfig(BaseModel, frozen=True):
     host: str
     port: int
     dev_mode: bool = False
+    allowed_origins: list[str]
     prometheus: PrometheusConfig
     limiter: LimiterConfig
-
-
-# Supertokens/auth related
-
-
-class GoogleAuthConfig(TypedDict):
-    client_id: str
-    client_secret: str
-    scopes: list[str]
-
-
-class AuthProviderConfig(TypedDict):
-    google: GoogleAuthConfig
-
-
-class AuthConfig(BaseModel, frozen=True):
-    name: str
-    api_domain: str
-    website_domain: str
-    allowed_origins: list[str]
-    connection_uri: list[str]
-    api_key: str
-    providers: AuthProviderConfig
 
 
 # Final Config
@@ -82,7 +60,6 @@ class AuthConfig(BaseModel, frozen=True):
 
 class KanaeConfig(BaseModel):
     kanae: InternalKanaeConfig
-    auth: AuthConfig
     postgres_uri: str
 
     @classmethod

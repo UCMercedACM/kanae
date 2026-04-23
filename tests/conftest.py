@@ -13,6 +13,13 @@ import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from core import Kanae
 from fastapi import FastAPI, Request
+from glide import (
+    GlideClient,
+    GlideClientConfiguration,
+    NodeAddress,
+    ServerCredentials,
+)
+from glide_shared.exceptions import ConnectionError
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.exceptions import ContainerStartException
 from testcontainers.core.image import DockerImage
@@ -20,6 +27,7 @@ from testcontainers.core.utils import raise_for_deprecated_parameter
 from testcontainers.core.waiting_utils import wait_container_is_ready, wait_for_logs
 from testcontainers.postgres import PostgresContainer
 from utils.config import KanaeConfig, find_config
+from utils.glide import GlideManager
 from utils.limiter import get_remote_address
 from utils.limiter.extension import (
     KanaeLimiter,
@@ -27,8 +35,6 @@ from utils.limiter.extension import (
     rate_limit_exceeded_handler,
 )
 from utils.limiter.middleware import LimiterASGIMiddleware, LimiterMiddleware
-from valkey import Valkey
-from valkey.exceptions import ConnectionError
 from yarl import URL
 
 if sys.version_info >= (3, 11):
@@ -67,17 +73,26 @@ class ValkeyContainer(DockerContainer):
 
     @wait_container_is_ready(ConnectionError)
     def _connect(self) -> None:
-        client = self.get_client()
-        if not client.ping():
+        if not asyncio.run(self._ping()):
             raise ConnectionError("Could not connect to Valkey")
 
-    def get_client(self, **kwargs) -> Valkey:
-        return Valkey(
-            host=self.get_container_host_ip(),
-            port=self.get_exposed_port(self.port),
-            password=self.password,
-            **kwargs,
+    async def _ping(self) -> bool:
+        config = GlideClientConfiguration(
+            addresses=[
+                NodeAddress(
+                    host=self.get_container_host_ip(),
+                    port=int(self.get_exposed_port(self.port)),
+                )
+            ],
+            credentials=ServerCredentials(password=self.password)
+            if self.password
+            else None,
         )
+        client = await GlideClient.create(config)
+        try:
+            return bool(await client.ping())
+        finally:
+            await client.close()
 
     def get_connection_url(self, dbname: str | None = None) -> str:
         if self._container is None:
@@ -174,30 +189,33 @@ async def app(
     ],
 )
 async def build_fastapi_app(request, valkey: ValkeyContainer):
-    def _factory(**limiter_args):
-        middleware, exception_handler = request.param
+    async with GlideManager(uri=valkey.get_connection_url()) as manager:
 
-        test_config = KanaeConfig.load_from_file(CONFIG_PATH)
-        test_config.kanae.limiter["storage_uri"] = valkey.get_connection_url()
+        def _factory(**limiter_args):
+            middleware, exception_handler = request.param
 
-        limiter_args.setdefault("key_func", get_remote_address)
-        limiter_args.setdefault("config", test_config)
-        limiter = KanaeLimiter(**limiter_args)
+            test_config = KanaeConfig.load_from_file(CONFIG_PATH)
+            test_config.kanae.limiter["storage_uri"] = valkey.get_connection_url()
 
-        # There is no point of connection to PostgreSQL
-        # As we are running this on the function scope, and are sending tons of redis connections
-        app = FastAPI()
-        app.state.limiter = limiter
-        app.state.loop = asyncio.get_event_loop()
-        app.add_exception_handler(RateLimitExceeded, exception_handler)
-        app.add_middleware(middleware)
-        mock_handler = Mock()
-        mock_handler.level = logging.INFO
-        limiter.logger.addHandler(mock_handler)
-        return app, limiter
+            limiter_args.setdefault("key_func", get_remote_address)
+            limiter_args.setdefault("config", test_config)
+            limiter = KanaeLimiter(**limiter_args)
+            limiter.attach(manager)
 
-    yield _factory
+            # There is no point of connection to PostgreSQL
+            # As we are running this on the function scope, and are sending tons of redis connections
+            app = FastAPI()
+            app.limiter = limiter
+            app.state.loop = asyncio.get_event_loop()
+            app.add_exception_handler(RateLimitExceeded, exception_handler)
+            app.add_middleware(middleware)
+            mock_handler = Mock()
+            mock_handler.level = logging.INFO
+            limiter.logger.addHandler(mock_handler)
+            return app, limiter
 
-    # Constantly reset to clean out cleans
-    # Removes constant unexpected 429 errors
-    await _factory()[1]._reset()
+        yield _factory
+
+        # Constantly reset to clean out cleans
+        # Removes constant unexpected 429 errors
+        await _factory()[1]._reset()
