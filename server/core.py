@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Self
 
+import aiohttp
 import asyncpg
 import orjson
 from argon2 import PasswordHasher
@@ -20,6 +21,7 @@ from utils.limiter.extension import (
     RateLimitExceeded,
     rate_limit_exceeded_handler,
 )
+from utils.ory import OryClient
 from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
@@ -66,8 +68,11 @@ async def init(conn: asyncpg.Connection) -> None:
 ### FastAPI subclass (Kanae)
 class Kanae(FastAPI):
     pool: asyncpg.Pool
-    glide_manager: GlideManager
+    session: aiohttp.ClientSession
+    glide: GlideManager
+
     limiter: KanaeLimiter
+    ory: OryClient
 
     def __init__(
         self,
@@ -130,18 +135,6 @@ class Kanae(FastAPI):
                 "Prometheus server started on %s:%d/metrics", _host, _port
             )
 
-    # Auth provider hooks
-
-    async def _set_first_time_member(
-        self, member_id: str, name: str, email: str
-    ) -> None:
-        query = """
-        INSERT INTO members (id, name, email)
-        VALUES ($1, $2, $3);
-        """
-        async with self.pool.acquire() as connection, connection.transaction():
-            await connection.execute(query, member_id, name, email)
-
     ### Exception Handlers
 
     def http_exception_handler(
@@ -189,9 +182,12 @@ class Kanae(FastAPI):
     async def lifespan(self, app: Self) -> AsyncGenerator[None]:
         async with (
             asyncpg.create_pool(dsn=self.config.postgres_uri, init=init) as app.pool,
-            GlideManager(uri=app.limiter.storage_uri) as app.glide_manager,
+            aiohttp.ClientSession() as app.session,  # ty: ignore[invalid-assignment]
+            GlideManager(uri=app.limiter.storage_uri) as app.glide,
         ):
-            app.limiter.attach(app.glide_manager)
+            app.ory = OryClient(self.config.ory, session=app.session, glide=app.glide)
+            app.limiter.attach(app.glide)
+
             yield
 
     def get_db(self) -> Generator[asyncpg.Pool, None, None]:

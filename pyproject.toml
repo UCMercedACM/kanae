@@ -5,8 +5,11 @@ description = "Internal backend server for ACM @ UC Merced"
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
+    "aiocache~=0.12.3",
+    "aiohttp[speedups]~=3.13.5",
     "argon2-cffi~=25.1.0",
     "asyncpg~=0.31.0",
+    "blake3~=1.0.8",
     "email-validator~=2.3.0",
     "fastapi~=0.136.0",
     "fastapi-pagination~=0.15.12",

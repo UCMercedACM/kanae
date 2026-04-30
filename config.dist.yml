@@ -98,3 +98,22 @@ kanae:
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
 postgres_uri: "postgresql://user:password@localhost:5432/user"
+
+# Ory Kratos + Keto endpoints. Kanae calls Kratos public for session identification
+# and Keto read/write for authorization checks and tuple mutations.
+ory:
+
+  # Kratos public API. Used for `/sessions/whoami` during auth dependency resolution
+  # and for self-service flows proxied to the frontend.
+  kratos_public_url: "http://localhost:4433"
+
+  # Kratos admin API. Used for identity lookups, session revocation, and identity updates.
+  # Do not expose this externally.
+  kratos_admin_url: "http://localhost:4434"
+
+  # Keto read API. Used for permission checks (`/relation-tuples/check`) and tuple expansions.
+  keto_read_url: "http://localhost:4466"
+
+  # Keto write API. Used for creating and deleting relation tuples on project/event
+  # create, join, transfer, and demote flows.
+  keto_write_url: "http://localhost:4467"
