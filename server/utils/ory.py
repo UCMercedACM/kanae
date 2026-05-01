@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Optional, TypedDict, Unpack, cast
 
 import orjson
 from aiocache.plugins import HitMissRatioPlugin
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import uuid
 
     import aiohttp
+    from aiohttp.client import _RequestOptions
     from utils.config import OryConfig
     from utils.glide import GlideManager
 
@@ -162,7 +163,7 @@ class OryClient:
         await self._check_cache.clear(namespace=prefix)
 
     async def _request(
-        self, method: str, url: URL, **kwargs: object
+        self, method: str, url: URL, **kwargs: Unpack[_RequestOptions]
     ) -> aiohttp.ClientResponse:
         async with self.session.request(method, url, **kwargs) as response:
             if response.status == status.HTTP_502_BAD_GATEWAY:
