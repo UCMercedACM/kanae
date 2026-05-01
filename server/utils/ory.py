@@ -200,6 +200,8 @@ class OryClient:
         )
 
         if response.status == status.HTTP_401_UNAUTHORIZED:
+            await response.release()
+
             return None
 
         data = await response.json(loads=orjson.loads)
@@ -258,6 +260,8 @@ class OryClient:
         )
 
         if response.status == status.HTTP_404_NOT_FOUND:
+            await response.release()
+
             return None
 
         data = await response.json(loads=orjson.loads)
@@ -323,6 +327,8 @@ class OryClient:
         )
 
         if response.status == status.HTTP_409_CONFLICT:
+            await response.release()
+
             msg = "Email already is bound to another identity"
             raise ConflictException(msg)
 
