@@ -117,3 +117,9 @@ ory:
   # Keto write API. Used for creating and deleting relation tuples on project/event
   # create, join, transfer, and demote flows.
   keto_write_url: "http://localhost:4467"
+
+  # Master secret for Kratos webhook origin authentication.
+  # Per-hook tokens are derived from this via blake3 keyed-hash (one secret in,
+  # distinct value per hook type out). Rotate by regenerating + redeploying.
+  # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+  kratos_webhook_master: "REPLACE_ME_WITH_HEX_64_CHARS"

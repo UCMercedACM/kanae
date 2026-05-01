@@ -1,16 +1,14 @@
 from typing import Annotated, Optional
 
-from fastapi import Depends, Query
+from fastapi import Query
 from pydantic import BaseModel
-from supertokens_python.recipe.session import SessionContainer
-from supertokens_python.recipe.session.framework.fastapi import verify_session
+from utils.checks import Role, has_role
 from utils.exceptions import (
     NotFoundException,
 )
 from utils.request import RouteRequest
 from utils.responses.exceptions import NotFoundResponse
 from utils.responses.success import DeleteResponse
-from utils.roles import has_admin_role
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Tags"])
@@ -72,15 +70,14 @@ class ModifiedTag(BaseModel):
 
 @router.put(
     "/tags/{tag_id}",
+    dependencies=[has_role(Role.ADMIN)],
     responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
 )
-@has_admin_role()
 @router.limiter.limit("5/minute")
 async def edit_tag(
     request: RouteRequest,
     tag_id: int,
     req: ModifiedTag,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> Tags:
     """Modify specified tag"""
     query = """
@@ -99,14 +96,13 @@ async def edit_tag(
 
 @router.delete(
     "/tags/{tag_id}",
+    dependencies=[has_role(Role.ADMIN)],
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
-@has_admin_role()
 @router.limiter.limit("5/minute")
 async def delete_tag(
     request: RouteRequest,
     tag_id: int,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Remove specified tag"""
     query = """
@@ -120,13 +116,15 @@ async def delete_tag(
     return DeleteResponse()
 
 
-@router.post("/tags/create", responses={200: {"model": Tags}})
-@has_admin_role()
+@router.post(
+    "/tags/create",
+    dependencies=[has_role(Role.ADMIN)],
+    responses={200: {"model": Tags}},
+)
 @router.limiter.limit("5/minute")
 async def create_tags(
     request: RouteRequest,
     req: ModifiedTag,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> Tags:
     """Create tag"""
     query = """
@@ -138,13 +136,15 @@ async def create_tags(
     return Tags(**dict(rows))
 
 
-@router.post("/tags/bulk-create", responses={200: {"model": list[Tags]}})
-@has_admin_role()
+@router.post(
+    "/tags/bulk-create",
+    dependencies=[has_role(Role.ADMIN)],
+    responses={200: {"model": list[Tags]}},
+)
 @router.limiter.limit("1/minute")
 async def bulk_create_tags(
     request: RouteRequest,
     req: list[ModifiedTag],
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> list[Tags]:
     """Bulk-create tags"""
     query = """

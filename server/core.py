@@ -9,7 +9,6 @@ import asyncpg
 import orjson
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
-from email_validator import EmailNotValidError
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -44,8 +43,6 @@ This document details the API as it is right now.
 Changes can be made without notification, but announcements will be made for major changes.
 """
 __version__ = "0.1.0"
-
-EMAIL_INVALID_MESSAGE = "Email provided is invalid"
 
 
 async def init(conn: asyncpg.Connection) -> None:
@@ -120,10 +117,6 @@ class Kanae(FastAPI):
             RateLimitExceeded,
             rate_limit_exceeded_handler,  # ty: ignore[invalid-argument-type]
         )
-        self.add_exception_handler(
-            EmailNotValidError,
-            self.email_invalid_error_handler,  # ty: ignore[invalid-argument-type]
-        )
 
         if self.is_prometheus_enabled:
             _host = self.config.kanae.prometheus["host"]
@@ -166,14 +159,6 @@ class Kanae(FastAPI):
         return ORJSONResponse(
             content={"error": "Failed to verify, entirely invalid hash"},
             status_code=status.HTTP_403_FORBIDDEN,
-        )
-
-    def email_invalid_error_handler(
-        self, request: RouteRequest, exc: EmailNotValidError
-    ) -> ORJSONResponse:
-        return ORJSONResponse(
-            content={"error": "Invalid email address"},
-            status_code=status.HTTP_400_BAD_REQUEST,
         )
 
     ### Server-related utilities

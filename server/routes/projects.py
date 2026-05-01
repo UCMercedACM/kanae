@@ -5,10 +5,10 @@ from typing import Annotated, Literal, Optional
 import asyncpg
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel
-from supertokens_python.recipe.session import SessionContainer
-from supertokens_python.recipe.session.framework.fastapi import verify_session
-from supertokens_python.recipe.userroles import UserRoleClaim
+from utils.auth import use_session
+from utils.checks import Project, Role, check_any, has_permissions, has_role
 from utils.exceptions import BadRequestException, ConflictException, NotFoundException
+from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.responses.exceptions import (
@@ -17,7 +17,6 @@ from utils.responses.exceptions import (
     NotFoundResponse,
 )
 from utils.responses.success import DeleteResponse, JoinResponse
-from utils.roles import has_admin_role, has_any_role
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Projects"])
@@ -154,70 +153,28 @@ class ModifiedProject(BaseModel, frozen=True):
 
 @router.put(
     "/projects/{project_id}",
+    dependencies=[has_permissions(Project.edit)],
     responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
 )
-@has_any_role("admin", "leads")
 @router.limiter.limit("3/minute")
 async def edit_project(
     request: RouteRequest,
     project_id: uuid.UUID,
     req: ModifiedProject,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> FullProjects:
     """Updates the specified project"""
-
     query = """
-    WITH project_member AS (
-        SELECT members.id, project_members.role
-        FROM projects
-        INNER JOIN project_members ON project_members.project_id = projects.id
-        INNER JOIN members ON project_members.member_id = members.id
-        WHERE projects.id = $1
-    )
     UPDATE projects
     SET
-        name = $3,
-        description = $4,
-        link = $5
-    WHERE
-        id = $1
-        AND EXISTS (SELECT 1 FROM project_member WHERE project_member.id = $2 AND project_member.role = 'lead')
-        AND EXISTS (
-            SELECT 1
-            FROM members
-            WHERE members.id = $2
-        )
+        name = $2,
+        description = $3,
+        link = $4
+    WHERE id = $1
     RETURNING *;
     """
-
-    roles = await session.get_claim_value(UserRoleClaim)
-
-    if roles and "admin" in roles:
-        # Effectively admins can override projects
-        query = """
-        WITH project_member AS (
-            SELECT members.id, project_members.role
-            FROM projects
-            INNER JOIN project_members ON project_members.project_id = projects.id
-            INNER JOIN members ON project_members.member_id = members.id
-            WHERE projects.id = $1
-        )
-        UPDATE projects
-        SET
-            name = $2,
-            description = $3,
-            link = $4
-        WHERE
-            id = $1
-        RETURNING *;
-        """
-
-    args = (
-        (project_id,)
-        if roles and "admin" in roles
-        else (project_id, session.get_user_id())
+    rows = await request.app.pool.fetchrow(
+        query, project_id, *req.model_dump().values()
     )
-    rows = await request.app.pool.fetchrow(query, *args, *req.model_dump().values())
 
     if not rows:
         raise NotFoundException(detail="Resource cannot be updated")
@@ -226,14 +183,13 @@ async def edit_project(
 
 @router.delete(
     "/projects/{project_id}",
+    dependencies=[has_permissions(Project.own)],
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
-@has_admin_role()
 @router.limiter.limit("3/minute")
 async def delete_project(
     request: RouteRequest,
     project_id: uuid.UUID,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Deletes the specified project"""
     query = """
@@ -266,14 +222,13 @@ class CreateProject(BaseModel, frozen=True):
 
 @router.post(
     "/projects/create",
+    dependencies=[has_role(Role.MANAGER)],
     responses={200: {"model": Projects}, 422: {"model": HTTPExceptionResponse}},
 )
-@has_admin_role()
 @router.limiter.limit("5/minute")
 async def create_project(
     request: RouteRequest,
     req: CreateProject,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> Projects:
     """Creates a new project given the provided data"""
     query = """
@@ -326,7 +281,7 @@ async def create_project(
 async def join_project(
     request: RouteRequest,
     project_id: uuid.UUID,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> JoinResponse:
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
@@ -337,7 +292,7 @@ async def join_project(
         tr = connection.transaction()
         await tr.start()
         try:
-            await connection.execute(query, project_id, session.get_user_id())
+            await connection.execute(query, project_id, session.identity.id)
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Authenticated member has already joined the requested project"
@@ -353,18 +308,19 @@ class BulkJoinMember(BaseModel, frozen=True):
 
 @router.post(
     "/projects/{project_id}/bulk-join",
+    dependencies=[
+        check_any(has_role(Role.MANAGER), has_permissions(Project.own)),
+    ],
     responses={
         200: {"model": JoinResponse},
         409: {"model": ConflictResponse},
     },
 )
-@has_any_role("admin", "leads")
 @router.limiter.limit("1/minute")
 async def bulk_join_project(
     request: RouteRequest,
     project_id: uuid.UUID,
     req: list[BulkJoinMember],
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> JoinResponse:
     if len(req) > 10:
         msg = "Must be less than 10 members"
@@ -397,14 +353,14 @@ async def bulk_join_project(
 async def leave_project(
     request: RouteRequest,
     project_id: uuid.UUID,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> DeleteResponse:
     query = """
     DELETE FROM project_members
     WHERE project_id = $1 AND member_id = $2;
     """
     async with request.app.pool.acquire() as connection:
-        status = await connection.execute(query, project_id, session.get_user_id())
+        status = await connection.execute(query, project_id, session.identity.id)
         if status[-1] == "0":
             raise NotFoundException
 
@@ -418,16 +374,15 @@ class UpgradeMemberRole(BaseModel, frozen=True):
 
 @router.put(
     "/projects/{project_id}/member/modify",
+    dependencies=[has_permissions(Project.own), has_role(Role.MANAGER)],
     include_in_schema=False,
     responses={200: {"model": DeleteResponse}},
 )
-@has_admin_role()
 @router.limiter.limit("3/minute")
 async def modify_member(
     request: RouteRequest,
     project_id: uuid.UUID,
     req: UpgradeMemberRole,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Undocumented route to just upgrade/demote member role in projects"""
     query = """

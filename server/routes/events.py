@@ -11,9 +11,10 @@ from dateutil import tz
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, Query
 from pydantic import BaseModel, model_validator
-from supertokens_python.recipe.session import SessionContainer
-from supertokens_python.recipe.session.framework.fastapi import verify_session
+from utils.auth import use_session
+from utils.checks import Event, Role, has_any_role, has_permissions
 from utils.exceptions import ConflictException, ForbiddenException, NotFoundException
+from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.responses.exceptions import (
@@ -23,7 +24,6 @@ from utils.responses.exceptions import (
     NotFoundResponse,
 )
 from utils.responses.success import DeleteResponse, JoinResponse, SuccessResponse
-from utils.roles import has_any_role
 from utils.router import KanaeRouter
 
 _TYPE_TO_NAME = {Type.ID: "argon2id", Type.I: "argon2i", Type.D: "argon2d"}
@@ -158,24 +158,23 @@ class ModifiedEventWithDatetime(ModifiedEvent, frozen=True):
 
 @router.put(
     "/events/{event_id}",
+    dependencies=[has_permissions(Event.edit)],
     responses={200: {"model": Events}, 404: {"model": NotFoundResponse}},
 )
-@has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def edit_event(
     request: RouteRequest,
     event_id: uuid.UUID,
     req: ModifiedEvent | ModifiedEventWithDatetime,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> Events:
     """Updates the specified event"""
     query = """
     UPDATE events
     SET
-        name = $3,
-        description = $4,
-        location = $5
-    WHERE id = $1 AND creator_id = $2
+        name = $2,
+        description = $3,
+        location = $4
+    WHERE id = $1
     RETURNING *;
     """
 
@@ -183,13 +182,13 @@ async def edit_event(
         query = """
         UPDATE events
         SET
-            name = $3,
-            description = $4,
-            location = $5,
-            start_at = $6,
-            end_at = $7,
-            timezone = $8
-        WHERE id = $1 AND creator_id = $2
+            name = $2,
+            description = $3,
+            location = $4,
+            start_at = $5,
+            end_at = $6,
+            timezone = $7
+        WHERE id = $1
         RETURNING *;
         """
 
@@ -200,9 +199,7 @@ async def edit_event(
         "SELECT attendance_hash FROM event_attendance_codes WHERE event_id = $1;"
     )
     async with request.app.pool.acquire() as connection:
-        rows = await connection.fetchrow(
-            query, event_id, session.get_user_id(), *req.model_dump().values()
-        )
+        rows = await connection.fetchrow(query, event_id, *req.model_dump().values())
         if not rows:
             raise NotFoundException(
                 detail="Resource cannot be updated"
@@ -225,22 +222,21 @@ async def edit_event(
 
 @router.delete(
     "/events/{event_id}",
+    dependencies=[has_permissions(Event.own)],
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
-@has_any_role("admin", "leads")
 @router.limiter.limit("10/minute")
 async def delete_event(
     request: RouteRequest,
     event_id: uuid.UUID,
-    session: Annotated[SessionContainer, Depends(verify_session())],
 ) -> DeleteResponse:
     """Deletes the specified event"""
     query = """
     DELETE FROM events
-    WHERE id = $1 AND creator_id = $2;
+    WHERE id = $1;
     """
 
-    status = await request.app.pool.execute(query, event_id, session.get_user_id())
+    status = await request.app.pool.execute(query, event_id)
     if status[-1] == "0":
         raise NotFoundException
     return DeleteResponse()
@@ -248,14 +244,14 @@ async def delete_event(
 
 @router.post(
     "/events/create",
+    dependencies=[has_any_role(Role.ADMIN, Role.LEADS)],
     responses={200: {"model": Events}, 409: {"model": ConflictResponse}},
 )
-@has_any_role("admin", "leads")
 @router.limiter.limit("15/minute")
 async def create_events(
     request: RouteRequest,
     req: Events,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> Events:
     """Creates a new event given the provided data"""
     query = """
@@ -276,7 +272,9 @@ async def create_events(
 
         try:
             rows = await request.app.pool.fetchrow(
-                query, *req.model_dump().values(), session.get_user_id()
+                query,
+                *req.model_dump(exclude={"creator_id"}).values(),
+                session.identity.id,
             )
             encoded_hash = request.app.ph.hash(str(rows["id"]))
 
@@ -309,7 +307,7 @@ async def create_events(
 async def join_event(
     request: RouteRequest,
     event_id: uuid.UUID,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> JoinResponse:
     """Registers and joins an upcoming event"""
     query = """
@@ -338,7 +336,7 @@ async def join_event(
         await tr.start()
 
         try:
-            await connection.execute(insert_query, event_id, session.get_user_id())
+            await connection.execute(insert_query, event_id, session.identity.id)
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Authenticated member has already joined the requested event"
@@ -377,7 +375,7 @@ async def verify_attendance(
     request: RouteRequest,
     event_id: uuid.UUID,
     req: VerifyRequest,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> SuccessResponse:
     """Verify an authenticated user's attendance to the requested event"""
     query = """
@@ -414,6 +412,6 @@ async def verify_attendance(
         ON CONFLICT (event_id, member_id) DO UPDATE
         SET attended = excluded.attended;
         """
-        await request.app.pool.execute(verify_query, event_id, session.get_user_id())
+        await request.app.pool.execute(verify_query, event_id, session.identity.id)
 
     return SuccessResponse(message="Successfully verified attendance!")

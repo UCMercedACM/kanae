@@ -60,6 +60,9 @@ class OryConfig(BaseModel, frozen=True):
     kratos_admin_url: str
     keto_read_url: str
     keto_write_url: str
+    # 32-byte hex-encoded master from which per-hook tokens are derived
+    # via blake3 keyed-hash. Generate with: secrets.token_hex(32).
+    kratos_webhook_master: str
 
 
 # Final Config

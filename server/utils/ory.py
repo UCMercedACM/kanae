@@ -336,8 +336,8 @@ class OryClient:
     @cached_method(cache_attr="_check_cache", ttl=60, key_builder=_check_key)
     async def check_permission(
         self,
-        relationship_namespace: str,
-        relationship_object: str,
+        namespace: str,
+        resource: str,
         relation: str,
         subject_id: str,
     ) -> bool:
@@ -349,8 +349,8 @@ class OryClient:
         :meth:`grant` and :meth:`revoke` via :meth:`_invalidate_resource`.
 
         Args:
-            relationship_namespace: Resource type, e.g. `"Project"`.
-            relationship_object: Resource id (a UUID for projects, a
+            namespace: Resource type, e.g. `"Project"`.
+            resource: Resource id (a UUID for projects, a
                 role name for `Role` namespace, etc.).
             relation: Relation name, e.g. `"owners"`, `"editors"`,
                 `"viewers"`, `"member"`.
@@ -360,8 +360,8 @@ class OryClient:
             `True` if Keto says the relation holds, `False` otherwise.
         """
         params = {
-            "namespace": relationship_namespace,
-            "object": relationship_object,
+            "namespace": namespace,
+            "object": resource,
             "relation": relation,
             "subject_id": subject_id,
         }
@@ -374,8 +374,8 @@ class OryClient:
 
     async def revoke(
         self,
-        relationship_namespace: str,
-        relationship_object: str,
+        namespace: str,
+        resource: str,
         relation: str,
         *,
         subject_id: str | None = None,
@@ -388,8 +388,8 @@ class OryClient:
         affected `(namespace, object)` are invalidated.
 
         Args:
-            relationship_namespace: Resource type.
-            relationship_object: Resource id.
+            namespace: Resource type.
+            resource: Resource id.
             relation: Relation name on the tuple to remove.
             subject_id: Direct identity-id subject. Pass exactly one of
                 `subject_id` or `subject_set`.
@@ -403,8 +403,8 @@ class OryClient:
         """
 
         def _build_revoke_payload(
-            relationship_namespace: str,
-            relationship_object: str,
+            namespace: str,
+            resource: str,
             relation: str,
             subject_id: str | None,
             subject_set: SubjectSet | None,
@@ -414,8 +414,8 @@ class OryClient:
                 raise ValueError(msg)
 
             params: dict[str, str] = {
-                "namespace": relationship_namespace,
-                "object": relationship_object,
+                "namespace": namespace,
+                "object": resource,
                 "relation": relation,
             }
 
@@ -431,8 +431,8 @@ class OryClient:
             return params
 
         params = _build_revoke_payload(
-            relationship_namespace,
-            relationship_object,
+            namespace,
+            resource,
             relation,
             subject_id,
             subject_set,
@@ -447,12 +447,12 @@ class OryClient:
             return
 
         await response.release()
-        await self._invalidate_resource(relationship_namespace, relationship_object)
+        await self._invalidate_resource(namespace, resource)
 
     async def grant(
         self,
-        relationship_namespace: str,
-        relationship_object: str,
+        namespace: str,
+        resource: str,
         relation: str,
         *,
         subject_id: str | None = None,
@@ -466,8 +466,8 @@ class OryClient:
         `(namespace, object)` are invalidated.
 
         Args:
-            relationship_namespace: Resource type, e.g. `"Project"`.
-            relationship_object: Resource id.
+            namespace: Resource type, e.g. `"Project"`.
+            resource: Resource id.
             relation: Relation name being asserted, e.g. `"owners"`.
             subject_id: Direct identity-id subject. Pass exactly one of
                 `subject_id` or `subject_set`.
@@ -481,8 +481,8 @@ class OryClient:
         """
 
         def _build_grant_payload(
-            relationship_namespace: str,
-            relationship_object: str,
+            namespace: str,
+            resource: str,
             relation: str,
             subject_id: str | None,
             subject_set: SubjectSet | None,
@@ -492,8 +492,8 @@ class OryClient:
                 raise ValueError(msg)
 
             payload: dict[str, str | SubjectSet] = {
-                "namespace": relationship_namespace,
-                "object": relationship_object,
+                "namespace": namespace,
+                "object": resource,
                 "relation": relation,
             }
             if subject_id is not None:
@@ -503,8 +503,8 @@ class OryClient:
             return payload
 
         payload = _build_grant_payload(
-            relationship_namespace,
-            relationship_object,
+            namespace,
+            resource,
             relation,
             subject_id,
             subject_set,
@@ -521,4 +521,4 @@ class OryClient:
             return
 
         response.release()
-        await self._invalidate_resource(relationship_namespace, relationship_object)
+        await self._invalidate_resource(namespace, resource)
