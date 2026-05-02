@@ -154,14 +154,14 @@ class ModifiedProject(BaseModel, frozen=True):
 @router.put(
     "/projects/{project_id}",
     dependencies=[has_permissions(Project.edit)],
-    responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
+    responses={200: {"model": Projects}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("3/minute")
 async def edit_project(
     request: RouteRequest,
     project_id: uuid.UUID,
     req: ModifiedProject,
-) -> FullProjects:
+) -> Projects:
     """Updates the specified project"""
     query = """
     UPDATE projects
@@ -178,7 +178,7 @@ async def edit_project(
 
     if not rows:
         raise NotFoundException(detail="Resource cannot be updated")
-    return FullProjects(**dict(rows))
+    return Projects(**dict(rows))
 
 
 @router.delete(
@@ -229,6 +229,7 @@ class CreateProject(BaseModel, frozen=True):
 async def create_project(
     request: RouteRequest,
     req: CreateProject,
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> Projects:
     """Creates a new project given the provided data"""
     query = """

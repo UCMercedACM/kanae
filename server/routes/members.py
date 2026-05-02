@@ -19,6 +19,7 @@ from utils.responses.exceptions import (
     NotFoundResponse,
     UnauthorizedResponse,
 )
+from utils.responses.success import SuccessResponse
 from utils.router import KanaeRouter
 
 from .events import Events
@@ -53,39 +54,39 @@ async def get_member_info(
     member_id: str | uuid.UUID, *, pool: asyncpg.Pool
 ) -> ClientMember:
     query = """
-    SELECT members.id,
+    SELECT
+        members.id,
         members.name,
         members.created_at,
-        jsonb_agg_strict(projects.*) AS projects,
-        jsonb_agg_strict(
-            jsonb_build_object(
-                'id',
-                events.id,
-                'name',
-                events.name,
-                'description',
-                events.description,
-                'start_at',
-                events.start_at,
-                'end_at',
-                events.end_at,
-                'location',
-                events.location,
-                'type',
-                events.type,
-                'timezone',
-                events.timezone,
-                'creator_id',
-                events.creator_id
+        (
+            SELECT COALESCE(jsonb_agg(projects.*), '[]'::jsonb)
+            FROM project_members
+                INNER JOIN projects ON project_members.project_id = projects.id
+            WHERE project_members.member_id = members.id
+        ) AS projects,
+        (
+            SELECT COALESCE(
+                jsonb_agg(
+                    jsonb_build_object(
+                        'id', events.id,
+                        'name', events.name,
+                        'description', events.description,
+                        'start_at', events.start_at,
+                        'end_at', events.end_at,
+                        'location', events.location,
+                        'type', events.type,
+                        'timezone', events.timezone,
+                        'creator_id', events.creator_id
+                    )
+                ),
+                '[]'::jsonb
             )
+            FROM events_members
+                INNER JOIN events ON events_members.event_id = events.id
+            WHERE events_members.member_id = members.id
         ) AS events
     FROM members
-        INNER JOIN project_members ON members.id = project_members.member_id
-        INNER JOIN projects ON project_members.project_id = projects.id
-        INNER JOIN events_members ON members.id = events_members.member_id
-        INNER JOIN events ON events_members.event_id = events.id
-    WHERE members.id = $1
-    GROUP BY members.id;
+    WHERE members.id = $1;
     """
     rows = await pool.fetchrow(query, member_id)
     if not rows:
@@ -190,6 +191,25 @@ async def get_logged_events(
     """
     rows = await request.app.pool.fetch(query, session.identity.id)
     return [Events(**dict(record)) for record in rows]
+
+
+@router.post("/members/logout", responses={200: {"model": SuccessResponse}})
+@router.limiter.limit("3/minute")
+async def logout_member(
+    request: RouteRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> SuccessResponse:
+    """Logs the user of the current session out
+
+    Note that cookies for the particular session are immedidiately revoked if present
+    """
+    cookie = request.cookies.get("ory_kratos_session")
+    await request.app.ory.revoke_session(str(session.id))
+
+    if cookie:
+        await request.app.ory.whoami.cache_invalidate(cookie)
+
+    return SuccessResponse(message="okie dokie")
 
 
 class _IdentityTraits(BaseModel, frozen=True, extra="forbid"):

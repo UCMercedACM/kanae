@@ -1,19 +1,14 @@
-from __future__ import annotations
-
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated, Literal, NamedTuple, Protocol
+from typing import Annotated, Literal, NamedTuple, Protocol
 
 from fastapi import Depends
 from fastapi.params import Depends as _Depends
-from pydantic import BaseModel
 from utils.auth import use_session
 from utils.exceptions import ForbiddenException
-
-if TYPE_CHECKING:
-    from utils.ory import KanaeSession, OryClient
-    from utils.request import RouteRequest
+from utils.ory import KanaeSession, OryClient
+from utils.request import RouteRequest
 
 ### Types
 
@@ -38,13 +33,16 @@ class Role(StrEnum):
 
 
 class ResourcePermission(NamedTuple):
-    resource: Resource
+    resource: "Resource"
     relation: _PermissionRelation
 
 
-class CheckContext(BaseModel, frozen=True):
-    request: RouteRequest
-    session: KanaeSession
+class CheckContext:
+    __slots__ = ("request", "session")
+
+    def __init__(self, request: RouteRequest, session: KanaeSession) -> None:
+        self.request = request
+        self.session = session
 
     @property
     def ory(self) -> OryClient:

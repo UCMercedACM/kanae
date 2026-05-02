@@ -1,12 +1,14 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 from utils.exceptions import UnauthorizedException
 
-if TYPE_CHECKING:
-    from utils.ory import KanaeSession
-    from utils.request import RouteRequest
+# Both imports must resolve at runtime (NOT under TYPE_CHECKING). FastAPI
+# introspects this dependency's signature via `get_type_hints`, including the
+# return annotation `KanaeSession`, to figure out what to inject when a route
+# declares `session: Annotated[KanaeSession, Depends(use_session)]`. Hiding
+# either under TYPE_CHECKING with `from __future__ import annotations` causes
+# `get_type_hints` to raise NameError; FastAPI then falls back to treating the
+# parameter as a query-string entry and 422s with "missing query.<name>".
+from utils.ory import KanaeSession
+from utils.request import RouteRequest
 
 
 async def use_session(request: RouteRequest) -> KanaeSession:

@@ -1,30 +1,24 @@
-from __future__ import annotations
-
+import datetime
 import logging
-from typing import TYPE_CHECKING, Any, Optional, TypedDict, Unpack, cast
+import uuid
+from typing import Any, Optional, TypedDict, Unpack, cast
 
+import aiohttp
 import orjson
 from aiocache.plugins import HitMissRatioPlugin
+from aiohttp.client import _RequestOptions
 from blake3 import blake3
 from fastapi import status
 from pydantic import BaseModel
 from utils.cache import ORJSONSerializer, PydanticSerializer, ValkeyCache, cached_method
+from utils.config import OryConfig
 from utils.exceptions import (
     BadGatewayException,
     ConflictException,
     ServiceUnavailableException,
 )
+from utils.glide import GlideManager
 from yarl import URL
-
-if TYPE_CHECKING:
-    import datetime
-    import uuid
-
-    import aiohttp
-    from aiohttp.client import _RequestOptions
-    from utils.config import OryConfig
-    from utils.glide import GlideManager
-
 
 ### Structs / TypedDicts
 
@@ -119,7 +113,7 @@ class OryClient:
         self._whoami_cache = ValkeyCache(
             self.glide,
             namespace="ory:whoami:",
-            serializer=PydanticSerializer(KratosIdentity),
+            serializer=PydanticSerializer(KanaeSession),
             plugins=[HitMissRatioPlugin()],
         )
         self._identity_cache = ValkeyCache(
@@ -152,26 +146,27 @@ class OryClient:
         _func: object,
         _self: object,
         namespace: str,
-        object_: str,
+        resource: str,
         relation: str,
         subject_id: str,
     ) -> str:
-        return f"{namespace}:{object_}:{relation}:{subject_id}"
+        return f"{namespace}:{resource}:{relation}:{subject_id}"
 
-    async def _invalidate_resource(self, namespace: str, object_: str) -> None:
-        prefix = f"ory:check:{namespace}:{object_}"
+    async def _invalidate_resource(self, namespace: str, resource: str) -> None:
+        prefix = f"ory:check:{namespace}:{resource}"
         await self._check_cache.clear(namespace=prefix)
 
     async def _request(
         self, method: str, url: URL, **kwargs: Unpack[_RequestOptions]
     ) -> aiohttp.ClientResponse:
-        async with self.session.request(method, url, **kwargs) as response:
-            if response.status == status.HTTP_502_BAD_GATEWAY:
-                raise BadGatewayException
-            if response.status == status.HTTP_503_SERVICE_UNAVAILABLE:
-                raise ServiceUnavailableException
+        response = await self.session.request(method, url, **kwargs)
 
-            return response
+        if response.status == status.HTTP_502_BAD_GATEWAY:
+            raise BadGatewayException
+        if response.status == status.HTTP_503_SERVICE_UNAVAILABLE:
+            raise ServiceUnavailableException
+
+        return response
 
     ### Session management
 
@@ -194,14 +189,12 @@ class OryClient:
         if not cookie:
             return None
 
-        url = self.kratos_public("/session/whoami")
+        url = self.kratos_public("/sessions/whoami")
         response = await self._request(
             "GET", url, headers={"cookie": f"ory_kratos_session={cookie}"}
         )
 
         if response.status == status.HTTP_401_UNAUTHORIZED:
-            await response.release()
-
             return None
 
         data = await response.json(loads=orjson.loads)
