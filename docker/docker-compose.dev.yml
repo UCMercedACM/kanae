@@ -1,31 +1,61 @@
 name: kanae_dev
 
+include:
+  - path: ory/docker-compose.yml
+  - project_directory: ory
+
 # For development purposes, it is recommended just to launch the server and use it's HMR feature instead
 services:
   database:
     container_name: kanae_postgres
-    image: postgres:18
+    # Bake init.sql into a thin layer over postgres:18 so the kratos and keto
+    # databases get created on first boot. Postgres runs every .sql in
+    # /docker-entrypoint-initdb.d/ in alphabetical order; the 10- prefix keeps
+    # this script ordering-stable if more init scripts are added later.
+    build:
+      context: ./ory
+      dockerfile_inline: |
+        FROM postgres:18
+        COPY init.sql /docker-entrypoint-initdb.d/init.sql
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
       POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    ports:
+      - 5432:5432
+    networks:
+      - default
+      - db_bridge
+    volumes:
+      - database:/var/lib/postgresql/18/docker
     healthcheck:
       test: pg_isready --dbname='${DB_DATABASE_NAME}' --username='${DB_USERNAME}' || exit 1; Chksum="$$(psql --dbname='${DB_DATABASE_NAME}' --username='${DB_USERNAME}' --tuples-only --no-align --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database')"; echo "checksum failure count is $$Chksum"; [ "$$Chksum" = '0' ] || exit 1
       interval: 5m
       start_interval: 30s
       start_period: 5m
-    volumes:
-      - database:/var/lib/postgresql/18/docker
-    ports:
-      - 5432:5432
+    restart: always
 
   valkey:
     container_name: kanae_valkey
     image: valkey/valkey:9-alpine
-    healthcheck:
-      test: valkey-cli PING || exit 1
+    command: >
+      valkey-server --maxmemory 256mb --maxmemory-policy volatile-ttl
     ports:
       - 6379:6379
+    networks:
+      - default
+    healthcheck:
+      test: valkey-cli PING || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      start_interval: 3s
+    
 
 volumes:
   database:
+
+networks:
+  db_bridge:
+    driver: bridge
