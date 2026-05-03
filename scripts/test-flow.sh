@@ -15,8 +15,22 @@
 set -euo pipefail
 
 # ── locate ourselves ──────────────────────────────────────────────────────────
+# Resolve the project root so the script runs identically whether invoked from
+# the repo root, scripts/, docker/, server/, or an absolute path from outside.
+# Walks up from the script's own directory until it finds pyproject.toml.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-DOCKER_DIR="$(dirname "$SCRIPT_DIR")"
+
+PROJECT_ROOT="$SCRIPT_DIR"
+while [[ "$PROJECT_ROOT" != "/" && ! -f "$PROJECT_ROOT/pyproject.toml" ]]; do
+  PROJECT_ROOT="$(dirname "$PROJECT_ROOT")"
+done
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" ]]; then
+  printf '\033[0;31m✗\033[0m could not locate project root from %s\n' "$SCRIPT_DIR" >&2
+  exit 1
+fi
+DOCKER_DIR="$PROJECT_ROOT/docker"
+
+cd "$PROJECT_ROOT"
 
 # ── config ────────────────────────────────────────────────────────────────────
 KRATOS_PUBLIC=${KRATOS_PUBLIC:-http://localhost:4433}

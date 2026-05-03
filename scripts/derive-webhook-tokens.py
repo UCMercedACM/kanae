@@ -15,8 +15,8 @@ DOCKER_ENV_PATH = ROOT_PATH / "docker" / ".env"
 # MUST match with the constants in server/routes/members.py
 # If regenerating hook keys, the version suffix must be bumped to change them
 HOOKS: dict[str, bytes] = {
-    "KRATOS_WEBHOOK_TOKEN_REGISTRATION": b"kratos.registration.v2",
-    "KRATOS_WEBHOOK_TOKEN_SETTINGS": b"kratos.settings.v2",
+    "KRATOS_WEBHOOK_TOKEN_REGISTRATION": b"kratos.registration.v1",
+    "KRATOS_WEBHOOK_TOKEN_SETTINGS": b"kratos.settings.v1"
 }
 
 _log = logging.getLogger(__name__)

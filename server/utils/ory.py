@@ -195,6 +195,8 @@ class OryClient:
         )
 
         if response.status == status.HTTP_401_UNAUTHORIZED:
+            await response.release()
+
             return None
 
         data = await response.json(loads=orjson.loads)

@@ -34,10 +34,6 @@ services:
 
   database:
     container_name: kanae_postgres
-    # Bake init.sql into a thin layer over postgres:18 so the kratos and keto
-    # databases get created on first boot. Postgres runs every .sql in
-    # /docker-entrypoint-initdb.d/ in alphabetical order; the 10- prefix keeps
-    # this script ordering-stable if more init scripts are added later.
     build:
       context: ./ory
       dockerfile_inline: |
