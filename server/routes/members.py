@@ -1,45 +1,21 @@
 import datetime
+import secrets
 import uuid
 from typing import Annotated, Optional
 
 import asyncpg
-from email_validator import EmailNotValidError, validate_email
-from fastapi import Depends
+from blake3 import blake3
+from fastapi import Depends, Header, status
+from fastapi.responses import Response
 from pydantic import BaseModel
-from supertokens_python.asyncio import get_user, list_users_by_account_info
-from supertokens_python.recipe.accountlinking.asyncio import is_email_change_allowed
-from supertokens_python.recipe.emailpassword.asyncio import (
-    update_email_or_password,
-    verify_credentials,
-)
-from supertokens_python.recipe.emailpassword.interfaces import (
-    PasswordPolicyViolationError,
-    WrongCredentialsError,
-)
-from supertokens_python.recipe.emailverification.asyncio import (
-    is_email_verified,
-    send_email_verification_email,
-)
-from supertokens_python.recipe.passwordless.asyncio import update_user
-from supertokens_python.recipe.passwordless.interfaces import (
-    UpdateUserEmailAlreadyExistsError,
-    UpdateUserOkResult,
-)
-from supertokens_python.recipe.session import SessionContainer
-from supertokens_python.recipe.session.asyncio import revoke_all_sessions_for_user
-from supertokens_python.recipe.session.framework.fastapi import verify_session
-from supertokens_python.types.base import AccountInfoInput, User
+from utils.auth import use_session
 from utils.exceptions import (
-    BadRequestException,
-    ConflictException,
-    HTTPException,
     NotFoundException,
     UnauthorizedException,
 )
+from utils.ory import KanaeSession
 from utils.request import RouteRequest
 from utils.responses.exceptions import (
-    BadRequestResponse,
-    ConflictResponse,
     NotFoundResponse,
     UnauthorizedResponse,
 )
@@ -49,7 +25,19 @@ from utils.router import KanaeRouter
 from .events import Events
 from .projects import Projects
 
+# Per-hook context labels. If regenerating hook keys, the version suffix must be bumped to change them
+_SETTINGS_CONTEXT = b"kratos.settings.v1"
+_REGISTRATION_CONTEXT = b"kratos.registration.v1"
+
+# This is not a token lol
+_INVALID_WEBHOOK_TOKEN_MESSAGE = "Invalid webhook token detected"  # noqa: S105
+
 router = KanaeRouter(tags=["Members"])
+
+
+def _verify_webhook_token(token: str, *, master_key: str, context: bytes) -> bool:
+    expected_token = blake3(context, key=bytes.fromhex(master_key)).hexdigest()
+    return secrets.compare_digest(token, expected_token)
 
 
 class ClientMember(BaseModel, frozen=True):
@@ -64,39 +52,39 @@ async def get_member_info(
     member_id: str | uuid.UUID, *, pool: asyncpg.Pool
 ) -> ClientMember:
     query = """
-    SELECT members.id,
+    SELECT
+        members.id,
         members.name,
         members.created_at,
-        jsonb_agg_strict(projects.*) AS projects,
-        jsonb_agg_strict(
-            jsonb_build_object(
-                'id',
-                events.id,
-                'name',
-                events.name,
-                'description',
-                events.description,
-                'start_at',
-                events.start_at,
-                'end_at',
-                events.end_at,
-                'location',
-                events.location,
-                'type',
-                events.type,
-                'timezone',
-                events.timezone,
-                'creator_id',
-                events.creator_id
+        (
+            SELECT COALESCE(jsonb_agg(projects.*), '[]'::jsonb)
+            FROM project_members
+                INNER JOIN projects ON project_members.project_id = projects.id
+            WHERE project_members.member_id = members.id
+        ) AS projects,
+        (
+            SELECT COALESCE(
+                jsonb_agg(
+                    jsonb_build_object(
+                        'id', events.id,
+                        'name', events.name,
+                        'description', events.description,
+                        'start_at', events.start_at,
+                        'end_at', events.end_at,
+                        'location', events.location,
+                        'type', events.type,
+                        'timezone', events.timezone,
+                        'creator_id', events.creator_id
+                    )
+                ),
+                '[]'::jsonb
             )
+            FROM events_members
+                INNER JOIN events ON events_members.event_id = events.id
+            WHERE events_members.member_id = members.id
         ) AS events
     FROM members
-        INNER JOIN project_members ON members.id = project_members.member_id
-        INNER JOIN projects ON project_members.project_id = projects.id
-        INNER JOIN events_members ON members.id = events_members.member_id
-        INNER JOIN events ON events_members.event_id = events.id
-    WHERE members.id = $1
-    GROUP BY members.id;
+    WHERE members.id = $1;
     """
     rows = await pool.fetchrow(query, member_id)
     if not rows:
@@ -111,10 +99,10 @@ async def get_member_info(
 @router.limiter.limit("10/minute")
 async def get_logged_member(
     request: RouteRequest,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> ClientMember:
     """Obtain details pertaining to the currently authenticated user"""
-    return await get_member_info(session.get_user_id(), pool=request.app.pool)
+    return await get_member_info(session.identity.id, pool=request.app.pool)
 
 
 @router.get(
@@ -131,11 +119,11 @@ async def get_member(request: RouteRequest, member_id: uuid.UUID) -> ClientMembe
 @router.limiter.limit("10/minute")
 async def get_logged_projects(
     request: RouteRequest,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
     since: Optional[datetime.datetime] = None,
 ) -> list[Projects]:
     """Obtains projects associated with the currently authenticated member, with options to sort"""
-    args = [session.get_user_id()]
+    args = [session.identity.id]
 
     query = """
     SELECT projects.*
@@ -166,7 +154,7 @@ async def get_logged_projects(
 @router.limiter.limit("10/minute")
 async def get_logged_events(
     request: RouteRequest,
-    session: Annotated[SessionContainer, Depends(verify_session())],
+    session: Annotated[KanaeSession, Depends(use_session)],
     *,
     planned: Optional[bool] = None,
     attended: Optional[bool] = None,
@@ -199,156 +187,107 @@ async def get_logged_events(
     WHERE members.id = $1
     GROUP BY events.id;
     """
-    rows = await request.app.pool.fetch(query, session.get_user_id())
+    rows = await request.app.pool.fetch(query, session.identity.id)
     return [Events(**dict(record)) for record in rows]
 
 
-class ModifiedClient(BaseModel, frozen=True):
-    name: Optional[str] = None
-    email: Optional[str] = None
-    old_password: Optional[str] = None
-    new_password: Optional[str] = None
-
-
-async def _update_password(
-    req: ModifiedClient,
-    session: SessionContainer,
-    member_info: User,
-) -> SuccessResponse:
-    login_method = next(
-        (
-            method
-            for method in member_info.login_methods
-            if method.recipe_user_id.get_as_string() == session.get_recipe_user_id()
-            and method.recipe_id == "emailpassword"
-        ),
-        None,
-    )
-
-    if not login_method or not login_method.email or not req.old_password:
-        raise NotFoundException(detail="No email found or invalid login method used")
-
-    is_valid_password = await verify_credentials(
-        "public", login_method.email, req.old_password
-    )
-    if isinstance(is_valid_password, WrongCredentialsError):
-        msg = "Wrong credentials provided"
-        raise UnauthorizedException(msg)
-
-    response = await update_email_or_password(
-        session.get_recipe_user_id(),
-        password=req.new_password,
-        tenant_id_for_password_policy=session.get_tenant_id(),
-    )
-    if isinstance(response, PasswordPolicyViolationError):
-        msg = "Password conflicts with current password policy"
-        raise ConflictException(msg)
-
-    await revoke_all_sessions_for_user(session.get_user_id())
-    await session.revoke_session()
-
-    return SuccessResponse(
-        message="Password successfully changed. Log in again to use your new password"
-    )
-
-
-async def _check_email_conflicts(
-    session: SessionContainer, normalized_email: str
-) -> None:
-    member = await get_user(session.get_user_id())
-
-    if member:
-        for tenant_id in member.tenant_ids:
-            members_with_same_email = await list_users_by_account_info(
-                tenant_id, AccountInfoInput(email=normalized_email)
-            )
-            for curr_member in members_with_same_email:
-                if curr_member.id != session.get_user_id():
-                    msg = "Requested email conflicts with other members"
-                    raise ConflictException(msg)
-
-
-async def _update_email(
+@router.post("/members/logout", responses={200: {"model": SuccessResponse}})
+@router.limiter.limit("3/minute")
+async def logout_member(
     request: RouteRequest,
-    req: ModifiedClient,
-    session: SessionContainer,
+    session: Annotated[KanaeSession, Depends(use_session)],
 ) -> SuccessResponse:
-    if not req.email:
-        msg = "Email is required"
-        raise BadRequestException(msg)
+    """Logs the user of the current session out
 
-    is_valid_email = validate_email(req.email, check_deliverability=True)
-    if isinstance(is_valid_email, EmailNotValidError):
-        msg = "Email is not valid"
-        raise BadRequestException(msg)
+    Note that cookies for the particular session are immedidiately revoked if present
+    """
+    cookie = request.cookies.get("ory_kratos_session")
+    await request.app.ory.revoke_session(str(session.id))
 
-    normalized_email = is_valid_email.normalized
-    is_verified = is_email_verified(session.get_recipe_user_id(), normalized_email)
+    if cookie:
+        await request.app.ory.whoami.cache_invalidate(cookie)
 
-    if not is_verified:
-        if not is_email_change_allowed(
-            session.get_recipe_user_id(), normalized_email, False
-        ):
-            msg = "Email change not allowed"
-            raise BadRequestException(msg)
-
-        await _check_email_conflicts(session, normalized_email)
-
-        await send_email_verification_email(
-            session.get_tenant_id(),
-            session.get_user_id(),
-            session.get_recipe_user_id(),
-            normalized_email,
-        )
-        return SuccessResponse(
-            message="Sent email verification message. Please check your email and spam folder"
-        )
-
-    response = await update_user(session.get_recipe_user_id(), email=normalized_email)
-
-    if isinstance(response, UpdateUserOkResult):
-        query = "UPDATE members SET email = $2 WHERE id = $1;"
-        await request.app.pool.execute(query, session.get_user_id(), normalized_email)
-        return SuccessResponse(message="Successfully changed email")
-
-    if isinstance(response, UpdateUserEmailAlreadyExistsError):
-        msg = "Email already exists, try another one"
-        raise ConflictException(msg)
-
-    raise HTTPException(status_code=500, detail="How...")
+    return SuccessResponse(message="okie dokie")
 
 
-@router.put(
-    "/members/me/update",
-    responses={
-        200: {"model": SuccessResponse},
-        400: {"model": BadRequestResponse},
-        401: {"model": UnauthorizedResponse},
-        404: {"model": NotFoundResponse},
-        409: {"model": ConflictResponse},
-    },
+class _IdentityTraits(BaseModel, frozen=True, extra="forbid"):
+    email: str
+    name: str
+    display_name: Optional[str] = None
+
+
+class _Identity(BaseModel, frozen=True, extra="forbid"):
+    id: uuid.UUID
+    schema_id: str
+    traits: _IdentityTraits
+
+
+class KratosHookPayload(BaseModel, frozen=True, extra="forbid"):
+    """Payload Kratos sends after a settings or registration flow completes.
+
+    Shape is fixed by `payload.jsonnet` in docker/ory/kratos/hooks/.
+    """
+
+    flow_id: uuid.UUID
+    identity: _Identity
+
+
+async def _upsert_member(request: RouteRequest, payload: KratosHookPayload) -> None:
+    query = """
+    INSERT INTO members (id, name, display_name, email)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        display_name = EXCLUDED.display_name,
+        email = EXCLUDED.email;
+    """
+    identity_traits = payload.identity.traits
+    await request.app.pool.execute(
+        query,
+        payload.identity.id,
+        identity_traits.name,
+        identity_traits.display_name,
+        identity_traits.email,
+    )
+
+
+@router.post(
+    "/member/webhooks/settings",
+    responses={401: {"model": UnauthorizedResponse}},
+    include_in_schema=False,
 )
-@router.limiter.limit("2 per 15 minutes")
-async def update_logged_member(
+async def member_settings_hook(
     request: RouteRequest,
-    req: ModifiedClient,
-    session: Annotated[SessionContainer, Depends(verify_session())],
-) -> SuccessResponse:
-    """Updates information for the currently authenticated member"""
-    member_info = await get_user(session.get_user_id())
+    payload: KratosHookPayload,
+    x_webhook_token: Annotated[str, Header(strict=True)],
+) -> Response:
+    """Internal webhook that syncs members after a Kratos self-service settings flow"""
+    master_key = request.app.config.ory.kratos_webhook_master_key
+    if not _verify_webhook_token(
+        token=x_webhook_token, master_key=master_key, context=_SETTINGS_CONTEXT
+    ):
+        raise UnauthorizedException(_INVALID_WEBHOOK_TOKEN_MESSAGE)
 
-    if not member_info:
-        raise NotFoundException
+    await _upsert_member(request, payload)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    if req.old_password and req.new_password:
-        return await _update_password(req, session, member_info)
 
-    if req.name:
-        query = "UPDATE members SET name = $2 WHERE id = $1"
-        await request.app.pool.execute(query, session.get_user_id(), req.name)
-        return SuccessResponse(message="Name successfully changed")
+@router.post(
+    "/member/webhooks/registration",
+    responses={401: {"model": UnauthorizedResponse}},
+    include_in_schema=False,
+)
+async def member_registration_hook(
+    request: RouteRequest,
+    payload: KratosHookPayload,
+    x_webhook_token: Annotated[str, Header(strict=True)],
+) -> Response:
+    """Internal webhook that registers members after a new identity is created"""
+    master_key = request.app.config.ory.kratos_webhook_master_key
+    if not _verify_webhook_token(
+        token=x_webhook_token, master_key=master_key, context=_REGISTRATION_CONTEXT
+    ):
+        raise UnauthorizedException(_INVALID_WEBHOOK_TOKEN_MESSAGE)
 
-    if req.email:
-        return await _update_email(request, req, session)
-
-    raise HTTPException(status_code=500, detail="How...")
+    await _upsert_member(request, payload)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

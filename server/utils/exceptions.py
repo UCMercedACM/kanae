@@ -43,3 +43,17 @@ class ConflictException(BaseHTTPException):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.status_code = 409
+
+
+# HTTP 502
+class BadGatewayException(BaseHTTPException):
+    def __init__(self, detail: str = "Upstream rejected the request") -> None:
+        super().__init__(detail)
+        self.status_code = 502
+
+
+# HTTP 503
+class ServiceUnavailableException(BaseHTTPException):
+    def __init__(self, detail: str = "Authentication service unavailable") -> None:
+        super().__init__(detail)
+        self.status_code = 503

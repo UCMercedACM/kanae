@@ -55,11 +55,20 @@ class InternalKanaeConfig(BaseModel, frozen=True):
     limiter: LimiterConfig
 
 
+class OryConfig(BaseModel, frozen=True):
+    kratos_public_url: str
+    kratos_admin_url: str
+    keto_read_url: str
+    keto_write_url: str
+    kratos_webhook_master_key: str
+
+
 # Final Config
 
 
 class KanaeConfig(BaseModel):
     kanae: InternalKanaeConfig
+    ory: OryConfig
     postgres_uri: str
 
     @classmethod

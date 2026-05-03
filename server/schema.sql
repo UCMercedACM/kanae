@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 CREATE TYPE event_type AS ENUM (
     'general',
     'sig_ai',
@@ -21,6 +23,7 @@ CREATE TYPE project_role AS ENUM (
 CREATE TABLE IF NOT EXISTS members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT,
+    display_name TEXT,
     email TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
@@ -52,6 +55,7 @@ CREATE TABLE IF NOT EXISTS event_attendance_codes (
 CREATE INDEX IF NOT EXISTS events_name_idx ON events (name);
 CREATE INDEX IF NOT EXISTS events_name_lower_idx ON events (LOWER(name));
 CREATE INDEX IF NOT EXISTS events_creator_idx ON events (creator_id);
+CREATE INDEX IF NOT EXISTS events_name_trgm_idx ON events USING gin (name gin_trgm_ops);
 
 CREATE TABLE IF NOT EXISTS events_members (
     event_id UUID REFERENCES events (id) ON DELETE CASCADE ON UPDATE NO ACTION,
@@ -84,6 +88,9 @@ CREATE TABLE IF NOT EXISTS projects (
     founded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
+-- Backs the `projects.name % $1` similarity search in routes/projects.py
+CREATE INDEX IF NOT EXISTS projects_name_trgm_idx ON projects USING gin (name gin_trgm_ops);
+
 -- A project also is associated with a set of "tags"
 -- Meaning that many projects can have many tags
 -- This basically implies that we need bridge tables to overcome the gap.
@@ -97,6 +104,7 @@ CREATE TABLE IF NOT EXISTS tags (
 -- Realistically, given the scale of the data now, it doesn't matter
 CREATE INDEX IF NOT EXISTS tags_title_idx ON tags (title);
 CREATE INDEX IF NOT EXISTS tags_title_lower_idx ON tags (LOWER(title));
+CREATE INDEX IF NOT EXISTS tags_title_trgm_idx ON tags USING gin (title gin_trgm_ops);
 
 -- Bridge table for Projects <--> Tags
 -- Many need to adjust the cascade for deletions later.

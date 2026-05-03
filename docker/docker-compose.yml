@@ -1,5 +1,9 @@
 name: kanae
 
+include:
+  - path: ory/docker-compose.yml
+    project_directory: ory
+
 services:
   kanae:
     container_name: kanae
@@ -19,13 +23,22 @@ services:
       valkey:
         condition: service_healthy
         restart: true
+      kratos:
+        condition: service_started
+        restart: true
+      keto:
+        condition: service_started
+        restart: true
       migrate:
         condition: service_completed_successfully
-    restart: always
 
   database:
     container_name: kanae_postgres
-    image: postgres:18
+    build:
+      context: ./ory
+      dockerfile_inline: |
+        FROM postgres:18
+        COPY init.sql /docker-entrypoint-initdb.d/init.sql
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
@@ -48,11 +61,19 @@ services:
   valkey:
     container_name: kanae_valkey
     image: valkey/valkey:9-alpine
-    healthcheck:
-      test: valkey-cli PING || exit 1
+    command: >
+      valkey-server --maxmemory 256mb --maxmemory-policy volatile-ttl
     ports:
       - 6379:6379
-    restart: always
+    networks:
+      - default
+    healthcheck:
+      test: valkey-cli PING || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      start_interval: 3s
+    
 
   migrate:
     container_name: kanae_migrate
@@ -72,8 +93,8 @@ services:
     volumes:
       - ../server/schema.sql:/schema.sql
 
-  
-      
+
+
 volumes:
   database:
 

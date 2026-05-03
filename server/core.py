@@ -4,11 +4,11 @@ import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Self
 
+import aiohttp
 import asyncpg
 import orjson
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
-from email_validator import EmailNotValidError
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -20,6 +20,7 @@ from utils.limiter.extension import (
     RateLimitExceeded,
     rate_limit_exceeded_handler,
 )
+from utils.ory import OryClient
 from utils.prometheus import InstrumentatorSettings, PrometheusInstrumentator
 from utils.responses.exceptions import (
     HTTPExceptionResponse,
@@ -43,8 +44,6 @@ Changes can be made without notification, but announcements will be made for maj
 """
 __version__ = "0.1.0"
 
-EMAIL_INVALID_MESSAGE = "Email provided is invalid"
-
 
 async def init(conn: asyncpg.Connection) -> None:
     # Refer to https://github.com/MagicStack/asyncpg/issues/140#issuecomment-301477123
@@ -66,8 +65,11 @@ async def init(conn: asyncpg.Connection) -> None:
 ### FastAPI subclass (Kanae)
 class Kanae(FastAPI):
     pool: asyncpg.Pool
-    glide_manager: GlideManager
+    session: aiohttp.ClientSession
+    glide: GlideManager
+
     limiter: KanaeLimiter
+    ory: OryClient
 
     def __init__(
         self,
@@ -115,10 +117,6 @@ class Kanae(FastAPI):
             RateLimitExceeded,
             rate_limit_exceeded_handler,  # ty: ignore[invalid-argument-type]
         )
-        self.add_exception_handler(
-            EmailNotValidError,
-            self.email_invalid_error_handler,  # ty: ignore[invalid-argument-type]
-        )
 
         if self.is_prometheus_enabled:
             _host = self.config.kanae.prometheus["host"]
@@ -129,18 +127,6 @@ class Kanae(FastAPI):
             self._logger.info(
                 "Prometheus server started on %s:%d/metrics", _host, _port
             )
-
-    # Auth provider hooks
-
-    async def _set_first_time_member(
-        self, member_id: str, name: str, email: str
-    ) -> None:
-        query = """
-        INSERT INTO members (id, name, email)
-        VALUES ($1, $2, $3);
-        """
-        async with self.pool.acquire() as connection, connection.transaction():
-            await connection.execute(query, member_id, name, email)
 
     ### Exception Handlers
 
@@ -157,14 +143,15 @@ class Kanae(FastAPI):
 
     def request_validation_error_handler(
         self, request: RouteRequest, exc: RequestValidationError
-    ) -> ORJSONResponse:
+    ) -> Response:
         # The errors seem to be extremely inconsistent
         # For now, we'll log them down for further analysis
         errors = exc.errors()
         message = RequestValidationErrorResponse(errors=errors)
         self._logger.warning("Request Validation Error! Message:\n%s", errors)
         return ORJSONResponse(
-            content=message.model_dump(), status_code=status.HTTP_400_BAD_REQUEST
+            content=message.model_dump(),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 
     def verification_error_handler(
@@ -175,23 +162,18 @@ class Kanae(FastAPI):
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    def email_invalid_error_handler(
-        self, request: RouteRequest, exc: EmailNotValidError
-    ) -> ORJSONResponse:
-        return ORJSONResponse(
-            content={"error": "Invalid email address"},
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
     ### Server-related utilities
 
     @asynccontextmanager
     async def lifespan(self, app: Self) -> AsyncGenerator[None]:
         async with (
             asyncpg.create_pool(dsn=self.config.postgres_uri, init=init) as app.pool,
-            GlideManager(uri=app.limiter.storage_uri) as app.glide_manager,
+            aiohttp.ClientSession() as app.session,  # ty: ignore[invalid-assignment]
+            GlideManager(uri=app.limiter.storage_uri) as app.glide,
         ):
-            app.limiter.attach(app.glide_manager)
+            app.ory = OryClient(self.config.ory, session=app.session, glide=app.glide)
+            app.limiter.attach(app.glide)
+
             yield
 
     def get_db(self) -> Generator[asyncpg.Pool, None, None]:

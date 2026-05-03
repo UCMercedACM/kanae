@@ -1,0 +1,159 @@
+version: v1.3.0
+
+dsn: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+
+serve:
+  public:
+    base_url: http://localhost:4433/
+    cors:
+      enabled: true
+      allowed_origins:
+        - http://localhost:5173
+      allowed_methods: [POST, GET, PUT, PATCH, DELETE]
+      allowed_headers: [Authorization, Cookie, Content-Type]
+      exposed_headers: [Content-Type, Set-Cookie]
+  admin:
+    base_url: http://kratos:4434/
+
+session:
+  cookie:
+    name: ory_kratos_session
+    same_site: Lax
+  lifespan: 24h
+
+identity:
+  default_schema_id: default
+  schemas:
+    - id: default
+      url: file:///etc/config/identity.schema.json
+
+selfservice:
+  default_browser_return_url: http://localhost:5173/
+  allowed_return_urls:
+    - http://localhost:5173
+
+  flows:
+    registration:
+      lifespan: 10m
+      ui_url: http://localhost:5173/registration
+      after:
+        password:
+          hooks:
+            - hook: web_hook
+              config:
+                # This is just to support accessing from localhost. 
+                # Once containerized, replace this with http://kanae:8000
+                url: http://host.docker.internal:8000/member/webhooks/registration
+                method: POST
+                body: file:///etc/config/hooks/payload.jsonnet
+                response:
+                  ignore: false
+                auth:
+                  type: api_key
+                  config:
+                    in: header
+                    name: X-Webhook-Token
+                    value: ${KRATOS_WEBHOOK_TOKEN_REGISTRATION}
+
+            # Optionally sign the user in immediately after registration.
+            # Comment out if you want a verify-then-login flow.
+            - hook: session
+
+    settings:
+      lifespan: 10m
+      ui_url: http://localhost:5173/settings
+      privileged_session_max_age: 15m
+      required_aal: highest_available
+      after:
+        password:
+          hooks:
+            - hook: web_hook
+              config:
+                url: http://host.docker.internal:8000/member/webhooks/settings
+                method: POST
+                body: file:///etc/config/hooks/payload.jsonnet
+                response:
+                  ignore: false
+                auth:
+                  type: api_key
+                  config:
+                    in: header
+                    name: X-Webhook-Token
+                    value: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
+        profile:
+          hooks:
+            - hook: web_hook
+              config:
+                url: http://host.docker.internal:8000/member/webhooks/settings
+                method: POST
+                body: file:///etc/config/hooks/payload.jsonnet
+                response:
+                  ignore: false
+                auth:
+                  type: api_key
+                  config:
+                    in: header
+                    name: X-Webhook-Token
+                    value: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
+
+    login:
+      lifespan: 10m
+      ui_url: http://localhost:5173/login
+
+    logout:
+      after:
+        default_browser_return_url: http://localhost:5173/login
+
+    error:
+      ui_url: http://localhost:5173/error
+
+    verification:
+      enabled: true
+      ui_url: http://localhost:5173/verification
+      lifespan: 1h
+      after:
+        default_browser_return_url: http://localhost:5173/
+
+    recovery:
+      enabled: true
+      ui_url: http://localhost:5173/recovery
+      lifespan: 1h
+
+  methods:
+    password:
+      enabled: true
+      config:
+        haveibeenpwned_enabled: true
+        max_breaches: 0
+        min_password_length: 12
+        identifier_similarity_check_enabled: true
+
+# Placeholders only. Kratos doesn't expand `${VAR}` inside YAML, so the real
+# values must come from env-path overrides set in docker-compose:
+#   SECRETS_COOKIE: <hex from `openssl rand -hex 64`>
+#   SECRETS_CIPHER: <hex from `openssl rand -hex 16`>
+# The strings below exist solely to satisfy the schema's `minLength: 32`
+# requirement so this file validates standalone — they are never used at
+# runtime because the env vars override them.
+secrets:
+  cookie:
+    - PLACEHOLDER_COOKIE_OVERRIDDEN_BY_SECRETS_COOKIE_ENV_VAR
+  cipher:
+    - PLACEHOLDER_OVERRIDE_ENV_CIPHER1
+
+ciphers:
+  algorithm: xchacha20-poly1305
+
+hashers:
+  algorithm: argon2
+  argon2:
+    parallelism: 1
+    memory: 128MB
+    iterations: 3
+    salt_length: 16
+    key_length: 32
+
+log:
+  level: info
+  leak_sensitive_values: false
+  format: text

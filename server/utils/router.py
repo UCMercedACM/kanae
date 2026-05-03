@@ -40,11 +40,18 @@ class _APIRouterKwargs(TypedDict, total=False):
 
 
 class KanaeRouter(APIRouter):
+    # Shared across every KanaeRouter so that `lifespan`'s single
+    # `app.limiter.attach(app.glide)` is observed by every per-module
+    # `@router.limiter.limit(...)` decorator. Without this, sub-routers
+    # build their own ValkeyStorage whose _manager is never set.
+    _shared_limiter: KanaeLimiter | None = None
+
     def __init__(self, **kwargs: Unpack[_APIRouterKwargs]) -> None:
         super().__init__(**kwargs)
 
-        # This isn't my favorite implementation, but will do for now - Noelle
-        self._config = KanaeConfig.load_from_file(find_config())
-        self.limiter: KanaeLimiter = KanaeLimiter(
-            get_remote_address, config=self._config
-        )
+        if KanaeRouter._shared_limiter is None:
+            config = KanaeConfig.load_from_file(find_config())
+            KanaeRouter._shared_limiter = KanaeLimiter(
+                get_remote_address, config=config
+            )
+        self.limiter: KanaeLimiter = KanaeRouter._shared_limiter

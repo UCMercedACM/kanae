@@ -94,6 +94,30 @@ kanae:
     # Valkey storage-backend URI
     storage_uri: "valkey://localhost:6379/"
 
+# Ory Kratos and Keto configurations for Kanae
+ory:
+
+  # Kratos public API. Used for `/sessions/whoami` during auth dependency resolution
+  # and for self-service flows proxied to the frontend.
+  kratos_public_url: "http://localhost:4433"
+
+  # Kratos admin API. Used for identity lookups, session revocation, and identity updates.
+  # Do not expose this externally.
+  kratos_admin_url: "http://localhost:4434"
+
+  # Keto read API. Used for permission checks (`/relation-tuples/check`) and tuple expansions.
+  keto_read_url: "http://localhost:4466"
+
+  # Keto write API. Used for creating and deleting relation tuples on project/event
+  # create, join, transfer, and demote flows.
+  keto_write_url: "http://localhost:4467"
+
+  # Master secret key for Kratos's webhook origin. 
+  # The master key will be used to derive the individual hook tokens via blake3 keyed-hash
+  # Note that the length of the token MUST be 32 bits
+  # Generate this by: uv run python -c "import secrets; print(secrets.token_hex(32))"
+  kratos_webhook_master_key: ""
+
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
