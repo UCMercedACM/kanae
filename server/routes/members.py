@@ -25,9 +25,6 @@ from utils.router import KanaeRouter
 from .events import Events
 from .projects import Projects
 
-# Per-hook context labels. Bump the version suffix to rotate a token without
-# changing the master secret (the deployer regenerates that hook's env var
-# while leaving the others alone).
 # Per-hook context labels. If regenerating hook keys, the version suffix must be bumped to change them
 _SETTINGS_CONTEXT = b"kratos.settings.v1"
 _REGISTRATION_CONTEXT = b"kratos.registration.v1"
