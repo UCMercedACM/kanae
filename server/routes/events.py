@@ -13,17 +13,19 @@ from fastapi import Depends, Query
 from pydantic import BaseModel, model_validator
 from utils.auth import use_session
 from utils.checks import Event, Role, has_any_role, has_permissions
-from utils.exceptions import ConflictException, ForbiddenException, NotFoundException
+from utils.errors import ConflictError, ForbiddenError, NotFoundError
 from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses.exceptions import (
+from utils.responses import (
     ConflictResponse,
+    DeleteResponse,
     ErrorResponse,
     ForbiddenResponse,
+    JoinResponse,
     NotFoundResponse,
+    SuccessResponse,
 )
-from utils.responses.success import DeleteResponse, JoinResponse, SuccessResponse
 from utils.router import KanaeRouter
 
 _TYPE_TO_NAME = {Type.ID: "argon2id", Type.I: "argon2i", Type.D: "argon2d"}
@@ -139,7 +141,7 @@ async def get_event(request: RouteRequest, event_id: uuid.UUID) -> Events:
 
     rows = await request.app.pool.fetchrow(query, event_id)
     if not rows:
-        raise NotFoundException
+        raise NotFoundError
     event_tz = EventTimezone(pool=request.app.pool)
     return Events(**dict(rows), timezone=await event_tz.get_raw_timezone(event_id))
 
@@ -201,7 +203,7 @@ async def edit_event(
     async with request.app.pool.acquire() as connection:
         rows = await connection.fetchrow(query, event_id, *req.model_dump().values())
         if not rows:
-            raise NotFoundException(
+            raise NotFoundError(
                 detail="Resource cannot be updated"
             )  # Not sure if this is correct by RFC 9110 standards
 
@@ -238,7 +240,7 @@ async def delete_event(
 
     status = await request.app.pool.execute(query, event_id)
     if status[-1] == "0":
-        raise NotFoundException
+        raise NotFoundError
     return DeleteResponse()
 
 
@@ -288,7 +290,7 @@ async def create_events(
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Requested project already exists"
-            raise ConflictException(msg)
+            raise ConflictError(msg)
         else:
             await tr.commit()
             return Events(**dict(rows))
@@ -324,14 +326,14 @@ async def join_event(
         rows = await connection.fetchrow(query, event_id)
         if not rows:
             msg = "Should not happen"
-            raise NotFoundException(msg)
+            raise NotFoundError(msg)
 
         zone = EventTimezone(pool=request.app.pool)
 
         now = datetime.datetime.now(await zone.get_tzinfo(event_id))
         if now > rows["end_at"]:
             msg = "The event has ended. You can't join an finished event."
-            raise ForbiddenException(msg)
+            raise ForbiddenError(msg)
 
         await tr.start()
 
@@ -340,7 +342,7 @@ async def join_event(
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Authenticated member has already joined the requested event"
-            raise ConflictException(msg)
+            raise ConflictError(msg)
         else:
             await tr.commit()
             return JoinResponse()
@@ -386,7 +388,7 @@ async def verify_attendance(
     """
     record = await request.app.pool.fetchrow(query, req.code)
     if not record:
-        raise NotFoundException(
+        raise NotFoundError(
             detail="Apparently there is no attendance hash... Hmmmm.... this should never happen"
         )
 
@@ -402,7 +404,7 @@ async def verify_attendance(
     buffer = record["start_at"] + relativedelta(hours=-1)
     if not (now >= record["start_at"] and now <= record["end_at"]) or (now <= buffer):
         msg = "You must verify your hash either during the event or one hour beforehand. Please try again."
-        raise NotFoundException(msg)
+        raise NotFoundError(msg)
 
     # should raise a error directly, which would need to be handled.
     if request.app.ph.verify(full_hash, str(event_id)):

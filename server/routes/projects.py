@@ -7,16 +7,17 @@ from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel
 from utils.auth import use_session
 from utils.checks import Project, Role, check_any, has_permissions, has_role
-from utils.exceptions import BadRequestException, ConflictException, NotFoundException
+from utils.errors import BadRequestError, ConflictError, NotFoundError
 from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
-from utils.responses.exceptions import (
+from utils.responses import (
     ConflictResponse,
+    DeleteResponse,
     HTTPExceptionResponse,
+    JoinResponse,
     NotFoundResponse,
 )
-from utils.responses.success import DeleteResponse, JoinResponse
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Projects"])
@@ -79,7 +80,7 @@ async def list_projects(
     """Search and filter a list of projects"""
     if since and until:
         msg = "Cannot specify both parameters. Must be only one be specified."
-        raise BadRequestException(msg)
+        raise BadRequestError(msg)
 
     args = []
     time_constraint = ""
@@ -141,7 +142,7 @@ async def get_project(request: RouteRequest, project_id: uuid.UUID) -> FullProje
     """
     rows = await request.app.pool.fetchrow(query, project_id)
     if not rows:
-        raise NotFoundException
+        raise NotFoundError
     return FullProjects(**dict(rows))
 
 
@@ -177,7 +178,7 @@ async def edit_project(
     )
 
     if not rows:
-        raise NotFoundException(detail="Resource cannot be updated")
+        raise NotFoundError(detail="Resource cannot be updated")
     return Projects(**dict(rows))
 
 
@@ -198,7 +199,7 @@ async def delete_project(
     """
     status = await request.app.pool.execute(query, project_id)
     if status[-1] == "0":
-        raise NotFoundException
+        raise NotFoundError
     return DeleteResponse()
 
 
@@ -297,7 +298,7 @@ async def join_project(
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Authenticated member has already joined the requested project"
-            raise ConflictException(msg)
+            raise ConflictError(msg)
         else:
             await tr.commit()
             return JoinResponse(message="ok")
@@ -325,7 +326,7 @@ async def bulk_join_project(
 ) -> JoinResponse:
     if len(req) > 10:
         msg = "Must be less than 10 members"
-        raise BadRequestException(msg)
+        raise BadRequestError(msg)
 
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
@@ -340,7 +341,7 @@ async def bulk_join_project(
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Authenticated member has already joined the requested project"
-            raise ConflictException(msg)
+            raise ConflictError(msg)
         else:
             await tr.commit()
             return JoinResponse(message="ok")
@@ -363,7 +364,7 @@ async def leave_project(
     async with request.app.pool.acquire() as connection:
         status = await connection.execute(query, project_id, session.identity.id)
         if status[-1] == "0":
-            raise NotFoundException
+            raise NotFoundError
 
         return DeleteResponse()
 

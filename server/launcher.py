@@ -1,10 +1,9 @@
 import os
 
-from core import Kanae
+from core import Kanae, KanaeConfig, find_config
 from fastapi_pagination import add_pagination
 from routes import router
 from starlette.middleware.cors import CORSMiddleware
-from utils.config import KanaeConfig, find_config
 from utils.uvicorn.config import KanaeUvicornConfig
 from utils.uvicorn.server import KanaeUvicornServer
 

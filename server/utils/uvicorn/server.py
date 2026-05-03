@@ -5,7 +5,7 @@ import socket
 from typing import Optional
 
 import uvicorn
-from utils.handler import InterruptHandler
+from core import InterruptHandler
 from utils.uvicorn.config import KanaeUvicornConfig
 
 if os.name == "nt":

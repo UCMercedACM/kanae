@@ -1,4 +1,4 @@
-from utils.exceptions import UnauthorizedException
+from utils.errors import UnauthorizedError
 from utils.ory import KanaeSession
 from utils.request import RouteRequest
 
@@ -15,7 +15,7 @@ async def use_session(request: RouteRequest) -> KanaeSession:
         KanaeSession: The validated session belonging to the caller.
 
     Raises:
-        UnauthorizedException: The cookie is missing, expired, or rejected by Kratos.
+        UnauthorizedError: The cookie is missing, expired, or rejected by Kratos.
 
     Example:
         >>> async def get_logged_member(
@@ -27,6 +27,6 @@ async def use_session(request: RouteRequest) -> KanaeSession:
 
     if not session:
         msg = "Authentication required"
-        raise UnauthorizedException(msg)
+        raise UnauthorizedError(msg)
 
     return session

@@ -3,12 +3,11 @@ from typing import Annotated, Optional
 from fastapi import Query
 from pydantic import BaseModel
 from utils.checks import Role, has_role
-from utils.exceptions import (
-    NotFoundException,
+from utils.errors import (
+    NotFoundError,
 )
 from utils.request import RouteRequest
-from utils.responses.exceptions import NotFoundResponse
-from utils.responses.success import DeleteResponse
+from utils.responses import DeleteResponse, NotFoundResponse
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Tags"])
@@ -59,7 +58,7 @@ async def get_tag_by_id(request: RouteRequest, tag_id: int) -> Tags:
 
     rows = await request.app.pool.fetchrow(query, tag_id)
     if not rows:
-        raise NotFoundException
+        raise NotFoundError
     return Tags(**dict(rows))
 
 
@@ -90,7 +89,7 @@ async def edit_tag(
     """
     rows = await request.app.pool.fetchrow(query, tag_id, *req.model_dump().values())
     if not rows:
-        raise NotFoundException(detail="Resource cannot be updated")
+        raise NotFoundError(detail="Resource cannot be updated")
     return Tags(**dict(rows))
 
 
@@ -112,7 +111,7 @@ async def delete_tag(
 
     query_status = await request.app.pool.execute(query, tag_id)
     if query_status[-1] == "0":
-        raise NotFoundException
+        raise NotFoundError
     return DeleteResponse()
 
 

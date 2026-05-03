@@ -9,17 +9,13 @@ from fastapi import Depends, Header, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from utils.auth import use_session
-from utils.exceptions import (
-    NotFoundException,
-    UnauthorizedException,
+from utils.errors import (
+    NotFoundError,
+    UnauthorizedError,
 )
 from utils.ory import KanaeSession
 from utils.request import RouteRequest
-from utils.responses.exceptions import (
-    NotFoundResponse,
-    UnauthorizedResponse,
-)
-from utils.responses.success import SuccessResponse
+from utils.responses import NotFoundResponse, SuccessResponse, UnauthorizedResponse
 from utils.router import KanaeRouter
 
 from .events import Events
@@ -88,7 +84,7 @@ async def get_member_info(
     """
     rows = await pool.fetchrow(query, member_id)
     if not rows:
-        raise NotFoundException
+        raise NotFoundError
     return ClientMember(**(dict(rows)))
 
 
@@ -266,7 +262,7 @@ async def member_settings_hook(
     if not _verify_webhook_token(
         token=x_webhook_token, master_key=master_key, context=_SETTINGS_CONTEXT
     ):
-        raise UnauthorizedException(_INVALID_WEBHOOK_TOKEN_MESSAGE)
+        raise UnauthorizedError(_INVALID_WEBHOOK_TOKEN_MESSAGE)
 
     await _upsert_member(request, payload)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -287,7 +283,7 @@ async def member_registration_hook(
     if not _verify_webhook_token(
         token=x_webhook_token, master_key=master_key, context=_REGISTRATION_CONTEXT
     ):
-        raise UnauthorizedException(_INVALID_WEBHOOK_TOKEN_MESSAGE)
+        raise UnauthorizedError(_INVALID_WEBHOOK_TOKEN_MESSAGE)
 
     await _upsert_member(request, payload)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,14 +1,22 @@
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable
 from enum import StrEnum
 from typing import Annotated, Literal, NamedTuple, Protocol
 
 from fastapi import Depends
 from fastapi.params import Depends as _Depends
 from utils.auth import use_session
-from utils.exceptions import ForbiddenException
+from utils.errors import ForbiddenError
 from utils.ory import KanaeSession, OryClient
 from utils.request import RouteRequest
+
+from .errors import (
+    CheckAnyFailure,
+    CheckFailure,
+    MissingAnyRole,
+    MissingPermissions,
+    MissingRole,
+)
 
 ### Types
 
@@ -57,22 +65,6 @@ async def _async_any(awaitables: Iterable[Awaitable[bool]]) -> bool:
         if await aw:
             return True
     return False
-
-
-def _human_join(
-    seq: Sequence[str], /, *, delimiter: str = ", ", final: str = "or"
-) -> str:
-    size = len(seq)
-    if size == 0:
-        return ""
-
-    if size == 1:
-        return seq[0]
-
-    if size == 2:
-        return f"{seq[0]} {final} {seq[1]}"
-
-    return delimiter.join(seq[:-1]) + f" {final} {seq[-1]}"
 
 
 ### Resources
@@ -126,7 +118,7 @@ class CheckDependency[ContextT: CheckContext](_Depends):
     Attributes:
         predicate (CheckPredicate): The async predicate invoked when the dependency fires.
             Receives a `CheckContext` and returns `True` (pass) or
-            `False` (raises a generic `ForbiddenException`). Predicates
+            `False` (raises a generic `ForbiddenError`). Predicates
             may also raise `CheckFailure` or a subclass directly to surface
             a more specific failure.
     """
@@ -146,97 +138,7 @@ class CheckDependency[ContextT: CheckContext](_Depends):
 
         if not pred:
             msg = "check failed"
-            raise ForbiddenException(msg)
-
-
-### Exceptions
-
-
-class CheckFailure(ForbiddenException):
-    """Base class for check-related failures.
-
-    All exceptions raised by `check`, `check_any`, and the higher-level
-    factories descend from this. Inherits from `ForbiddenException` so a single
-    FastAPI exception handler registered for the HTTP base catches every variant.
-    """
-
-
-class CheckAnyFailure[ContextT: CheckContext](CheckFailure):
-    """Exception raised when all predicates in `check_any` fail.
-
-    Mirrors `discord.ext.commands.CheckAnyFailure`.
-
-    Attributes:
-        checks (list[CheckPredicate[ContextT]]): The check predicates that all failed.
-        errors (list[CheckFailure]): The individual failures caught while running the predicates.
-    """
-
-    def __init__(
-        self, checks: list[CheckPredicate[ContextT]], errors: list[CheckFailure]
-    ) -> None:
-        self.checks: list[CheckPredicate[ContextT]] = checks
-        self.errors: list[CheckFailure] = errors
-
-        super().__init__(detail="All checks have failed")
-
-
-class MissingRole(CheckFailure):
-    """Exception raised when the caller lacks a role to run a command.
-
-    Mirrors `discord.ext.commands.MissingRole`.
-
-    Attributes:
-        missing_role (Role): The required role that is missing. This is the parameter
-            passed to `has_role`.
-    """
-
-    def __init__(self, missing_role: Role) -> None:
-        self.missing_role: Role = missing_role
-        message = f"Role {missing_role!r} is required to run this command."
-        super().__init__(message)
-
-
-class MissingAnyRole(CheckFailure):
-    """Exception raised when the caller lacks any of the roles specified.
-
-    Mirrors `discord.ext.commands.MissingAnyRole`.
-
-    Attributes:
-        missing_roles (list[Role]): The roles that the caller is missing. These are the
-            parameters passed to `has_any_role`.
-    """
-
-    def __init__(self, missing_roles: list[Role]) -> None:
-        self.missing_roles: list[Role] = missing_roles
-
-        missing = [f"'{role}'" for role in missing_roles]
-        fmt = ", ".join(missing)
-        message = f"You are missing at least one of the required roles: {fmt}"
-        super().__init__(message)
-
-
-class MissingPermissions(CheckFailure):
-    """Exception raised when the caller lacks permissions to access a resource.
-
-    Mirrors `discord.ext.commands.MissingPermissions`.
-
-    Attributes:
-        missing_permissions (list[ResourcePermission]): The required permissions that are missing. These
-            are the parameters passed to `has_permissions`.
-    """
-
-    def __init__(
-        self, missing_permissions: list[ResourcePermission], *args: object
-    ) -> None:
-        self.missing_permissions: list[ResourcePermission] = missing_permissions
-
-        missing = [
-            f"{perm.resource.namespace}:{perm.relation}" for perm in missing_permissions
-        ]
-
-        fmt = _human_join(missing, final="and")
-        message = f"You are missing {fmt} permission(s) to access this resource."
-        super().__init__(message, *args)
+            raise ForbiddenError(msg)
 
 
 ### Check functions

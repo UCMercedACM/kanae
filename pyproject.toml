@@ -52,7 +52,6 @@ exclude = [
     "__pycache__", 
     "docs",
     "docker",
-    "tests"
 ]
 
 [tool.ruff]
@@ -62,7 +61,7 @@ extend-include = [
     "launcher.py",
     "utils/**"
 ]
-extend-exclude = ["**/__pycache__", "tests"]
+extend-exclude = ["**/__pycache__"]
 
 [tool.ruff.lint]
 select = [
