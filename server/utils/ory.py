@@ -11,11 +11,10 @@ from blake3 import blake3
 from fastapi import status
 from pydantic import BaseModel
 from utils.cache import ORJSONSerializer, PydanticSerializer, ValkeyCache, cached_method
-from utils.config import OryConfig
-from utils.exceptions import (
-    BadGatewayException,
-    ConflictException,
-    ServiceUnavailableException,
+from utils.errors import (
+    BadGatewayError,
+    ConflictError,
+    ServiceUnavailableError,
 )
 from utils.glide import GlideManager
 from yarl import URL
@@ -60,6 +59,14 @@ class KanaeSession(BaseModel, frozen=True):
     authenticated_at: datetime.datetime
     issued_at: datetime.datetime
     identity: KratosIdentity
+
+
+class OryConfig(BaseModel, frozen=True):
+    kratos_public_url: str
+    kratos_admin_url: str
+    keto_read_url: str
+    keto_write_url: str
+    kratos_webhook_master_key: str
 
 
 ### Utilities
@@ -162,9 +169,9 @@ class OryClient:
         response = await self.session.request(method, url, **kwargs)
 
         if response.status == status.HTTP_502_BAD_GATEWAY:
-            raise BadGatewayException
+            raise BadGatewayError
         if response.status == status.HTTP_503_SERVICE_UNAVAILABLE:
-            raise ServiceUnavailableException
+            raise ServiceUnavailableError
 
         return response
 
@@ -311,7 +318,7 @@ class OryClient:
             The updated :class:`KratosIdentity` as returned by Kratos.
 
         Raises:
-            ConflictException: If `traits["email"]` is already bound
+            ConflictError: If `traits["email"]` is already bound
                 to another identity (Kratos 409).
         """
         payload = {"schema_id": "person", "traits": traits}
@@ -325,7 +332,7 @@ class OryClient:
             await response.release()
 
             msg = "Email already is bound to another identity"
-            raise ConflictException(msg)
+            raise ConflictError(msg)
 
         data = await response.json(loads=orjson.loads)
 

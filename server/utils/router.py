@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict, Unpack
 
+from core import KanaeConfig, find_config
 from fastapi import APIRouter
 from utils.limiter import KanaeLimiter
 from utils.limiter.utils import get_remote_address
-
-from .config import KanaeConfig, find_config
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
