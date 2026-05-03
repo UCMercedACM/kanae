@@ -1,9 +1,11 @@
+# ty: ignore[unresolved-import]
+
 import asyncio
 import logging
-import sys
+from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
 from types import TracebackType
-from typing import Generator, NamedTuple, Optional, Type, TypeVar
+from typing import Any, NamedTuple, Optional, Self, TypedDict, Unpack, cast
 from unittest.mock import Mock
 from urllib.parse import quote
 
@@ -11,22 +13,25 @@ import httpx
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
-from core import Kanae
-from fastapi import FastAPI, Request
+from core import Kanae, KanaeConfig, find_config
+from fastapi import FastAPI, Request, Response
 from glide import (
     GlideClient,
     GlideClientConfiguration,
     NodeAddress,
     ServerCredentials,
 )
-from glide_shared.exceptions import ConnectionError
+from glide_shared.exceptions import ConnectionError as GlideConnectionError
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.exceptions import ContainerStartException
-from testcontainers.core.image import DockerImage
+from testcontainers.core.network import Network
 from testcontainers.core.utils import raise_for_deprecated_parameter
-from testcontainers.core.waiting_utils import wait_container_is_ready, wait_for_logs
+from testcontainers.core.waiting_utils import (
+    WaitStrategy,
+    wait_container_is_ready,
+    wait_for_logs,
+)
 from testcontainers.postgres import PostgresContainer
-from utils.config import KanaeConfig, find_config
 from utils.glide import GlideManager
 from utils.limiter import get_remote_address
 from utils.limiter.extension import (
@@ -37,22 +42,28 @@ from utils.limiter.extension import (
 from utils.limiter.middleware import LimiterASGIMiddleware, LimiterMiddleware
 from yarl import URL
 
-if sys.version_info >= (3, 11):
-    from typing import AsyncGenerator, Self
-else:
-    from typing_extensions import AsyncGenerator, Self
-
-BE = TypeVar("BE", bound=BaseException)
-
 ROOT = Path(__file__).parents[2]
-DOCKERFILE_PATH = ROOT / "docker" / "pg-test" / "Dockerfile"
 CONFIG_PATH = find_config()
 
 config = KanaeConfig.load_from_file(CONFIG_PATH)
 
 
-async def _async_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+async def _async_rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> Response:
     return await rate_limit_exceeded_handler(request, exc)
+
+
+class _DockerContainerKwargs(TypedDict, total=False):
+    docker_client_kw: dict[str, Any] | None
+    command: str | None
+    env: dict[str, str] | None
+    name: str | None
+    ports: list[int] | None
+    volumes: list[tuple[str, str, str]] | None
+    network: Network | None
+    network_aliases: list[str] | None
+    _wait_strategy: WaitStrategy | None
 
 
 class ValkeyContainer(DockerContainer):
@@ -61,9 +72,11 @@ class ValkeyContainer(DockerContainer):
         image: str = "valkey/valkey:latest",
         port: int = 6379,
         password: str | None = None,
-        **kwargs,
+        **kwargs: Unpack[_DockerContainerKwargs],
     ) -> None:
-        raise_for_deprecated_parameter(kwargs, "port_to_expose", "port")
+        raise_for_deprecated_parameter(
+            cast("dict[Any, Any]", kwargs), "port_to_expose", "port"
+        )
         super().__init__(image, **kwargs)
         self.port = port
         self.password = password
@@ -71,10 +84,11 @@ class ValkeyContainer(DockerContainer):
         if self.password:
             self.with_command(f"valkey-server --requirepass {self.password}")
 
-    @wait_container_is_ready(ConnectionError)
+    @wait_container_is_ready(GlideConnectionError)
     def _connect(self) -> None:
         if not asyncio.run(self._ping()):
-            raise ConnectionError("Could not connect to Valkey")
+            msg = "Could not connect to Valkey"
+            raise GlideConnectionError(msg)
 
     async def _ping(self) -> bool:
         config = GlideClientConfiguration(
@@ -96,7 +110,8 @@ class ValkeyContainer(DockerContainer):
 
     def get_connection_url(self, dbname: str | None = None) -> str:
         if self._container is None:
-            raise ContainerStartException("container has not been started")
+            msg = "container has not been started"
+            raise ContainerStartException(msg)
 
         host = self.get_container_host_ip()
         port = self.get_exposed_port(self.port)
@@ -122,7 +137,7 @@ class KanaeServices(NamedTuple):
 
 
 class KanaeTestClient:
-    def __init__(self, app: Kanae, *, base_url: Optional[str] = None):
+    def __init__(self, app: Kanae, *, base_url: Optional[str] = None) -> None:
         self._config = app.config
         self._host = self._config.kanae.host
         self._port = self._config.kanae.port
@@ -140,8 +155,8 @@ class KanaeTestClient:
 
     async def __aexit__(
         self,
-        exc_type: Optional[Type[BE]],
-        exc: Optional[BE],
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
         traceback: Optional[TracebackType],
     ) -> None:
         await self.client.aclose()
@@ -154,12 +169,11 @@ def get_app() -> Kanae:
 
 @pytest.fixture(scope="session")
 def setup() -> Generator[KanaeServices, None, None]:
-    with DockerImage(path=ROOT, dockerfile_path=DOCKERFILE_PATH) as image:
-        with PostgresContainer(str(image)) as postgres, ValkeyContainer() as valkey:
-            wait_for_logs(postgres, "ready", timeout=15.0)
-            wait_for_logs(valkey, "accept connections tcp", timeout=15.0)
+    with PostgresContainer() as postgres, ValkeyContainer() as valkey:
+        wait_for_logs(postgres, "ready", timeout=15.0)
+        wait_for_logs(valkey, "accept connections tcp", timeout=15.0)
 
-            yield KanaeServices(postgres, valkey)
+        yield KanaeServices(postgres, valkey)
 
 
 @pytest.fixture(scope="session")
@@ -188,10 +202,12 @@ async def app(
         (LimiterASGIMiddleware, _async_rate_limit_exceeded_handler),
     ],
 )
-async def build_fastapi_app(request, valkey: ValkeyContainer):
+async def build_fastapi_app(
+    request: pytest.FixtureRequest, valkey: ValkeyContainer
+) -> AsyncGenerator[Callable[..., tuple[FastAPI, KanaeLimiter]], None]:
     async with GlideManager(uri=valkey.get_connection_url()) as manager:
 
-        def _factory(**limiter_args):
+        def _factory(**limiter_args: object) -> tuple[FastAPI, KanaeLimiter]:
             middleware, exception_handler = request.param
 
             test_config = KanaeConfig.load_from_file(CONFIG_PATH)
@@ -205,7 +221,7 @@ async def build_fastapi_app(request, valkey: ValkeyContainer):
             # There is no point of connection to PostgreSQL
             # As we are running this on the function scope, and are sending tons of redis connections
             app = FastAPI()
-            app.limiter = limiter
+            app.limiter = limiter  # ty: ignore[unresolved-attribute]
             app.state.loop = asyncio.get_event_loop()
             app.add_exception_handler(RateLimitExceeded, exception_handler)
             app.add_middleware(middleware)
