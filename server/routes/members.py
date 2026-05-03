@@ -28,6 +28,7 @@ from .projects import Projects
 # Per-hook context labels. Bump the version suffix to rotate a token without
 # changing the master secret (the deployer regenerates that hook's env var
 # while leaving the others alone).
+# Per-hook context labels. If regenerating hook keys, the version suffix must be bumped to change them
 _SETTINGS_CONTEXT = b"kratos.settings.v1"
 _REGISTRATION_CONTEXT = b"kratos.registration.v1"
 
@@ -37,8 +38,8 @@ _INVALID_WEBHOOK_TOKEN_MESSAGE = "Invalid webhook token detected"  # noqa: S105
 router = KanaeRouter(tags=["Members"])
 
 
-def _verify_webhook_token(token: str, *, master_hex: str, context: bytes) -> bool:
-    expected_token = blake3(context, key=bytes.fromhex(master_hex)).hexdigest()
+def _verify_webhook_token(token: str, *, master_key: str, context: bytes) -> bool:
+    expected_token = blake3(context, key=bytes.fromhex(master_key)).hexdigest()
     return secrets.compare_digest(token, expected_token)
 
 
@@ -264,9 +265,9 @@ async def member_settings_hook(
     x_webhook_token: Annotated[str, Header(strict=True)],
 ) -> Response:
     """Internal webhook that syncs members after a Kratos self-service settings flow"""
-    master_hex = request.app.config.ory.kratos_webhook_master
+    master_key = request.app.config.ory.kratos_webhook_master_key
     if not _verify_webhook_token(
-        token=x_webhook_token, master_hex=master_hex, context=_SETTINGS_CONTEXT
+        token=x_webhook_token, master_key=master_key, context=_SETTINGS_CONTEXT
     ):
         raise UnauthorizedException(_INVALID_WEBHOOK_TOKEN_MESSAGE)
 
@@ -285,9 +286,9 @@ async def member_registration_hook(
     x_webhook_token: Annotated[str, Header(strict=True)],
 ) -> Response:
     """Internal webhook that registers members after a new identity is created"""
-    master_hex = request.app.config.ory.kratos_webhook_master
+    master_key = request.app.config.ory.kratos_webhook_master_key
     if not _verify_webhook_token(
-        token=x_webhook_token, master_hex=master_hex, context=_REGISTRATION_CONTEXT
+        token=x_webhook_token, master_key=master_key, context=_REGISTRATION_CONTEXT
     ):
         raise UnauthorizedException(_INVALID_WEBHOOK_TOKEN_MESSAGE)
 

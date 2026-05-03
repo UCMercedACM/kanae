@@ -94,13 +94,7 @@ kanae:
     # Valkey storage-backend URI
     storage_uri: "valkey://localhost:6379/"
 
-# The PostgreSQL connection URI that is used to connect to the database
-# The URI must be valid, and components will need to be quoted.
-# See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
-postgres_uri: "postgresql://user:password@localhost:5432/user"
-
-# Ory Kratos + Keto endpoints. Kanae calls Kratos public for session identification
-# and Keto read/write for authorization checks and tuple mutations.
+# Ory Kratos and Keto configurations for Kanae
 ory:
 
   # Kratos public API. Used for `/sessions/whoami` during auth dependency resolution
@@ -118,8 +112,13 @@ ory:
   # create, join, transfer, and demote flows.
   keto_write_url: "http://localhost:4467"
 
-  # Master secret for Kratos webhook origin authentication.
-  # Per-hook tokens are derived from this via blake3 keyed-hash (one secret in,
-  # distinct value per hook type out). Rotate by regenerating + redeploying.
-  # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
-  kratos_webhook_master: "REPLACE_ME_WITH_HEX_64_CHARS"
+  # Master secret key for Kratos's webhook origin. 
+  # The master key will be used to derive the individual hook tokens via blake3 keyed-hash
+  # Note that the length of the token MUST be 32 bits
+  # Generate this by: uv run python -c "import secrets; print(secrets.token_hex(32))"
+  kratos_webhook_master_key: ""
+
+# The PostgreSQL connection URI that is used to connect to the database
+# The URI must be valid, and components will need to be quoted.
+# See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
+postgres_uri: "postgresql://user:password@localhost:5432/user"

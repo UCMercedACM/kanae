@@ -1,0 +1,108 @@
+name: ory
+
+x-hardening: &hard
+  read_only: true
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  kratos-migrate:
+    <<: *hard
+    container_name: kanae_kratos_migrate
+    image: oryd/kratos:v26.2.0
+    environment:
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+      SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE}
+      SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER}
+    command: migrate sql -c /etc/config/kratos.yml --read-from-env --yes
+    networks:
+      - default
+      - db_bridge
+    volumes:
+      - ./config/kratos:/etc/config:ro
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: on-failure
+
+  kratos:
+    <<: *hard
+    container_name: kanae_kratos
+    image: oryd/kratos:v26.2.0
+    environment:
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+
+
+      SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE}
+      SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER}
+
+      SELFSERVICE_FLOWS_REGISTRATION_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE: ${KRATOS_WEBHOOK_TOKEN_REGISTRATION}
+      SELFSERVICE_FLOWS_SETTINGS_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
+      SELFSERVICE_FLOWS_SETTINGS_AFTER_PROFILE_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
+
+    # Lets `host.docker.internal` inside the kratos container resolve to
+    # whatever the docker bridge advertises as the host gateway. Required on
+    # Linux/WSL2 (Mac/Windows already provide this name automatically). When
+    # Kanae moves into the compose network, drop this and use `kanae:8000`
+    # in kratos.yml instead.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: serve -c /etc/config/kratos.yml --watch-courier
+    ports:
+      - "4433:4433" # public self-service api
+      - "127.0.0.1:4434:4434" # admin
+    networks:
+      - default
+      - db_bridge
+    volumes:
+      - ./config/kratos:/etc/config:ro
+    depends_on:
+      kratos-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  keto-migrate:
+    <<: *hard
+    container_name: kanae_keto_migrate
+    image: oryd/keto:v26.2.0
+    environment:
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
+    command: migrate up -c /etc/config/keto.yml --yes
+    networks:
+      - default
+      - db_bridge
+    volumes:
+      - ./config/keto:/etc/config:ro
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: on-failure
+
+  keto:
+    <<: *hard
+    container_name: kanae_keto
+    image: oryd/keto:v26.2.0
+    environment:
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
+    command: serve -c /etc/config/keto.yml
+    ports:
+      - "127.0.0.1:4466:4466"  # read 
+      - "127.0.0.1:4467:4467"  # write
+    networks:
+      - default
+      - db_bridge
+    volumes:
+      - ./config/keto:/etc/config:ro
+    depends_on:
+      keto-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
