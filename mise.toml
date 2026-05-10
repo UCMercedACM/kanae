@@ -23,12 +23,11 @@ dir = "{{ config_root }}/docker"
 run = "docker compose pull && docker compose up -d"
 
 [tasks."server:start"]
-depends = ["server:docker:up"]
 alias = ["server:up", "server:dev"]
 description = "Start backend development server. Save file(s) to see changes through reloading"
 env._.path = ".venv/bin"
 dir = "{{ config_root }}"
-run = "uvicorn launcher:app --app-dir=server --reload"
+run = "uvicorn launcher:app --app-dir=server --log-config logging.conf.json --reload"
 
 [tasks."server:lint"]
 description = "Lints the codebase by type checking and general linting"
