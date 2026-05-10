@@ -56,7 +56,6 @@ services:
       interval: 5m
       start_interval: 30s
       start_period: 5m
-    restart: always
 
   valkey:
     container_name: kanae_valkey
