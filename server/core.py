@@ -6,6 +6,8 @@ import os
 import re
 import time
 from contextlib import asynccontextmanager
+from logging import NullHandler
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional, Self, TypedDict, cast
 
@@ -46,12 +48,10 @@ from utils.responses import (
 )
 
 if TYPE_CHECKING:
-    import socket
     from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 
     from starlette.types import Message, Receive, Scope, Send
     from utils.request import RouteRequest
-    from utils.uvicorn.server import KanaeUvicornServer
 
 __title__ = "Kanae"
 __description__ = """
@@ -87,17 +87,23 @@ LATENCY_HIGHER_BUCKETS = (
 )
 LATENCY_LOWER_BUCKETS = (0.1, 0.5, 1)
 
+MAX_BYTES = 32 * 1024 * 1024  # 32 MB
+BACKUP_COUNT = 10
+
+
+def _is_docker() -> bool:
+    path = Path("/proc/self/cgroup")
+    dockerenv_path = Path("/.dockerenv")
+    return dockerenv_path.exists() or (
+        path.is_file() and any("docker" in line for line in path.open())
+    )
+
 
 def find_config() -> Optional[Path]:
-    config_path = Path("config.yml")
-    alternative_path = config_path.parent.joinpath("server", "config.yml")
+    base = Path("config.yml")
+    targets = [base, base.parent.joinpath("server", "config.yml")]
 
-    if not config_path.exists() and not alternative_path.exists():
-        return None
-
-    if not config_path.exists():
-        return alternative_path.resolve()
-    return config_path.resolve()
+    return next((path.resolve() for path in targets if path.exists()), None)
 
 
 async def init(conn: asyncpg.Connection) -> None:
@@ -184,21 +190,31 @@ class KanaeConfig(BaseModel):
             return cls(**decoded)
 
 
-### Interrupt handler
-class InterruptHandler:
-    def __init__(
-        self, server: KanaeUvicornServer, sockets: Optional[list[socket.socket]] = None
-    ) -> None:
-        self.server = server
-        self.sockets = sockets
-        self._task: Optional[asyncio.Task] = None
+### Logging
 
-    def __call__(self) -> None:
-        if self._task:
-            raise KeyboardInterrupt
 
-        self._task = self.server.loop.create_task(
-            self.server.shutdown(sockets=self.sockets)
+def rotating_handler() -> AppRotatingHandler | NullHandler:
+    # Docker maintains a stateless philosophy, i.e., that there must be no state that must be written as a container should only be read-only
+    # In simpler terms, you can't write a file within a docker container, and that is true with ours (as it would error out regardless)
+    # Thus, we won't write logs if the code is running in a docker container, as represented with the NullHandler
+    # We also can't send back an None as the logger explicitly requires an handler be returned
+    if not _is_docker():
+        return AppRotatingHandler(filename="logs/kanae.log")
+
+    return NullHandler()
+
+
+class AppRotatingHandler(RotatingFileHandler):
+    def __init__(self, filename: str) -> None:
+        resolved_filename = Path(filename)
+        if not resolved_filename.parent.exists():
+            resolved_filename.parent.mkdir(parents=True, exist_ok=True)
+
+        super().__init__(
+            filename=resolved_filename,
+            encoding="utf-8",
+            maxBytes=MAX_BYTES,
+            backupCount=BACKUP_COUNT,
         )
 
 

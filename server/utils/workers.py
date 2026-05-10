@@ -86,7 +86,7 @@ class KanaeWorker(Worker):
         config_kwargs: dict = {
             "app": None,
             "http": "httptools",
-            "log_config": None,
+            "log_config": "logging.conf.json",
             "timeout_keep_alive": self.cfg.keepalive,
             "timeout_notify": self.timeout,
             "callback_notify": self.callback_notify,
@@ -143,5 +143,5 @@ class KanaeWorker(Worker):
     def run(self) -> None:
         return run(self._serve())
 
-    async def callback_notify(self) -> None:  # pragma: no cover
+    async def callback_notify(self) -> None:
         self.notify()

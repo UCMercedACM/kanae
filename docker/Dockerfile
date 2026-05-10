@@ -16,7 +16,7 @@ ENV UV_NO_DEV=1
 # "App" is too vague of a wording, and oftentimes leads to incorrect paths  
 WORKDIR /app/
 
-COPY pyproject.toml uv.lock gunicorn.conf.py /app/
+COPY pyproject.toml uv.lock gunicorn.conf.py logging.conf.json /app/
 
 # Install dependencies through lockfile
 RUN --mount=type=cache,target=/root/.cache/uv \
