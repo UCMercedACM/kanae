@@ -1,7 +1,7 @@
 import datetime
 import logging
 import uuid
-from typing import Any, Optional, TypedDict, Unpack, cast
+from typing import Any, TypedDict, Unpack, cast
 
 import aiohttp
 import orjson
@@ -178,24 +178,25 @@ class OryClient:
     ### Session management
 
     @cached_method(cache_attr="_whoami_cache", ttl=60, key_builder=_whoami_key)
-    async def whoami(self, cookie: Optional[str]) -> KanaeSession | None:
+    async def whoami(self, cookie: str) -> KanaeSession | None:
         """Resolve a Kratos session for a `Cookie` request header.
 
-        Returns `None` for missing or invalid cookies; the auth dependency
-        layer above is expected to translate `None` into a 401 response.
-        Resolved sessions are cached under a blake2b digest of the cookie
+        Returns `None` for invalid cookies; the auth dependency layer above
+        is expected to translate `None` into a 401 response, and to
+        short-circuit before calling this when the cookie is missing
+        (the cache key builder runs before the function body, so an empty
+        cookie would crash the key builder rather than reach this method).
+        Resolved sessions are cached under a blake3 digest of the cookie
         for 60 seconds.
 
         Args:
-            cookie: Raw value of the browser's `Cookie` header.
+            cookie: Raw value of the browser's `ory_kratos_session` cookie.
+                Must be non-empty; callers are responsible for checking.
 
         Returns:
-            The resolved :class:`KanaeSession`, or `None` if the cookie
-            is empty or Kratos rejects it as invalid (HTTP 401).
+            The resolved :class:`KanaeSession`, or `None` if Kratos rejects
+            the cookie as invalid (HTTP 401).
         """
-        if not cookie:
-            return None
-
         url = self.kratos_public("/sessions/whoami")
         response = await self._request(
             "GET", url, headers={"cookie": f"ory_kratos_session={cookie}"}
