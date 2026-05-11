@@ -8,6 +8,8 @@ services:
   kanae:
     container_name: kanae
     image: ghcr.io/ucmercedacm/kanae:latest
+    environment:
+      GRANIAN_WORKERS: ${KANAE_WORKERS:-1}
     volumes:
       # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
       - ${CONFIG_LOCATION}:/kanae/config.yml
@@ -38,7 +40,7 @@ services:
       context: ./ory
       dockerfile_inline: |
         FROM postgres:18
-        COPY init.sql /docker-entrypoint-initdb.d/init.sql
+        COPY init.sh /docker-entrypoint-initdb.d/init.sh
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}

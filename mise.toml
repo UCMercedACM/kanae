@@ -1,7 +1,7 @@
 redactions = ["DB_PASSWORD"]
 
 [tools]
-uv = "0.11.12"
+uv = "0.11.13"
 atlas = "1.2.0"
 
 
@@ -27,7 +27,8 @@ alias = ["server:up", "server:dev"]
 description = "Start backend development server. Save file(s) to see changes through reloading"
 env._.path = ".venv/bin"
 dir = "{{ config_root }}"
-run = "uvicorn launcher:app --app-dir=server --log-config logging.conf.json --reload"
+run = "granian main:app --interface=asgi --loop=uvloop --working-dir=server --access-log --log-config=logging.conf.json --reload-paths=server --reload"
+run_windows = "granian main:app --interface=asgi --loop=winloop --working-dir=server --access-log --log-config=logging.conf.json --reload-paths=server --reload"
 
 [tasks."server:lint"]
 description = "Lints the codebase by type checking and general linting"

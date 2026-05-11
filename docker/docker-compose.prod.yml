@@ -6,43 +6,46 @@ include:
   
 services:
   kanae:
-    container_name: kanae
-    image: ghcr.io/ucmercedacm/kanae:latest
-    volumes:
-      # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
-      - ${CONFIG_LOCATION}:/kanae/config.yml
-    ports:
-      - 8000:8000
-    networks:
-      - default
-      - db_bridge
-    depends_on:
-      database:
-        condition: service_healthy
-        restart: true
-      valkey:
-        condition: service_healthy
-        restart: true
-      kratos:
-        condition: service_started
-        restart: true
-      keto:
-        condition: service_started
-        restart: true
-      migrate:
-        condition: service_completed_successfully
+     container_name: kanae
+     image: ghcr.io/ucmercedacm/kanae:latest
+     environment:
+       GRANIAN_WORKERS: ${KANAE_WORKERS:-1}
+     volumes:
+       # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
+       - ${CONFIG_LOCATION}:/kanae/config.yml
+     ports:
+       - 8000:8000
+     networks:
+       - default
+       - db_bridge
+     depends_on:
+       database:
+         condition: service_healthy
+         restart: true
+       valkey:
+         condition: service_healthy
+         restart: true
+       kratos:
+         condition: service_started
+         restart: true
+       keto:
+         condition: service_started
+         restart: true
+       migrate:
+         condition: service_completed_successfully
 
   database:
     container_name: kanae_postgres
     build:
+      context: ./ory
       dockerfile_inline: |
-        FROM postgers:18
-        CREATE DATABASE kratos;
-        CREATE DATABASE keto;
+        FROM postgres:18
+        COPY init.sh /docker-entrypoint-initdb.d/init.sh
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
       POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
     ports:
       - 5432:5432
     networks:
@@ -71,6 +74,7 @@ services:
       timeout: 3s
       start_period: 10s
       start_interval: 3s
+    
 
   migrate:
     container_name: kanae_migrate
@@ -88,7 +92,7 @@ services:
       database:
         condition: service_healthy
     volumes:
-      - ../server/schema.sql:/schema.sql 
+      - ../server/schema.sql:/schema.sql
 
   prometheus:
     container_name: kanae_prometheus

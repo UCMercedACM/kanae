@@ -1,18 +1,30 @@
 from __future__ import annotations
 
 import asyncio
+import http
 import logging
-import os
 import re
+import sys
 import time
 from contextlib import asynccontextmanager
+from copy import copy
 from logging import NullHandler
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, Self, TypedDict, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    Optional,
+    Self,
+    TypedDict,
+    cast,
+)
 
 import aiohttp
 import asyncpg
+import click
 import orjson
 import yaml
 from argon2 import PasswordHasher
@@ -29,7 +41,6 @@ from prometheus_client import (
     CollectorRegistry,
     Gauge,
     generate_latest,
-    multiprocess,
 )
 from prometheus_fastapi_instrumentator import metrics, routing
 from pydantic import BaseModel
@@ -193,13 +204,15 @@ class KanaeConfig(BaseModel):
 ### Logging
 
 
-def rotating_handler() -> AppRotatingHandler | NullHandler:
+def rotating_handler(
+    filename: str = "logs/kanae.log",
+) -> AppRotatingHandler | NullHandler:
     # Docker maintains a stateless philosophy, i.e., that there must be no state that must be written as a container should only be read-only
     # In simpler terms, you can't write a file within a docker container, and that is true with ours (as it would error out regardless)
     # Thus, we won't write logs if the code is running in a docker container, as represented with the NullHandler
     # We also can't send back an None as the logger explicitly requires an handler be returned
     if not _is_docker():
-        return AppRotatingHandler(filename="logs/kanae.log")
+        return AppRotatingHandler(filename=filename)
 
     return NullHandler()
 
@@ -216,6 +229,118 @@ class AppRotatingHandler(RotatingFileHandler):
             maxBytes=MAX_BYTES,
             backupCount=BACKUP_COUNT,
         )
+
+
+class ColourizedFormatter(logging.Formatter):
+    """
+    A custom log formatter class that:
+
+    * Outputs the LOG_LEVEL with an appropriate color.
+    * If a log call includes an `extra={"color_message": ...}` it will be used
+      for formatting the output, instead of the plain text message.
+    """
+
+    LEVEL_COLOURS: ClassVar[dict[int, str]] = {
+        logging.DEBUG: "cyan",
+        logging.INFO: "green",
+        logging.WARNING: "yellow",
+        logging.ERROR: "red",
+        logging.CRITICAL: "bright_red",
+    }
+
+    _LEVEL_WIDTH: ClassVar[int] = 8
+
+    def __init__(
+        self,
+        fmt: str | None = None,
+        datefmt: str | None = None,
+        style: Literal["%", "{", "$"] = "%",
+        *,
+        use_colors: bool | None = None,
+    ) -> None:
+        self.use_colors = (
+            use_colors if use_colors is not None else self.should_use_colors()
+        )
+        self._level_prefix: dict[int, str] = {
+            level_no: self._build_level_prefix(level_no)
+            for level_no in self.LEVEL_COLOURS
+        }
+        super().__init__(fmt=fmt, datefmt=datefmt, style=style)
+
+    def _build_level_prefix(self, level_no: int) -> str:
+        name = logging.getLevelName(level_no)
+        plain = f"{name}:".ljust(self._LEVEL_WIDTH + 1)
+        colour = self.LEVEL_COLOURS.get(level_no) if self.use_colors else None
+        if colour is None:
+            return plain
+        return click.style(name, fg=colour) + plain[len(name) :]
+
+    def _level_prefix_for(self, record: logging.LogRecord) -> str:
+        cached = self._level_prefix.get(record.levelno)
+        if cached is None:
+            cached = self._build_level_prefix(record.levelno)
+            self._level_prefix[record.levelno] = cached
+        return cached
+
+    def should_use_colors(self) -> bool:
+        return True
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        record_copy = copy(record)
+        if self.use_colors and "color_message" in record_copy.__dict__:
+            record_copy.msg = record_copy.__dict__["color_message"]
+            record_copy.__dict__["message"] = record_copy.getMessage()
+        record_copy.__dict__["levelprefix"] = self._level_prefix_for(record_copy)
+        return super().formatMessage(record_copy)
+
+
+class DefaultFormatter(ColourizedFormatter):
+    def should_use_colors(self) -> bool:
+        return sys.stderr.isatty()
+
+
+class AccessFormatter(ColourizedFormatter):
+    STATUS_COLOURS: ClassVar[dict[int, str]] = {
+        1: "bright_white",
+        2: "green",
+        3: "yellow",
+        4: "red",
+        5: "bright_red",
+    }
+
+    def should_use_colors(self) -> bool:
+        return sys.stdout.isatty()
+
+    def get_status_code(self, status_code: int) -> str:
+        try:
+            phrase = http.HTTPStatus(status_code).phrase
+        except ValueError:
+            phrase = ""
+
+        rendered = f"{status_code} {phrase}"
+        colour = (
+            self.STATUS_COLOURS.get(status_code // 100) if self.use_colors else None
+        )
+        if colour is None:
+            return rendered
+        return click.style(rendered, fg=colour)
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        # Granian's access logger passes args as a dict, e.g.
+        #   {"addr", "time", "method", "path", "protocol", "status",
+        #    "dt_ms", "query_string", "scheme"}
+        # See: https://github.com/emmett-framework/granian#access-log-format
+        record_copy = copy(record)
+        args = cast("dict[str, Any]", record_copy.args)
+        request_line = f"{args['method']} {args['path']} {args['protocol']}"
+        if self.use_colors:
+            request_line = click.style(request_line, bold=True)
+        copied_dict = record_copy.__dict__
+        copied_dict["levelprefix"] = self._level_prefix_for(record_copy)
+        copied_dict["client_addr"] = args["addr"]
+        copied_dict["request_line"] = request_line
+        copied_dict["status_code"] = self.get_status_code(args["status"])
+        return logging.Formatter.formatMessage(self, record_copy)
 
 
 ### Prometheus instrumentator
@@ -310,7 +435,6 @@ class PrometheusMiddleware:
                 name=self.in_progress_name,
                 documentation="Number of HTTP requests in progress.",
                 labelnames=labels,
-                multiprocess_mode="livesum",
             )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -586,9 +710,6 @@ class PrometheusInstrumentator:
 
         def metrics(request: Request) -> Response:
             ephemeral_registry = self.registry
-            if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
-                ephemeral_registry = CollectorRegistry()
-                multiprocess.MultiProcessCollector(ephemeral_registry)
 
             resp = Response(content=generate_latest(ephemeral_registry))
             resp.headers["Content-Type"] = CONTENT_TYPE_LATEST
@@ -624,7 +745,6 @@ class Kanae(FastAPI):
             version=__version__,
             dependencies=[Depends(self.get_db)],
             default_response_class=ORJSONResponse,
-            http="httptools",
             redoc_url="/docs",
             docs_url=None,
             lifespan=self.lifespan,
