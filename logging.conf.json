@@ -3,15 +3,28 @@
     "disable_existing_loggers": false,
     "formatters": {
         "default": {
-            "()": "uvicorn.logging.DefaultFormatter",
+            "()": "core.DefaultFormatter",
             "fmt": "[%(asctime)s] %(levelprefix)s %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
             "use_colors": true
         },
         "access": {
-            "()": "uvicorn.logging.AccessFormatter",
+            "()": "core.AccessFormatter",
             "fmt": "[%(asctime)s] %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S"
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+            "use_colors": true
+        },
+        "file": {
+            "()": "core.DefaultFormatter",
+            "fmt": "[%(asctime)s] %(levelprefix)s %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+            "use_colors": false
+        },
+        "access_file": {
+            "()": "core.AccessFormatter",
+            "fmt": "[%(asctime)s] %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+            "use_colors": false
         }
     },
     "handlers": {
@@ -27,20 +40,22 @@
         },
         "rotating": {
             "()": "core.rotating_handler",
-            "formatter": "default"
+            "formatter": "file"
+        },
+        "rotating_access": {
+            "()": "core.rotating_handler",
+            "filename": "logs/access.log",
+            "formatter": "access_file"
         }
     },
     "loggers": {
-        "uvicorn": {
+        "_granian": {
             "handlers": ["default", "rotating"],
             "level": "INFO",
             "propagate": false
         },
-        "uvicorn.error": {
-            "level": "INFO"
-        },
-        "uvicorn.access": {
-            "handlers": ["access", "rotating"],
+        "granian.access": {
+            "handlers": ["access", "rotating_access"],
             "level": "INFO",
             "propagate": false
         },

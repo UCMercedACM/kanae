@@ -12,24 +12,24 @@ ENV UV_PYTHON_DOWNLOADS=0
 # Do not install development dependencies
 ENV UV_NO_DEV=1
 
-# Server is used here to explicitly denote what this application is
-# "App" is too vague of a wording, and oftentimes leads to incorrect paths  
-WORKDIR /app/
+# "kanae" is used here because we are copying venvs
+# So we need both stages to be consistent to prevent broken-shebangs 
+WORKDIR /kanae/
 
-COPY pyproject.toml uv.lock gunicorn.conf.py logging.conf.json /app/
+COPY pyproject.toml uv.lock gunicorn.conf.py logging.conf.json /kanae/
 
 # Install dependencies through lockfile
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project
+    uv sync --no-build --frozen --no-install-project
 
 # Add project source code
-COPY ./server /app
+COPY ./server /kanae
 
 # Install the rest (this allows for optimal caching)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen
+    uv sync --no-build --frozen
 
 FROM python:3.14-slim-trixie
 
@@ -42,8 +42,7 @@ RUN groupadd --system --gid 999 kanae \
  && useradd --system --gid 999 --uid 999 --no-create-home kanae
 
 # Copy the server from the builder
-COPY --from=build /app /kanae
-COPY --chmod=005 deploy/launcher.sh /kanae/launcher.sh
+COPY --from=build /kanae /kanae
 
 WORKDIR /kanae/
 
@@ -55,7 +54,13 @@ USER kanae
 
 EXPOSE 8000
 
-CMD ["/kanae/launcher.sh", "--bind", "0.0.0.0:8000"]
+CMD ["granian", "main:app", \
+     "--host", "0.0.0.0", \
+     "--interface", "asgi", \
+     "--loop", "uvloop", \
+     "--log-config", "logging.conf.json", \
+     "--access-log", \
+     "--metrics"]
 
 LABEL org.opencontainers.image.title="Kanae"
 LABEL org.opencontainers.image.description="Internal backend server for ACM @ UC Merced"

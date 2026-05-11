@@ -1,2 +1,0 @@
-CREATE DATABASE kratos;
-CREATE DATABASE keto;
