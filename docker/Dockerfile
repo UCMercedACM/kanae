@@ -16,7 +16,7 @@ ENV UV_NO_DEV=1
 # So we need both stages to be consistent to prevent broken-shebangs 
 WORKDIR /kanae/
 
-COPY pyproject.toml uv.lock gunicorn.conf.py logging.conf.json /kanae/
+COPY pyproject.toml uv.lock logging.conf.json /kanae/
 
 # Install dependencies through lockfile
 RUN --mount=type=cache,target=/root/.cache/uv \
