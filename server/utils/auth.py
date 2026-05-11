@@ -23,7 +23,7 @@ async def use_session(request: RouteRequest) -> KanaeSession:
         ... ): ...
     """
     cookie = request.cookies.get("ory_kratos_session")
-    session = await request.app.ory.whoami(cookie)
+    session = await request.app.ory.whoami(cookie) if cookie else None
 
     if not session:
         msg = "Authentication required"
