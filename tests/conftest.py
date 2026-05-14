@@ -3,7 +3,6 @@
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable, Generator
-from pathlib import Path
 from types import TracebackType
 from typing import Any, NamedTuple, Optional, Self, TypedDict, Unpack, cast
 from unittest.mock import Mock
@@ -13,7 +12,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
-from core import Kanae, KanaeConfig, find_config
 from fastapi import FastAPI, Request, Response
 from glide import (
     GlideClient,
@@ -32,6 +30,9 @@ from testcontainers.core.waiting_utils import (
     wait_for_logs,
 )
 from testcontainers.postgres import PostgresContainer
+from yarl import URL
+
+from core import Kanae, KanaeConfig, find_config
 from utils.glide import GlideManager
 from utils.limiter import get_remote_address
 from utils.limiter.extension import (
@@ -40,9 +41,7 @@ from utils.limiter.extension import (
     rate_limit_exceeded_handler,
 )
 from utils.limiter.middleware import LimiterASGIMiddleware, LimiterMiddleware
-from yarl import URL
 
-ROOT = Path(__file__).parents[2]
 CONFIG_PATH = find_config()
 
 config = KanaeConfig.load_from_file(CONFIG_PATH)

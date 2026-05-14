@@ -16,7 +16,7 @@ set -euo pipefail
 
 # ── locate ourselves ──────────────────────────────────────────────────────────
 # Resolve the project root so the script runs identically whether invoked from
-# the repo root, scripts/, docker/, server/, or an absolute path from outside.
+# the repo root, scripts/, docker/, src/, or an absolute path from outside.
 # Walks up from the script's own directory until it finds pyproject.toml.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 

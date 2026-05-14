@@ -5,6 +5,7 @@ from typing import Annotated, Literal, NamedTuple, Protocol
 
 from fastapi import Depends
 from fastapi.params import Depends as _Depends
+
 from utils.auth import use_session
 from utils.errors import ForbiddenError
 from utils.ory import KanaeSession, OryClient

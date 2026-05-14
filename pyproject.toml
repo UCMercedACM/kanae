@@ -44,7 +44,7 @@ test = [
 ]
 
 [tool.ty.src]
-include = ["server"]
+include = ["src"]
 exclude = [
     "__pycache__", 
     "docs",
@@ -53,11 +53,7 @@ exclude = [
 
 [tool.ruff]
 line-length = 88
-extend-include = [
-    "core.py",
-    "launcher.py",
-    "utils/**"
-]
+extend-include = ["src"]
 extend-exclude = ["**/__pycache__"]
 
 [tool.ruff.lint]
@@ -112,5 +108,5 @@ addopts = "-ra"
 testpaths = [
     "tests"
 ]
-pythonpath = ["server"]
+pythonpath = ["src"]
 asyncio_default_fixture_loop_scope = "function"

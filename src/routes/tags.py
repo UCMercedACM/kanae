@@ -2,6 +2,7 @@ from typing import Annotated, Optional
 
 from fastapi import Query
 from pydantic import BaseModel
+
 from utils.checks import Role, has_role
 from utils.errors import (
     NotFoundError,

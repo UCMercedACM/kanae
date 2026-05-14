@@ -11,14 +11,15 @@ from starlette.middleware.base import (
 )
 from starlette.routing import BaseRoute, Match
 
+from .extension import KanaeLimiter, rate_limit_exceeded_handler
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-    from core import Kanae
     from fastapi.responses import Response
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .extension import KanaeLimiter, rate_limit_exceeded_handler
+    from core import Kanae
 
 
 def _find_route_handler(

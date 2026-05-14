@@ -21,6 +21,7 @@ jobs:
 
     env:
       TESTCONTAINER_DOCKER_NETWORK: kanae-testcontainers
+      UV_NO_BUILD: true
       UV_NO_DEV: true
       UV_NO_DEFAULT_GROUPS: true
 
@@ -46,7 +47,7 @@ jobs:
 
       - name: Set up server configuration
         run: |
-          cp config.dist.yml server/config.yml
+          cp config.dist.yml src/config.yml
 
       - name: Create Docker network for running Testcontainers
         run: sudo docker network create ${{ env.TESTCONTAINER_DOCKER_NETWORK }}

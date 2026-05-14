@@ -19,6 +19,7 @@ jobs:
         version: ['3.12', '3.13', '3.14']
 
     env:
+      UV_NO_BUILD: true
       UV_NO_DEV: true
       UV_NO_DEFAULT_GROUPS: true
 
@@ -43,12 +44,12 @@ jobs:
           
       - name: Check typing
         run: |
-          uv run ty check server --error-on-warning
+          uv run ty check src --error-on-warning
 
       - name: Check codebase
         run: |
-          uv run ruff check server --exit-non-zero-on-fix
+          uv run ruff check src --exit-non-zero-on-fix
 
       - name: Check for formatting
         run: |
-          uv run ruff format server --check
+          uv run ruff format src --check

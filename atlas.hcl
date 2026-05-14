@@ -5,7 +5,7 @@ variable "url" {
 
 env "dev" {
   schema {
-    src = "file://server/schema.sql"
+    src = "file://src/schema.sql"
   }
   url = var.url
   dev = "docker://postgres/18/dev?search_path=public"
@@ -13,6 +13,6 @@ env "dev" {
 
 env "prod" {
   schema {
-    src = "file://server/schema.sql"
+    src = "file://src/schema.sql"
   }
 }
