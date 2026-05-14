@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict, Unpack
 
-from core import KanaeConfig, find_config
 from fastapi import APIRouter
+
+from core import KanaeConfig, find_config
 from utils.limiter import KanaeLimiter
 from utils.limiter.utils import get_remote_address
 

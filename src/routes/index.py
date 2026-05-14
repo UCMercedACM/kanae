@@ -1,4 +1,5 @@
 from fastapi.responses import RedirectResponse
+
 from utils.router import KanaeRouter
 
 router = KanaeRouter()

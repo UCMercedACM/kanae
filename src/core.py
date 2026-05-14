@@ -45,6 +45,7 @@ from prometheus_client import (
 from prometheus_fastapi_instrumentator import metrics, routing
 from pydantic import BaseModel
 from starlette.datastructures import Headers
+
 from utils.glide import GlideManager
 from utils.limiter.extension import (
     KanaeLimiter,
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 
     from starlette.types import Message, Receive, Scope, Send
+
     from utils.request import RouteRequest
 
 __title__ = "Kanae"
@@ -112,7 +114,7 @@ def _is_docker() -> bool:
 
 def find_config() -> Optional[Path]:
     base = Path("config.yml")
-    targets = [base, base.parent.joinpath("server", "config.yml")]
+    targets = [base, base.parent.joinpath("src", "config.yml")]
 
     return next((path.resolve() for path in targets if path.exists()), None)
 

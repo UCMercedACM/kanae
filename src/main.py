@@ -1,7 +1,8 @@
-from core import Kanae, KanaeConfig, find_config
 from fastapi_pagination import add_pagination
-from routes import router
 from starlette.middleware.cors import CORSMiddleware
+
+from core import Kanae, KanaeConfig, find_config
+from routes import router
 
 config = KanaeConfig.load_from_file(find_config())
 

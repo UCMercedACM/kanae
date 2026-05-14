@@ -11,6 +11,7 @@ from dateutil import tz
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, Query
 from pydantic import BaseModel, model_validator
+
 from utils.auth import use_session
 from utils.checks import Event, Role, has_any_role, has_permissions
 from utils.errors import ConflictError, ForbiddenError, NotFoundError

@@ -10,9 +10,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
+from yarl import URL
+
 from utils.limiter import get_ipaddr
 from utils.limiter.extension import KanaeLimiter
-from yarl import URL
 
 AppFactory = Callable[..., tuple[FastAPI, KanaeLimiter]]
 

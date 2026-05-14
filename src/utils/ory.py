@@ -10,6 +10,8 @@ from aiohttp.client import _RequestOptions
 from blake3 import blake3
 from fastapi import status
 from pydantic import BaseModel
+from yarl import URL
+
 from utils.cache import ORJSONSerializer, PydanticSerializer, ValkeyCache, cached_method
 from utils.errors import (
     BadGatewayError,
@@ -17,7 +19,6 @@ from utils.errors import (
     ServiceUnavailableError,
 )
 from utils.glide import GlideManager
-from yarl import URL
 
 ### Structs / TypedDicts
 

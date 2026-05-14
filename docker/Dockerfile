@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-build --frozen --no-install-project
 
 # Add project source code
-COPY ./server /kanae
+COPY ./src /kanae
 
 # Install the rest (this allows for optimal caching)
 RUN --mount=type=cache,target=/root/.cache/uv \

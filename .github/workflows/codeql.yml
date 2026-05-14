@@ -19,6 +19,7 @@ jobs:
       security-events: write
 
     env:
+      UV_NO_BUILD: true
       UV_NO_DEFAULT_GROUPS: true
 
     steps:
