@@ -744,7 +744,7 @@ class KanaeLimiter:
                         )
                         request.state._rate_limiting_complete = True
 
-                    response = await func(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+                    response = await func(*args, **kwargs)
 
                     if self._headers_enabled:
                         if not isinstance(response, Response):
@@ -763,7 +763,7 @@ class KanaeLimiter:
                 return async_wrapper  # ty: ignore[invalid-return-type]
             return func
 
-        return decorator  # ty: ignore[invalid-return-type]
+        return decorator
 
     def limit[**P, T](
         self,
