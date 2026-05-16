@@ -32,7 +32,7 @@ dev = [
 ]
 lint = [
     "ruff~=0.15.11",
-    "ty==0.0.35",
+    "ty==0.0.36",
 ]
 test = [
     "asgi-lifespan~=2.1.0",
