@@ -20,6 +20,8 @@ CREATE TYPE project_role AS ENUM (
     'manager'
 );
 
+CREATE TYPE media_type AS ENUM ('image', 'video');
+
 CREATE TABLE IF NOT EXISTS members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT,
@@ -123,3 +125,27 @@ CREATE TABLE IF NOT EXISTS project_members (
     joined_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
     PRIMARY KEY (project_id, member_id)
 );
+
+CREATE TABLE IF NOT EXISTS media (
+    hash TEXT PRIMARY KEY,
+    content_type TEXT,
+    kind media_type GENERATED ALWAYS AS (
+        CASE
+            WHEN content_type LIKE 'image/%' THEN 'image'::media_type
+            WHEN content_type LIKE 'video/%' THEN 'video'::media_type
+        END
+    ) STORED,
+    size BIGINT,
+    creator_id UUID REFERENCES members (id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+CREATE TABLE IF NOT EXISTS project_media (
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+    media_hash TEXT REFERENCES media(hash) ON DELETE CASCADE,
+    position INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+    PRIMARY KEY (project_id, media_hash)
+);
+
+CREATE INDEX IF NOT EXISTS project_media_project_idx ON project_media (project_id, position);

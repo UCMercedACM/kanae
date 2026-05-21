@@ -5,6 +5,7 @@ description = "Internal backend server for ACM @ UC Merced"
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
+    "aiobotocore~=3.7.0",
     "aiocache~=0.12.3",
     "aiohttp[speedups]~=3.13.5",
     "argon2-cffi~=25.1.0",
@@ -26,6 +27,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "types-aiobotocore[s3]~=3.7.0",
     "watchfiles~=1.1.1",
     { include-group = "lint" },
     { include-group = "test" },

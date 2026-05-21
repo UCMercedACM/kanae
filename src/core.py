@@ -27,6 +27,8 @@ import asyncpg
 import click
 import orjson
 import yaml
+from aiobotocore.config import AioConfig
+from aiobotocore.session import AioSession
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, status
@@ -58,6 +60,7 @@ from utils.responses import (
     ORJSONResponse,
     RequestValidationErrorResponse,
 )
+from utils.storage import StorageClient
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
@@ -186,10 +189,19 @@ class InternalKanaeConfig(BaseModel, frozen=True):
     limiter: LimiterConfig
 
 
+class StorageConfig(BaseModel, frozen=True):
+    url: str
+    region: str = "garage"
+    bucket: str
+    key_id: str
+    access_key: str
+
+
 # Final client to use
 class KanaeConfig(BaseModel):
     kanae: InternalKanaeConfig
     ory: OryConfig
+    storage: StorageConfig
     postgres_uri: str
 
     @classmethod
@@ -731,6 +743,7 @@ class PrometheusInstrumentator:
 class Kanae(FastAPI):
     pool: asyncpg.Pool
     session: aiohttp.ClientSession
+    storage: StorageClient
     glide: GlideManager
 
     limiter: KanaeLimiter
@@ -752,6 +765,7 @@ class Kanae(FastAPI):
             lifespan=self.lifespan,
         )
 
+        self._boto_session = AioSession()
         self._logger = logging.getLogger("kanae.core")
 
         self.config = config
@@ -831,10 +845,21 @@ class Kanae(FastAPI):
     async def lifespan(self, app: Self) -> AsyncGenerator[None]:
         async with (
             asyncpg.create_pool(dsn=self.config.postgres_uri, init=init) as app.pool,
-            aiohttp.ClientSession() as app.session,  # ty: ignore[invalid-assignment]
+            aiohttp.ClientSession() as app.session,  # ty: ignore[invalid-assignment],
             GlideManager(uri=app.limiter.storage_uri) as app.glide,
+            self._boto_session.create_client(
+                "s3",
+                endpoint_url=self.config.storage.url,
+                region_name=self.config.storage.region,
+                aws_access_key_id=self.config.storage.key_id,
+                aws_secret_access_key=self.config.storage.access_key,
+                config=AioConfig(signature_version="s3v4"),
+            ) as s3_client,
         ):
             app.ory = OryClient(self.config.ory, session=app.session, glide=app.glide)
+            app.storage = StorageClient(
+                self.config.storage, client=s3_client, glide=app.glide
+            )
             app.limiter.attach(app.glide)
 
             yield
