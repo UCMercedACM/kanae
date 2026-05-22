@@ -5,7 +5,7 @@
 Association for Computing Machinery at UC Merced's backend web server
 
 > [!IMPORTANT]
-> We would prefer if you do not run instances of Kanae (included self-hosted ones). This API is semi-public, thus the source code is provided as-is and is for educational and development purposes only.
+> We would prefer if you do not run instances of Kanae (included self-hosted ones). This API is semi-public, thus the source code is provided as-is and is for educational and development purposes only
 
 ## What is Kanae?
 
