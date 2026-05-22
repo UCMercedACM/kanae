@@ -71,6 +71,27 @@ depends = ["server:check-env"]
 description = "Stops the development databases through Docker Compose"
 run = "docker compose -f docker/docker-compose.dev.yml stop"
 
+[tasks."garage:generate:keys"]
+description = "Generate Garage RPC/admin/metrics secrets into docker/.env. Appends — re-run to rotate."
+dir = "{{ config_root }}"
+run = """
+  {
+    echo "GARAGE_RPC_SECRET=$(openssl rand -hex 32)"
+    echo "GARAGE_ADMIN_TOKEN=$(openssl rand -base64 32)"
+    echo "GARAGE_METRICS_TOKEN=$(openssl rand -base64 32)"
+  } >> docker/.env
+"""
+run_windows = """
+  if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+      throw "openssl is not available on PATH. Install OpenSSL for Windows (e.g. via winget, scoop, or chocolatey) and retry."
+  }
+  @"
+  GARAGE_RPC_SECRET=$(openssl rand -hex 32)
+  GARAGE_ADMIN_TOKEN=$(openssl rand -base64 32)
+  GARAGE_METRICS_TOKEN=$(openssl rand -base64 32)
+  "@ | Add-Content -Path docker\\.env
+"""
+
 [tasks."garage:status"]
 alias = ["garage:s"]
 description = "Show garage S3 cluster status"

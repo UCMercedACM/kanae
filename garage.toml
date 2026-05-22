@@ -4,9 +4,11 @@ db_engine = "sqlite"
 
 replication_factor = 1
 
+# Note that rpc_secret, admin_token, and metrics_tokens are supplied via docker/.env instead
+# Their equivalents are: GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN, GARAGE_METRICS_TOKEN
+# Use "mise garage:generate:keys" to obtain them
 rpc_bind_addr = "[::]:3901"
 rpc_public_addr = "127.0.0.1:3901"
-rpc_secret = "$(openssl rand -hex 32)"
 
 [s3_api]
 s3_region = "garage"
@@ -23,5 +25,3 @@ api_bind_addr = "[::]:3904"
 
 [admin]
 api_bind_addr = "[::]:3903"
-admin_token = "$(openssl rand -base64 32)"
-metrics_token = "$(openssl rand -base64 32)"
