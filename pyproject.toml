@@ -27,12 +27,12 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "types-aiobotocore[s3]~=3.7.0",
     "watchfiles~=1.1.1",
     { include-group = "lint" },
     { include-group = "test" },
 ]
 lint = [
+    "types-aiobotocore[s3]~=3.7.0",
     "ruff~=0.15.11",
     "ty==0.0.37",
 ]
