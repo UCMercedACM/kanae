@@ -8,6 +8,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from core import MultipartUploadChunks, UploadChunk
 from utils.auth import use_session
 from utils.checks import Project, Role, check_any, has_permissions, has_role
 from utils.errors import BadGatewayError, BadRequestError, ConflictError, NotFoundError
@@ -25,7 +26,6 @@ from utils.responses import (
     SuccessResponse,
 )
 from utils.router import KanaeRouter
-from utils.storage import MultipartUploadChunks, UploadChunk
 
 router = KanaeRouter(tags=["Projects"])
 
@@ -713,7 +713,6 @@ async def reorder_project_media(
     session: Annotated[KanaeSession, Depends(use_session)],
 ) -> SuccessResponse:
     """Reorders the positions of the order on how media will be displayed within a project"""
-
     query = """
     WITH desired AS (
         SELECT hash, ord
@@ -753,7 +752,6 @@ async def remove_project_media(
     media_hash: str,
 ) -> DeleteResponse:
     """Removes the specified media from the associated project"""
-
     query = """
     DELETE FROM project_media
     WHERE project_id = $1 AND media_hash = $2;
