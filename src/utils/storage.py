@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 from pydantic import BaseModel
 
-from utils.cache import PydanticSerializer, ValkeyCache, cached_method
+from utils.cache import ORJSONSerializer, ValkeyCache, cached_method
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,10 +25,6 @@ _S3_MIN_CHUNK_SIZE = 5 * 1024 * 1024
 _TARGET_CHUNK_COUNT = 128
 _ONE_MIB = 1024 * 1024
 _TARGET_BUCKET = _TARGET_CHUNK_COUNT * _ONE_MIB  # one MiB-step per bucket of file size
-
-
-class PresignedURL(BaseModel, frozen=True):
-    url: str
 
 
 class UploadChunk(TypedDict):
@@ -66,7 +62,7 @@ class StorageClient:
         self.cache = ValkeyCache(
             glide.client,
             namespace="media:get-url",
-            serializer=PydanticSerializer(PresignedURL),
+            serializer=ORJSONSerializer(),
         )
 
     def _build_key(self, media_hash: str, content_type: str) -> str:
@@ -114,7 +110,7 @@ class StorageClient:
                 index=index,
                 url=(
                     await self.client.generate_presigned_url(
-                        "upload_post",
+                        "upload_part",
                         Params={**params, "PartNumber": index},
                         ExpiresIn=_PRESIGN_PUT_TTL,
                     )

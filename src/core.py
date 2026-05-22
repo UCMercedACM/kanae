@@ -194,7 +194,7 @@ class StorageConfig(BaseModel, frozen=True):
     region: str = "garage"
     bucket: str
     key_id: str
-    access_key: str
+    secret_key: str
 
 
 # Final client to use
@@ -852,7 +852,7 @@ class Kanae(FastAPI):
                 endpoint_url=self.config.storage.url,
                 region_name=self.config.storage.region,
                 aws_access_key_id=self.config.storage.key_id,
-                aws_secret_access_key=self.config.storage.access_key,
+                aws_secret_access_key=self.config.storage.secret_key,
                 config=AioConfig(signature_version="s3v4"),
             ) as s3_client,
         ):

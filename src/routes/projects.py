@@ -506,7 +506,7 @@ async def upload_media(
     ),
     link AS (
         INSERT INTO project_media (project_id, media_hash)
-        SELECT $2, hash FROM existing
+        SELECT $2, hash FROM media_exists
         ON CONFLICT DO NOTHING
     )
     SELECT hash, content_type, kind, size, created_at FROM media_exists;
@@ -514,7 +514,8 @@ async def upload_media(
 
     exists = await request.app.pool.fetchrow(query, req.hash, project_id)
     if exists:
-        return MediaRecord(**dict(exists))
+        url = await request.app.storage.get_url(exists["hash"], exists["content_type"])
+        return MediaRecord(**dict(exists), url=url)
 
     if req.size <= _SINGLE_PUT_MAX:
         url = await request.app.storage.upload(req.hash, content_type=req.content_type)
@@ -592,48 +593,48 @@ async def commit_media(
             msg = "Failed to complete the multipart upload for some reason"
             raise BadGatewayError(msg)
 
-        head = await request.app.storage.head(req.hash, content_type=req.content_type)
-        if head["ContentLength"] != req.size:
-            await request.app.storage.delete(req.hash, content_type=req.content_type)
+    head = await request.app.storage.head(req.hash, content_type=req.content_type)
+    if head["ContentLength"] != req.size:
+        await request.app.storage.delete(req.hash, content_type=req.content_type)
 
-            msg = "Uploaded size does not match declared size"
-            raise ConflictError(msg)
+        msg = "Uploaded size does not match declared size"
+        raise ConflictError(msg)
 
-        query = """
-        WITH insert_media AS (
-            INSERT INTO media (hash, content_type, size, creator_id)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (hash) DO UPDATE
-                SET hash = EXCLUDED.hash
-            RETURNING hash, content_type, kind, size, created_at
-        ), link AS (
-            INSERT INTO project_media (project_id, media_hash)
-            SELECT $5, hash FROM insert_media
-            ON CONFLICT DO NOTHING
-        )
-        SELECT hash, content_type, kind, size, created_at FROM insert_media;
-        """
-        async with request.app.pool.acquire() as connection:
-            tr = connection.transaction()
-            await tr.start()
+    query = """
+    WITH insert_media AS (
+        INSERT INTO media (hash, content_type, size, creator_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (hash) DO UPDATE
+            SET hash = EXCLUDED.hash
+        RETURNING hash, content_type, kind, size, created_at
+    ), link AS (
+        INSERT INTO project_media (project_id, media_hash)
+        SELECT $5, hash FROM insert_media
+        ON CONFLICT DO NOTHING
+    )
+    SELECT hash, content_type, kind, size, created_at FROM insert_media;
+    """
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
 
-            try:
-                record = await connection.fetchrow(
-                    query,
-                    req.hash,
-                    req.content_type,
-                    req.size,
-                    session.identity.id,
-                    project_id,
-                )
-            except asyncpg.ForeignKeyViolationError:
-                await tr.rollback()
+        try:
+            record = await connection.fetchrow(
+                query,
+                req.hash,
+                req.content_type,
+                req.size,
+                session.identity.id,
+                project_id,
+            )
+        except asyncpg.ForeignKeyViolationError:
+            await tr.rollback()
 
-                msg = "Project or creator no longer exists"
-                raise NotFoundError(msg)
+            msg = "Project or creator no longer exists"
+            raise NotFoundError(msg)
 
-            else:
-                await tr.commit()
+        else:
+            await tr.commit()
 
     url = await request.app.storage.get_url(record["hash"], record["content_type"])
     return MediaRecord(
@@ -722,7 +723,7 @@ async def reorder_project_media(
         SET position = desired.ord - 1
         FROM desired
         WHERE pm.project_id = $1
-          AND pm.media_blake3 = desired.hash
+          AND pm.media_hash = desired.hash
         RETURNING 1
     )
     SELECT COUNT(*) FROM updated

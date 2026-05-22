@@ -3,6 +3,7 @@ redactions = ["DB_PASSWORD"]
 [tools]
 uv = "0.11.14"
 atlas = "0.38.0"
+
 yq = "4.53.2"
 
 
@@ -73,7 +74,7 @@ run = "docker compose -f docker/docker-compose.dev.yml stop"
 [tasks."garage:status"]
 alias = ["garage:s"]
 description = "Show garage S3 cluster status"
-dir = "{{ config_root }}/backend"
+dir = "{{ config_root }}"
 run = "docker compose -f docker/docker-compose.dev.yml exec garage /garage status"
 
 [tasks."garage:setup"]
@@ -91,7 +92,7 @@ run = """
 
   NODE_ID=$(docker compose -f docker/docker-compose.dev.yml exec garage /garage status 2>/dev/null | awk '/HEALTHY NODES/{f=2; next} f==2{f=1; next} f==1 && NF{print $1; exit}')
   echo "Assigning layout to node: $NODE_ID"
-  docker compose -f docker/docker-compose.dev.yml exec garage /garage layout assign -z dc1 -c 1G "$NODE_ID"
+  docker compose -f docker/docker-compose.dev.yml exec garage /garage layout assign -z dc1 -c 5G "$NODE_ID"
   docker compose -f docker/docker-compose.dev.yml exec garage /garage layout apply --version 1
   echo "Importing access key..."
   docker compose -f docker/docker-compose.dev.yml exec garage /garage key import --yes -n kanae "$GARAGE_KEY_ID" "$GARAGE_SECRET_KEY"
