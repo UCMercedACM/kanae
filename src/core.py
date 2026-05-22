@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import http
+import itertools
 import logging
+import mimetypes
 import re
 import sys
 import time
@@ -16,6 +18,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    NamedTuple,
     Optional,
     Self,
     TypedDict,
@@ -27,6 +30,8 @@ import asyncpg
 import click
 import orjson
 import yaml
+from aiobotocore.config import AioConfig
+from aiobotocore.session import AioSession
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, status
@@ -46,6 +51,7 @@ from prometheus_fastapi_instrumentator import metrics, routing
 from pydantic import BaseModel
 from starlette.datastructures import Headers
 
+from utils.cache import ORJSONSerializer, ValkeyCache, cached_method
 from utils.glide import GlideManager
 from utils.limiter.extension import (
     KanaeLimiter,
@@ -60,11 +66,21 @@ from utils.responses import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+    from collections.abc import (
+        AsyncGenerator,
+        Awaitable,
+        Callable,
+        Generator,
+        Iterator,
+        Sequence,
+    )
 
     from starlette.types import Message, Receive, Scope, Send
+    from types_aiobotocore_s3 import S3Client
+    from types_aiobotocore_s3.type_defs import HeadObjectOutputTypeDef
 
     from utils.request import RouteRequest
+
 
 __title__ = "Kanae"
 __description__ = """
@@ -102,6 +118,15 @@ LATENCY_LOWER_BUCKETS = (0.1, 0.5, 1)
 
 MAX_BYTES = 32 * 1024 * 1024  # 32 MB
 BACKUP_COUNT = 10
+
+_PRESIGN_PUT_TTL = 900  # 15 min
+_PRESIGN_GET_TTL = 300  # 5 min
+_GET_URL_CACHE_TTL = max(_PRESIGN_GET_TTL - 30, 30)
+
+_S3_MIN_CHUNK_SIZE = 5 * 1024 * 1024
+_TARGET_CHUNK_COUNT = 128
+_ONE_MIB = 1024 * 1024
+_TARGET_BUCKET = _TARGET_CHUNK_COUNT * _ONE_MIB
 
 
 def _is_docker() -> bool:
@@ -186,10 +211,19 @@ class InternalKanaeConfig(BaseModel, frozen=True):
     limiter: LimiterConfig
 
 
+class StorageConfig(BaseModel, frozen=True):
+    url: str
+    region: str = "garage"
+    bucket: str
+    key_id: str
+    secret_key: str
+
+
 # Final client to use
 class KanaeConfig(BaseModel):
     kanae: InternalKanaeConfig
     ory: OryConfig
+    storage: StorageConfig
     postgres_uri: str
 
     @classmethod
@@ -343,6 +377,219 @@ class AccessFormatter(ColourizedFormatter):
         copied_dict["request_line"] = request_line
         copied_dict["status_code"] = self.get_status_code(args["status"])
         return logging.Formatter.formatMessage(self, record_copy)
+
+
+### S3 Storage client
+
+
+class UploadChunk(TypedDict):
+    index: int
+    url: str
+    size: int
+
+
+class MultipartChunks(NamedTuple):
+    size: int
+    chunks: Iterator[int]
+
+
+class MultipartUpload(BaseModel, frozen=True):
+    upload_id: str
+    chunk_size: int
+    chunks: list[UploadChunk]
+
+
+class MultipartUploadChunks(NamedTuple):
+    chunk_index: int
+    etag: str
+
+
+class StorageClient:
+    def __init__(
+        self, config: StorageConfig, *, client: S3Client, glide: GlideManager
+    ) -> None:
+        self.bucket = config.bucket
+        self.client = client
+
+        self._config = config
+        self._cache = ValkeyCache(
+            glide.client,
+            namespace="media:get-url",
+            serializer=ORJSONSerializer(),
+        )
+
+    def _build_key(self, media_hash: str, content_type: str) -> str:
+        ext = mimetypes.guess_extension(content_type)
+        return f"media/{media_hash}{ext}"
+
+    # Same approach as this: https://stackoverflow.com/a/42179163
+    def _build_multipart(self, size: int) -> MultipartChunks:
+        chunk_size = max(
+            (size + _TARGET_BUCKET - 1) // _TARGET_BUCKET * _ONE_MIB,
+            _S3_MIN_CHUNK_SIZE,
+        )
+        full, tail = divmod(size, chunk_size)
+        return MultipartChunks(
+            size=chunk_size,
+            chunks=itertools.chain(
+                itertools.repeat(chunk_size, full), (tail,) if tail else ()
+            ),
+        )
+
+    async def upload(self, media_hash: str, *, content_type: str) -> str:
+        """Generate a presigned PUT URL for a single-request upload.
+
+        Args:
+            media_hash (str): BLAKE3 content-address hash of the file.
+            content_type (str): MIME type of the file.
+
+        Returns:
+            str: Presigned URL the client uses to PUT the bytes directly.
+        """
+        return await self.client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": self._build_key(media_hash, content_type),
+                "ContentType": content_type,
+            },
+            ExpiresIn=_PRESIGN_PUT_TTL,
+        )
+
+    async def init_multipart(
+        self, media_hash: str, *, content_type: str, size: int
+    ) -> MultipartUpload:
+        """Initiate a multipart upload and presign per-part PUT URLs.
+
+        Args:
+            media_hash (str): BLAKE3 content-address hash of the file.
+            content_type (str): MIME type of the file.
+            size (int): Total file size in bytes, used to derive chunk count.
+
+        Returns:
+            MultipartUpload: Bundle of the upload id and the presigned per-part URLs.
+        """
+        chunk_size, chunks = self._build_multipart(size)
+        key = self._build_key(media_hash, content_type)
+        response = await self.client.create_multipart_upload(
+            Bucket=self.bucket, Key=key, ContentType=content_type
+        )
+
+        params = {"Bucket": self.bucket, "Key": key, "UploadId": response["UploadId"]}
+
+        processed_chunks = [
+            UploadChunk(
+                index=index,
+                url=(
+                    await self.client.generate_presigned_url(
+                        "upload_part",
+                        Params={**params, "PartNumber": index},
+                        ExpiresIn=_PRESIGN_PUT_TTL,
+                    )
+                ),
+                size=chunk_bytes,
+            )
+            for index, chunk_bytes in enumerate(chunks, start=1)
+        ]
+
+        return MultipartUpload(
+            upload_id=response["UploadId"],
+            chunk_size=chunk_size,
+            chunks=processed_chunks,
+        )
+
+    async def finish_multipart(
+        self,
+        media_hash: str,
+        *,
+        upload_id: str,
+        content_type: str,
+        chunks: list[MultipartUploadChunks],
+    ) -> None:
+        """Complete a multipart upload by stitching the previously-uploaded parts.
+
+        Args:
+            media_hash (str): BLAKE3 content-address hash of the file.
+            upload_id (str): Multipart upload id returned by `init_multipart`.
+            content_type (str): MIME type of the file.
+            chunks (list[MultipartUploadChunks]): Part numbers paired with the ETags returned for each `upload_part` call.
+        """
+        await self.client.complete_multipart_upload(
+            Bucket=self.bucket,
+            Key=self._build_key(media_hash, content_type),
+            UploadId=upload_id,
+            MultipartUpload={
+                "Parts": [{"PartNumber": index, "ETag": etag} for index, etag in chunks]
+            },
+        )
+
+    async def cancel_multipart(
+        self, upload_id: str, media_hash: str, *, content_type: str
+    ) -> None:
+        """Abort a multipart upload and discard any parts already uploaded.
+
+        Args:
+            upload_id (str): Multipart upload id returned by `init_multipart`.
+            media_hash (str): BLAKE3 content-address hash of the file.
+            content_type (str): MIME type of the file.
+        """
+        await self.client.abort_multipart_upload(
+            Bucket=self.bucket,
+            Key=self._build_key(media_hash, content_type),
+            UploadId=upload_id,
+        )
+
+    async def head(
+        self,
+        media_hash: str,
+        *,
+        content_type: str,
+    ) -> HeadObjectOutputTypeDef:
+        """Fetch the stored object's metadata for size or ETag verification.
+
+        Args:
+            media_hash (str): BLAKE3 content-address hash of the file.
+            content_type (str): MIME type of the file.
+
+        Returns:
+            HeadObjectOutputTypeDef: S3 HeadObject response payload.
+        """
+        return await self.client.head_object(
+            Bucket=self.bucket,
+            Key=self._build_key(media_hash, content_type),
+        )
+
+    async def delete(self, media_hash: str, *, content_type: str) -> None:
+        """Remove the object from storage.
+
+        Args:
+            media_hash (str): BLAKE3 content-address hash of the file.
+            content_type (str): MIME type of the file.
+        """
+        await self.client.delete_object(
+            Bucket=self.bucket,
+            Key=self._build_key(media_hash, content_type),
+        )
+
+    @cached_method("_cache", ttl=_GET_URL_CACHE_TTL, noself=True)
+    async def get_url(self, media_hash: str, content_type: str) -> str:
+        """Return a presigned GET URL for the object, cached in Valkey.
+
+        Args:
+            media_hash (str): BLAKE3 content-address hash of the file.
+            content_type (str): MIME type of the file.
+
+        Returns:
+            str: Presigned GET URL the client can use to read the object.
+        """
+        return await self.client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": self._build_key(media_hash, content_type),
+            },
+            ExpiresIn=_PRESIGN_GET_TTL,
+        )
 
 
 ### Prometheus instrumentator
@@ -731,6 +978,7 @@ class PrometheusInstrumentator:
 class Kanae(FastAPI):
     pool: asyncpg.Pool
     session: aiohttp.ClientSession
+    storage: StorageClient
     glide: GlideManager
 
     limiter: KanaeLimiter
@@ -752,6 +1000,7 @@ class Kanae(FastAPI):
             lifespan=self.lifespan,
         )
 
+        self._boto_session = AioSession()
         self._logger = logging.getLogger("kanae.core")
 
         self.config = config
@@ -831,10 +1080,21 @@ class Kanae(FastAPI):
     async def lifespan(self, app: Self) -> AsyncGenerator[None]:
         async with (
             asyncpg.create_pool(dsn=self.config.postgres_uri, init=init) as app.pool,
-            aiohttp.ClientSession() as app.session,  # ty: ignore[invalid-assignment]
+            aiohttp.ClientSession() as app.session,  # ty: ignore[invalid-assignment],
             GlideManager(uri=app.limiter.storage_uri) as app.glide,
+            self._boto_session.create_client(
+                "s3",
+                endpoint_url=self.config.storage.url,
+                region_name=self.config.storage.region,
+                aws_access_key_id=self.config.storage.key_id,
+                aws_secret_access_key=self.config.storage.secret_key,
+                config=AioConfig(signature_version="s3v4"),
+            ) as s3_client,
         ):
             app.ory = OryClient(self.config.ory, session=app.session, glide=app.glide)
+            app.storage = StorageClient(
+                self.config.storage, client=s3_client, glide=app.glide
+            )
             app.limiter.attach(app.glide)
 
             yield

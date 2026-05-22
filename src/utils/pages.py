@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     import asyncpg
-    from fastapi_pagination.types import AdditionalData, AsyncItemsTransformer
+    from fastapi_pagination.types import AsyncItemsTransformer
 
 
 def create_paginate_query_from_text(query: str, params: AbstractParams) -> str:
@@ -36,7 +36,7 @@ async def paginate(
     *args: object,
     transformer: Optional[AsyncItemsTransformer] = None,
     params: Optional[KanaeParams] = None,
-    additional_data: Optional[AdditionalData] = None,
+    additional_data: Optional[dict[str, Any]] = None,
 ) -> AbstractPage[Any]:
     params, raw_params = verify_params(params, "limit-offset")
 

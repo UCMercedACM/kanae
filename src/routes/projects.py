@@ -1,27 +1,53 @@
+import asyncio
 import datetime
 import uuid
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional, TypedDict
 
 import asyncpg
-from fastapi import Depends, HTTPException, Query
+from botocore.exceptions import BotoCoreError, ClientError
+from fastapi import Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from core import MultipartUploadChunks, UploadChunk
 from utils.auth import use_session
 from utils.checks import Project, Role, check_any, has_permissions, has_role
-from utils.errors import BadRequestError, ConflictError, NotFoundError
+from utils.errors import BadGatewayError, BadRequestError, ConflictError, NotFoundError
 from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.responses import (
+    BadRequestResponse,
     ConflictResponse,
     DeleteResponse,
+    ForbiddenResponse,
     HTTPExceptionResponse,
     JoinResponse,
     NotFoundResponse,
+    SuccessResponse,
 )
 from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Projects"])
+
+_SINGLE_PUT_MAX = 16 * 1024 * 1024  # 16 MB — below this, single PUT
+_MAX_IMAGE_SIZE = 32 * 1024 * 1024  # 32 MB
+_MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
+
+_ALLOWED_IMAGE_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+    }
+)
+_ALLOWED_VIDEO_TYPES = frozenset(
+    {
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+    }
+)
 
 
 class ProjectMember(BaseModel, frozen=True):
@@ -395,3 +421,363 @@ async def modify_member(
     """
     await request.app.pool.execute(query, project_id, req.id, req.role)
     return DeleteResponse()
+
+
+def _validate_media(content_type: str, size: int) -> None:
+    """Raise if `(content_type, size)` isn't a permissible media upload.
+
+    Resolves the kind from the content-type allow-list (415 on miss), then
+    enforces the per-kind size cap (400 on non-positive, 413 over the cap).
+    No return — the DB derives `kind` from `content_type` via a generated
+    column, so callers don't need it.
+    """
+    if content_type in _ALLOWED_IMAGE_TYPES:
+        cap, label = _MAX_IMAGE_SIZE, "Image"
+    elif content_type in _ALLOWED_VIDEO_TYPES:
+        cap, label = _MAX_VIDEO_SIZE, "Video"
+    else:
+        msg = f"Unsupported content type: {content_type}"
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=msg,
+        )
+
+    if size <= 0:
+        msg = "Size must be positive"
+        raise BadRequestError(msg)
+
+    if size > cap:
+        msg = f"{label} size {size} exceeds limit {cap}"
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=msg,
+        )
+
+
+class SimpleUploadResponse(BaseModel, frozen=True):
+    url: str
+
+
+class MultipartUploadResponse(BaseModel, frozen=True):
+    upload_id: str
+    size: int
+    chunks: list[UploadChunk]
+
+
+class MediaRecord(BaseModel, frozen=True):
+    hash: str
+    content_type: str
+    kind: Literal["image", "video"]
+    size: int
+    created_at: datetime.datetime
+    url: str
+
+
+class UploadRequest(BaseModel, frozen=True):
+    hash: str
+    content_type: str
+    size: int
+
+
+@router.post(
+    "/projects/{project_id}/media/upload",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        400: {"model": BadRequestResponse},
+        403: {"model": ForbiddenResponse},
+        413: {"model": HTTPExceptionResponse},
+        415: {"model": HTTPExceptionResponse},
+    },
+)
+async def upload_media(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: UploadRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> MediaRecord | SimpleUploadResponse | MultipartUploadResponse:
+    """Begin a media upload by minting presigned URL(s) or returning the existing record"""
+    _validate_media(req.content_type, req.size)
+
+    query = """
+    WITH media_exists AS (
+        SELECT hash, content_type, kind, size, created_at
+        FROM media
+        WHERE hash = $1
+    ),
+    link AS (
+        INSERT INTO project_media (project_id, media_hash)
+        SELECT $2, hash FROM media_exists
+        ON CONFLICT DO NOTHING
+    )
+    SELECT hash, content_type, kind, size, created_at FROM media_exists;
+    """
+
+    exists = await request.app.pool.fetchrow(query, req.hash, project_id)
+    if exists:
+        url = await request.app.storage.get_url(exists["hash"], exists["content_type"])
+        return MediaRecord(**dict(exists), url=url)
+
+    if req.size <= _SINGLE_PUT_MAX:
+        url = await request.app.storage.upload(req.hash, content_type=req.content_type)
+        return SimpleUploadResponse(url=url)
+
+    multipart = await request.app.storage.init_multipart(
+        req.hash, content_type=req.content_type, size=req.size
+    )
+    return MultipartUploadResponse(
+        upload_id=multipart.upload_id,
+        size=multipart.chunk_size,
+        chunks=multipart.chunks,
+    )
+
+
+class CompletedChunk(TypedDict):
+    number: int
+    etag: str
+
+
+class CommitRequest(BaseModel, frozen=True):
+    hash: str
+    content_type: str
+    size: int
+    upload_id: Optional[str] = None
+    chunks: Optional[list[CompletedChunk]] = None
+
+
+@router.post(
+    "/projects/{project_id}/media/commit",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": MediaRecord},
+        400: {"model": BadRequestResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
+        413: {"model": HTTPExceptionResponse},
+        415: {"model": HTTPExceptionResponse},
+        502: {"model": HTTPExceptionResponse},
+    },
+)
+async def commit_media(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: CommitRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> MediaRecord:
+    """Finalize a media upload after the raw data are in storage"""
+    _validate_media(req.content_type, req.size)
+
+    if (req.upload_id is None) ^ (req.chunks is None):
+        msg = "upload_id and parts must be provided together"
+        raise BadRequestError(msg)
+
+    if req.upload_id is not None and req.chunks is not None:
+        try:
+            await request.app.storage.finish_multipart(
+                req.hash,
+                upload_id=req.upload_id,
+                content_type=req.content_type,
+                chunks=[
+                    MultipartUploadChunks(
+                        chunk_index=chunk["number"], etag=chunk["etag"]
+                    )
+                    for chunk in req.chunks
+                ],
+            )
+
+        except (BotoCoreError, ClientError):
+            await request.app.storage.cancel_multipart(
+                req.upload_id, req.hash, content_type=req.content_type
+            )
+
+            msg = "Failed to complete the multipart upload for some reason"
+            raise BadGatewayError(msg)
+
+    head = await request.app.storage.head(req.hash, content_type=req.content_type)
+    if head["ContentLength"] != req.size:
+        await request.app.storage.delete(req.hash, content_type=req.content_type)
+
+        msg = "Uploaded size does not match declared size"
+        raise ConflictError(msg)
+
+    query = """
+    WITH insert_media AS (
+        INSERT INTO media (hash, content_type, size, creator_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (hash) DO UPDATE
+            SET hash = EXCLUDED.hash
+        RETURNING hash, content_type, kind, size, created_at
+    ), link AS (
+        INSERT INTO project_media (project_id, media_hash)
+        SELECT $5, hash FROM insert_media
+        ON CONFLICT DO NOTHING
+    )
+    SELECT hash, content_type, kind, size, created_at FROM insert_media;
+    """
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
+
+        try:
+            record = await connection.fetchrow(
+                query,
+                req.hash,
+                req.content_type,
+                req.size,
+                session.identity.id,
+                project_id,
+            )
+        except asyncpg.ForeignKeyViolationError:
+            await tr.rollback()
+
+            msg = "Project or creator no longer exists"
+            raise NotFoundError(msg)
+
+        else:
+            await tr.commit()
+
+    url = await request.app.storage.get_url(record["hash"], record["content_type"])
+    return MediaRecord(
+        hash=record["hash"],
+        content_type=record["content_type"],
+        kind=record["kind"],
+        size=record["size"],
+        created_at=record["created_at"],
+        url=url,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/media",
+    dependencies=[has_permissions(Project.view)],
+    responses={
+        200: {"model": list[MediaRecord]},
+        403: {"model": ForbiddenResponse},
+    },
+)
+async def list_project_media(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> list[MediaRecord]:
+    """List all media associated with a project."""
+    query = """
+    SELECT media.hash, media.content_type, media.kind, media.size, media.created_at
+    FROM project_media
+    JOIN media ON media.hash = project_media.media_hash
+    WHERE project_media.project_id = $1
+    ORDER BY project_media.position NULLS LAST, project_media.created_at;
+    """
+
+    rows = await request.app.pool.fetch(query, project_id)
+
+    # Normally we would not bother with this, as no results = no iterations
+    # But since we are sending getting the URLs in parraell, it makes more sense here
+    if not rows:
+        return []
+
+    urls = await asyncio.gather(
+        *(request.app.storage.get_url(row["hash"], row["content_type"]) for row in rows)
+    )
+
+    return [
+        MediaRecord(
+            hash=row["hash"],
+            content_type=row["content_type"],
+            kind=row["kind"],
+            size=row["size"],
+            created_at=row["created_at"],
+            url=url,
+        )
+        for row, url in zip(rows, urls, strict=True)
+    ]
+
+
+class ReorderRequest(BaseModel, frozen=True):
+    hashes: list[str]
+
+
+@router.put(
+    "/projects/{project_id}/media/positions",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": SuccessResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+async def reorder_project_media(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: ReorderRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> SuccessResponse:
+    """Reorders the positions of the order on how media will be displayed within a project"""
+    query = """
+    WITH desired AS (
+        SELECT hash, ord
+        FROM unnest($2::text[]) WITH ORDINALITY AS d(hash, ord)
+    ), updated AS (
+        UPDATE project_media pm
+        SET position = desired.ord - 1
+        FROM desired
+        WHERE pm.project_id = $1
+          AND pm.media_hash = desired.hash
+        RETURNING 1
+    )
+    SELECT COUNT(*) FROM updated
+    """
+
+    res = await request.app.pool.fetchval(query, project_id, req.hashes)
+
+    if res != len(req.hashes):
+        msg = "One or more hashes do not belong to the project"
+        raise NotFoundError(msg)
+
+    return SuccessResponse(message="okie")
+
+
+@router.delete(
+    "/projects/{project_id}/media/{media_hash}",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": DeleteResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+async def remove_project_media(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    media_hash: str,
+) -> DeleteResponse:
+    """Removes the specified media from the associated project"""
+    query = """
+    DELETE FROM project_media
+    WHERE project_id = $1 AND media_hash = $2;
+    """
+    orphan_query = """
+    DELETE FROM media
+    WHERE hash = $1
+      AND NOT EXISTS (
+          SELECT 1 FROM project_media WHERE media_hash = $1
+      )
+    RETURNING content_type;
+    """
+    async with request.app.pool.acquire() as connection:
+        initial_delete = await connection.execute(query, project_id, media_hash)
+
+        if initial_delete[-1] == "0":
+            raise NotFoundError
+
+        orphan = await connection.fetchrow(orphan_query, media_hash)
+
+        if orphan:
+            await request.app.storage.delete(
+                media_hash, content_type=orphan["content_type"]
+            )
+            await request.app.storage.get_url.cache_invalidate(
+                media_hash, orphan["content_type"]
+            )
+
+        return DeleteResponse()

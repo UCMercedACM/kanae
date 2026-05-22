@@ -47,10 +47,27 @@ services:
       timeout: 3s
       start_period: 10s
       start_interval: 3s
+
+  garage:
+    container_name: kanae_garage
+    image: dxflrs/garage:v2.3.0
+    ports:
+      - "3900:3900" # S3 API
+      - "3902:3902" # S3 web
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
+      GARAGE_METRICS_TOKEN: ${GARAGE_METRICS_TOKEN}
+    volumes:
+      - garage:/var/lib/garage/data
+      - garage:/var/lib/garage/meta
+      - ../garage.toml:/etc/garage.toml
+    restart: unless-stopped
     
 
 volumes:
   database:
+  garage:
 
 networks:
   db_bridge:
