@@ -118,6 +118,30 @@ ory:
   # Generate this by: uv run python -c "import secrets; print(secrets.token_hex(32))"
   kratos_webhook_master_key: ""
 
+# S3 storage configs. These are used when storing media such as images, videos, etc
+storage:
+
+  # URL that points to the S3 object store. In this case, it's Garage
+  url: "http://localhost:3900"
+
+  # Region that the S3 object store lives in.
+  # For using Garage, leave it as "garage"
+  region: "garage"
+
+  # The bucket that all media will be stored in
+  bucket: "kanae-media"
+  
+  # Key ID. Under AWS S3, it is called AWS_ACCESS_KEY_ID
+  # Generate this via: echo "GK$(openssl rand -hex 16)"
+  # Note that "GK" is prepended. This is intentional
+  # See: https://garagehq.deuxfleurs.fr/documentation/quick-start/
+  key_id: ""
+
+  # Secret key. Under AWS S3, it's called AWS_SECRET_ACCESS_KEY
+  # Generate this via: openssl rand -hex 32
+  # For further details, see: https://garagehq.deuxfleurs.fr/documentation/quick-start/
+  secret_key: ""
+
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
