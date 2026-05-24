@@ -397,7 +397,7 @@ step "9. POST /media/upload with disallowed content-type -> 415"
 assert_http 415 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
   -b "$COOKIES" \
   -H "Content-Type: application/json" \
-  -d '{"hash":"deadbeef","content_type":"application/pdf","size":1024}'
+  -d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"application/pdf","size":1024}'
 
 # ── 10. negative: zero size -> 400 ────────────────────────────────────────────
 step "10. POST /media/upload with size=0 -> 400"
@@ -405,7 +405,7 @@ step "10. POST /media/upload with size=0 -> 400"
 assert_http 400 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
   -b "$COOKIES" \
   -H "Content-Type: application/json" \
-  -d '{"hash":"deadbeef","content_type":"image/gif","size":0}'
+  -d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"image/gif","size":0}'
 
 # ── 11. negative: oversized image -> 413 ──────────────────────────────────────
 step "11. POST /media/upload with image size > 32 MB -> 413"
@@ -413,7 +413,7 @@ step "11. POST /media/upload with image size > 32 MB -> 413"
 assert_http 413 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
   -b "$COOKIES" \
   -H "Content-Type: application/json" \
-  -d '{"hash":"deadbeef","content_type":"image/gif","size":40000000}'
+  -d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"image/gif","size":40000000}'
 
 # ── 12. negative: oversized video -> 413 ──────────────────────────────────────
 step "12. POST /media/upload with video size > 2 GB -> 413"
@@ -421,7 +421,7 @@ step "12. POST /media/upload with video size > 2 GB -> 413"
 assert_http 413 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
   -b "$COOKIES" \
   -H "Content-Type: application/json" \
-  -d '{"hash":"deadbeef","content_type":"video/mp4","size":3000000000}'
+  -d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"video/mp4","size":3000000000}'
 
 # ── 13. reorder: reverse the list ─────────────────────────────────────────────
 step "13. PUT /media/positions reverses the order"
@@ -493,8 +493,158 @@ for i in "${!MEDIA_FILES[@]}"; do
   fi
 done
 
+# ── 20. set thumbnail using first surviving image ─────────────────────────────
+step "20. POST /thumbnail with first surviving image hash"
+
+THUMB_SRC_HASH=""
+THUMB_SRC_CT=""
+THUMB_SRC_FILE=""
+for i in "${!MEDIA_FILES[@]}"; do
+  candidate="${HASHES[$i]}"
+  [[ "$candidate" == "$TO_DELETE" ]] && continue
+  ct="$(content_type_for "${MEDIA_FILES[$i]}")"
+  if [[ "$ct" == image/* ]]; then
+    THUMB_SRC_HASH="$candidate"
+    THUMB_SRC_CT="$ct"
+    THUMB_SRC_FILE="${MEDIA_FILES[$i]}"
+    break
+  fi
+done
+[[ -n "$THUMB_SRC_HASH" ]] || fail "no surviving image in project to use as thumbnail source"
+ok "using $(basename "$THUMB_SRC_FILE") ($THUMB_SRC_CT) — $THUMB_SRC_HASH"
+
+THUMB_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/thumbnail" \
+  -b "$COOKIES" \
+  -H "Content-Type: application/json" \
+  -d "{\"hash\":\"$THUMB_SRC_HASH\",\"content_type\":\"$THUMB_SRC_CT\"}")
+THUMB_MSG=$(jq -r '.message // empty' <<< "$THUMB_RESP")
+[[ -n "$THUMB_MSG" ]] || fail "thumbnail set failed: $THUMB_RESP"
+ok "thumbnail processed and recorded (message: $THUMB_MSG)"
+
+# ── 21. GET /projects/{id} returns thumbnail object ───────────────────────────
+step "21. GET /projects/{id} returns thumbnail {hash, url}"
+
+PROJ_RESP=$(curl -s -b "$COOKIES" "$KANAE/projects/$PROJECT_ID")
+THUMB_OBJ=$(jq -c '.thumbnail' <<< "$PROJ_RESP")
+[[ -n "$THUMB_OBJ" && "$THUMB_OBJ" != "null" ]] \
+  || fail "thumbnail missing from project response: $PROJ_RESP"
+
+THUMB_HASH=$(jq -r '.hash // empty' <<< "$THUMB_OBJ")
+THUMB_URL=$(jq -r '.url // empty' <<< "$THUMB_OBJ")
+[[ -n "$THUMB_HASH" && -n "$THUMB_URL" ]] \
+  || fail "thumbnail object missing hash or url: $THUMB_OBJ"
+ok "thumbnail.hash = $THUMB_HASH"
+printf "    %s\n" "$THUMB_URL"
+
+# ── 22. thumbnail URL is anonymously reachable and returns webp ───────────────
+step "22. GET <thumbnail_url> returns 200 + image/webp"
+
+THUMB_CHECK=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$THUMB_URL")
+THUMB_STATUS="${THUMB_CHECK%% *}"
+THUMB_TYPE="${THUMB_CHECK#* }"
+if [[ "$THUMB_STATUS" == "200" && "$THUMB_TYPE" == image/webp* ]]; then
+  ok "thumbnail URL serves bytes anonymously ($THUMB_STATUS, $THUMB_TYPE)"
+else
+  warn "thumbnail URL did not return 200 + image/webp (status=$THUMB_STATUS, type=$THUMB_TYPE)"
+  warn "verify mise run garage:setup created the public bucket with website mode,"
+  warn "and that storage.public.url resolves from this host"
+fi
+
+# ── 23. list_projects surfaces the same thumbnail ─────────────────────────────
+step "23. GET /projects shows thumbnail for this project"
+
+LIST_PROJ_RESP=$(curl -s -b "$COOKIES" "$KANAE/projects?active=true")
+LIST_THUMB=$(jq -c --arg id "$PROJECT_ID" '.data[] | select(.id == $id) | .thumbnail' <<< "$LIST_PROJ_RESP")
+[[ -n "$LIST_THUMB" && "$LIST_THUMB" != "null" ]] \
+  || fail "thumbnail missing from /projects listing: $LIST_PROJ_RESP"
+
+LIST_THUMB_HASH=$(jq -r '.hash' <<< "$LIST_THUMB")
+LIST_THUMB_URL=$(jq -r '.url' <<< "$LIST_THUMB")
+[[ "$LIST_THUMB_HASH" == "$THUMB_HASH" ]] \
+  || fail "list_projects thumbnail hash $LIST_THUMB_HASH != get_project's $THUMB_HASH"
+[[ "$LIST_THUMB_URL" == "$THUMB_URL" ]] \
+  || fail "list_projects thumbnail url differs from get_project's"
+ok "list_projects matches get_project for thumbnail"
+
+# ── 24. replace thumbnail with a different image, verify hash changes ─────────
+step "24. POST /thumbnail with a different image replaces the prior one"
+
+THUMB_ALT_HASH=""
+THUMB_ALT_CT=""
+THUMB_ALT_FILE=""
+for i in "${!MEDIA_FILES[@]}"; do
+  candidate="${HASHES[$i]}"
+  [[ "$candidate" == "$TO_DELETE" || "$candidate" == "$THUMB_SRC_HASH" ]] && continue
+  ct="$(content_type_for "${MEDIA_FILES[$i]}")"
+  if [[ "$ct" == image/* ]]; then
+    THUMB_ALT_HASH="$candidate"
+    THUMB_ALT_CT="$ct"
+    THUMB_ALT_FILE="${MEDIA_FILES[$i]}"
+    break
+  fi
+done
+
+if [[ -z "$THUMB_ALT_HASH" ]]; then
+  warn "no second image available; skipping replacement test"
+else
+  ok "replacing with $(basename "$THUMB_ALT_FILE") — $THUMB_ALT_HASH"
+  curl -sf -X POST "$KANAE/projects/$PROJECT_ID/thumbnail" \
+    -b "$COOKIES" \
+    -H "Content-Type: application/json" \
+    -d "{\"hash\":\"$THUMB_ALT_HASH\",\"content_type\":\"$THUMB_ALT_CT\"}" > /dev/null \
+    || fail "replacement POST failed"
+
+  NEW_RESP=$(curl -s -b "$COOKIES" "$KANAE/projects/$PROJECT_ID")
+  NEW_HASH=$(jq -r '.thumbnail.hash // empty' <<< "$NEW_RESP")
+  NEW_URL=$(jq -r '.thumbnail.url // empty' <<< "$NEW_RESP")
+  [[ -n "$NEW_HASH" && "$NEW_HASH" != "$THUMB_HASH" ]] \
+    || fail "thumbnail hash did not change after replacement (still $NEW_HASH)"
+  ok "thumbnail hash updated: $THUMB_HASH -> $NEW_HASH"
+fi
+
+# ── 25. negative: video content-type rejected ─────────────────────────────────
+step "25. POST /thumbnail with video content-type -> 400"
+
+assert_http 400 POST "$KANAE/projects/$PROJECT_ID/thumbnail" \
+  -b "$COOKIES" \
+  -H "Content-Type: application/json" \
+  -d '{"hash":"0000000000000000000000000000000000000000000000000000000000000000","content_type":"video/mp4"}'
+
+# ── 26. thumbnail URLs — open these in a browser to verify ────────────────────
+step "26. thumbnail URLs for manual verification"
+
+printf "    initial thumbnail (%s):\n      %s\n" "$THUMB_HASH" "$THUMB_URL"
+if [[ -n "${NEW_URL:-}" ]]; then
+  printf "    current thumbnail (%s):\n      %s\n" "$NEW_HASH" "$NEW_URL"
+fi
+
+# ── 27. DELETE /thumbnail clears the project thumbnail ────────────────────────
+step "27. DELETE /projects/{id}/thumbnail removes the thumbnail"
+
+CURRENT_URL="${NEW_URL:-$THUMB_URL}"
+
+assert_http 200 DELETE "$KANAE/projects/$PROJECT_ID/thumbnail" -b "$COOKIES"
+
+POST_DELETE=$(curl -s -b "$COOKIES" "$KANAE/projects/$PROJECT_ID")
+POST_DELETE_THUMB=$(jq -r '.thumbnail' <<< "$POST_DELETE")
+[[ "$POST_DELETE_THUMB" == "null" ]] \
+  || fail "thumbnail not cleared from project: $POST_DELETE_THUMB"
+ok "project.thumbnail is null after DELETE"
+
+DEL_CHECK=$(curl -s -o /dev/null -w '%{http_code}' "$CURRENT_URL")
+if [[ "$DEL_CHECK" == "404" ]]; then
+  ok "thumbnail URL now returns 404 anonymously"
+else
+  warn "expected 404 for removed thumbnail URL, got $DEL_CHECK ($CURRENT_URL)"
+fi
+
+# ── 28. DELETE is idempotent — second call still returns 200 ──────────────────
+step "28. DELETE /projects/{id}/thumbnail is idempotent"
+
+assert_http 200 DELETE "$KANAE/projects/$PROJECT_ID/thumbnail" -b "$COOKIES"
+
 # ── done ──────────────────────────────────────────────────────────────────────
-printf "\n${GRN}all media flow checks passed${RST}\n"
+printf "\n${GRN}all media + thumbnail flow checks passed${RST}\n"
 printf "  identity id: %s\n" "$IDENTITY_ID"
 printf "  project id:  %s\n" "$PROJECT_ID"
 printf "  hashes:\n"

@@ -2,7 +2,7 @@ redactions = ["DB_PASSWORD"]
 
 [tools]
 uv = "0.11.14"
-atlas = "0.38.0"
+atlas = "1.2.0"
 
 yq = "4.53.2"
 
@@ -107,6 +107,7 @@ run = """
   GARAGE_KEY_ID=$(yq '.storage.key_id' "$CONFIG")
   GARAGE_SECRET_KEY=$(yq '.storage.secret_key' "$CONFIG")
   GARAGE_BUCKET=$(yq '.storage.bucket' "$CONFIG")
+  GARAGE_PUBLIC_BUCKET=$(yq '.storage.public.bucket' "$CONFIG")
   GARAGE_URL=$(yq '.storage.url' "$CONFIG")
   export AWS_ACCESS_KEY_ID="$GARAGE_KEY_ID"
   export AWS_SECRET_ACCESS_KEY="$GARAGE_SECRET_KEY"
@@ -131,6 +132,16 @@ run = """
     --endpoint-url "$GARAGE_URL" \
     --bucket "$GARAGE_BUCKET" \
     --lifecycle-configuration '{"Rules":[{"ID":"abort-stale-multipart","Status":"Enabled","Filter":{"Prefix":"media/"},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}}]}' \
+    --region garage
+  echo "Creating public bucket for thumbnails..."
+  docker compose -f docker/docker-compose.dev.yml exec garage /garage bucket create "$GARAGE_PUBLIC_BUCKET"
+  docker compose -f docker/docker-compose.dev.yml exec garage /garage bucket allow --read --write --owner "$GARAGE_PUBLIC_BUCKET" --key "$GARAGE_KEY_ID"
+  docker compose -f docker/docker-compose.dev.yml exec garage /garage bucket website --allow "$GARAGE_PUBLIC_BUCKET"
+  echo "Setting public bucket CORS policy..."
+  uvx --from=awscli aws s3api put-bucket-cors \
+    --endpoint-url "$GARAGE_URL" \
+    --bucket "$GARAGE_PUBLIC_BUCKET" \
+    --cors-configuration '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","HEAD"],"AllowedHeaders":["*"],"MaxAgeSeconds":86400}]}' \
     --region garage
   echo "Garage setup complete."
 """
