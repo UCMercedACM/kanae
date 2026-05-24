@@ -705,13 +705,13 @@ class StorageClient:
         )
 
     def get_thumbnail_url(self, media_hash: str) -> str:
-        """_summary_
+        """Obtains the url for the thumbnail
 
         Args:
-            media_hash (str): _description_
+            media_hash (str): BLAKE3 content-address hash of the file.
 
         Returns:
-            str: _description_
+            str: Complete public thumbnail URL
         """
         return f"{self.base_thumbnail_url}/{self._build_thumbnail_key(media_hash)}"
 
