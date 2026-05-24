@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS projects (
     link TEXT,
     type project_type DEFAULT 'independent',
     active BOOL DEFAULT TRUE,
+    thumbnail_hash TEXT,
     founded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 

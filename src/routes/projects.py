@@ -4,11 +4,12 @@ import uuid
 from typing import Annotated, Literal, Optional, TypedDict
 
 import asyncpg
+import pyvips
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from core import MultipartUploadChunks, UploadChunk
+from core import MultipartUploadChunks, UploadChunk, fetch_and_process_thumbnail
 from utils.auth import use_session
 from utils.checks import Project, Role, check_any, has_permissions, has_role
 from utils.errors import BadGatewayError, BadRequestError, ConflictError, NotFoundError
@@ -49,6 +50,13 @@ _ALLOWED_VIDEO_TYPES = frozenset(
     }
 )
 
+_HASH_REGEX = r"^[0-9a-f]{64}$"
+
+
+class ProjectThumbnail(BaseModel, frozen=True):
+    hash: str
+    url: str
+
 
 class ProjectMember(BaseModel, frozen=True):
     id: uuid.UUID
@@ -79,6 +87,7 @@ class FullProjects(BaseModel, frozen=True):
     name: str
     description: str
     link: str
+    thumbnail: Optional[ProjectThumbnail] = None
     members: list[ProjectMember]
     type: Literal[
         "independent",
@@ -109,29 +118,29 @@ async def list_projects(
         msg = "Cannot specify both parameters. Must be only one be specified."
         raise BadRequestError(msg)
 
-    args = []
+    args: list = [request.app.storage.base_thumbnail_url]
     time_constraint = ""
 
     if name:
         if since or until:
             if since:
-                time_constraint = "AND projects.founded_at >= $2"
+                time_constraint = "AND projects.founded_at >= $3"
                 args.append(since)
             elif until:
-                time_constraint = "AND projects.founded_at <= $2"
+                time_constraint = "AND projects.founded_at <= $3"
                 args.append(until)
 
-        constraint = f"WHERE projects.name % $1 {time_constraint} GROUP BY projects.id ORDER BY similarity(projects.name, $1) DESC"
-        args.insert(0, name)
+        constraint = f"WHERE projects.name % $2 {time_constraint} GROUP BY projects.id ORDER BY similarity(projects.name, $2) DESC"
+        args.insert(1, name)
     elif active is not None:
-        constraint = "WHERE projects.active = $1 GROUP BY projects.id"
+        constraint = "WHERE projects.active = $2 GROUP BY projects.id"
         args.append(active)
     else:
         if since:
-            time_constraint = "projects.founded_at >= $1 AND projects.active = $2"
+            time_constraint = "projects.founded_at >= $2 AND projects.active = $3"
             args.extend((since, active))
         elif until:
-            time_constraint = "projects.founded_at <= $1 AND projects.active = $2"
+            time_constraint = "projects.founded_at <= $2 AND projects.active = $3"
             args.extend((until, active))
         constraint = f"WHERE {time_constraint} GROUP BY projects.id"
 
@@ -140,7 +149,14 @@ async def list_projects(
     SELECT
         projects.id, projects.name, projects.description, projects.link,
         jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', project_members.role)) AS members,
-        projects.type, projects.active, projects.founded_at
+        projects.type, projects.active,
+        CASE WHEN projects.thumbnail_hash IS NOT NULL THEN
+            jsonb_build_object(
+                'hash', projects.thumbnail_hash,
+                'url', $1 || '/thumbnails/' || projects.thumbnail_hash || '.webp'
+            )
+        END AS thumbnail,
+        projects.founded_at
     FROM projects
     INNER JOIN project_members ON project_members.project_id = projects.id
     INNER JOIN members ON project_members.member_id = members.id
@@ -160,14 +176,23 @@ async def get_project(request: RouteRequest, project_id: uuid.UUID) -> FullProje
     SELECT
         projects.id, projects.name, projects.description, projects.link,
         jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', project_members.role)) AS members,
-        projects.type, projects.active, projects.founded_at
+        projects.type, projects.active,
+        CASE WHEN projects.thumbnail_hash IS NOT NULL THEN
+            jsonb_build_object(
+                'hash', projects.thumbnail_hash,
+                'url', $2 || '/thumbnails/' || projects.thumbnail_hash || '.webp'
+            )
+        END AS thumbnail,
+        projects.founded_at
     FROM projects
     INNER JOIN project_members ON project_members.project_id = projects.id
     INNER JOIN members ON project_members.member_id = members.id
     WHERE projects.id = $1
     GROUP BY projects.id;
     """
-    rows = await request.app.pool.fetchrow(query, project_id)
+    rows = await request.app.pool.fetchrow(
+        query, project_id, request.app.storage.base_thumbnail_url
+    )
     if not rows:
         raise NotFoundError
     return FullProjects(**dict(rows))
@@ -223,10 +248,15 @@ async def delete_project(
     query = """
     DELETE FROM projects
     WHERE id = $1
+    RETURNING thumbnail_hash
     """
-    status = await request.app.pool.execute(query, project_id)
-    if status[-1] == "0":
+    status = await request.app.pool.fetchrow(query, project_id)
+    if status is None:
         raise NotFoundError
+
+    if status["thumbnail_hash"]:
+        await request.app.storage.delete_thumbnail(status["thumbnail_hash"])
+
     return DeleteResponse()
 
 
@@ -261,16 +291,24 @@ async def create_project(
 ) -> Projects:
     """Creates a new project given the provided data"""
     query = """
-    INSERT INTO projects (name, description, link, type, active, founded_at)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING *;
+    WITH new_project AS (
+        INSERT INTO projects (name, description, link, type, active, founded_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+    ), new_member AS (
+        INSERT INTO project_members (project_id, member_id, role)
+        SELECT id, $7, 'lead' FROM new_project
+    )
+    SELECT * FROM new_project;
     """
 
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
 
         project_rows = await connection.fetchrow(
-            query, *req.model_dump(exclude={"tags"}).values()
+            query,
+            *req.model_dump(exclude={"tags"}).values(),
+            session.identity.id,
         )
 
         if req.tags:
@@ -474,7 +512,7 @@ class MediaRecord(BaseModel, frozen=True):
 
 
 class UploadRequest(BaseModel, frozen=True):
-    hash: str
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
     content_type: str
     size: int
 
@@ -489,6 +527,7 @@ class UploadRequest(BaseModel, frozen=True):
         415: {"model": HTTPExceptionResponse},
     },
 )
+@router.limiter.limit("10/minute")
 async def upload_media(
     request: RouteRequest,
     project_id: uuid.UUID,
@@ -537,7 +576,7 @@ class CompletedChunk(TypedDict):
 
 
 class CommitRequest(BaseModel, frozen=True):
-    hash: str
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
     content_type: str
     size: int
     upload_id: Optional[str] = None
@@ -558,6 +597,7 @@ class CommitRequest(BaseModel, frozen=True):
         502: {"model": HTTPExceptionResponse},
     },
 )
+@router.limiter.limit("10/minute")
 async def commit_media(
     request: RouteRequest,
     project_id: uuid.UUID,
@@ -647,6 +687,95 @@ async def commit_media(
     )
 
 
+class SetThumbnailRequest(BaseModel, frozen=True):
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    content_type: str
+
+
+@router.post(
+    "/projects/{project_id}/thumbnail",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": SuccessResponse},
+        400: {"model": BadRequestResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+@router.limiter.limit("3/minute")
+async def set_project_thumbnail(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: SetThumbnailRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> SuccessResponse:
+    """Sets the thumbnail used for a given project"""
+    if req.content_type not in _ALLOWED_IMAGE_TYPES:
+        msg = "Thumbnail must be an image"
+        raise BadRequestError(msg)
+
+    key = request.app.storage._build_key(req.hash, req.content_type)
+    try:
+        # ty thinks that sync_storage is incorrect, but it's correct
+        processed_image = await asyncio.to_thread(
+            fetch_and_process_thumbnail,
+            request.app.sync_storage,
+            request.app.storage.bucket,
+            key,
+        )
+    except ClientError:
+        msg = "No such media exists"
+        raise NotFoundError(msg)
+    except pyvips.Error:
+        msg = "Failed to process image"
+        raise BadRequestError(msg)
+
+    await request.app.storage.put_thumbnail(
+        processed_image.hash, body=processed_image.output
+    )
+
+    # There is a slight but rare race condition if two simultatneous requests can read the pre-updated thumbnail_hash
+    # Issue a "FOR UPDATE" row lock to prevent this race from happening
+    # Without it, two simultaneous requests can each read the
+    # pre-update `thumbnail_hash` against their own snapshot, then one's UPDATE
+    # commits and the other's cleanup branch deletes a stale hash — leaving the
+    # first writer's WebP object orphaned in the public bucket.
+    query = """
+        WITH locked AS (
+            SELECT thumbnail_hash FROM projects
+            WHERE id = $2
+            FOR UPDATE
+        ), old AS (
+            SELECT thumbnail_hash FROM locked
+            WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != $1
+        )
+        UPDATE projects
+        SET thumbnail_hash = $1
+        WHERE id = $2
+          AND EXISTS (
+              SELECT 1 FROM project_media
+              WHERE project_id = $2 AND media_hash = $3
+          )
+        RETURNING id, (SELECT thumbnail_hash FROM old) AS old_hash;
+    """
+    response = await request.app.pool.fetchrow(
+        query,
+        processed_image.hash,
+        project_id,
+        req.hash,
+    )
+
+    if response is None:
+        await request.app.storage.delete_thumbnail(processed_image.hash)
+        msg = "Project not found, or source media is not associated with it"
+        raise NotFoundError(msg)
+
+    if response["old_hash"]:
+        await request.app.storage.delete_thumbnail(response["old_hash"])
+
+    return SuccessResponse(message="ok")
+
+
 @router.get(
     "/projects/{project_id}/media",
     dependencies=[has_permissions(Project.view)],
@@ -655,6 +784,7 @@ async def commit_media(
         403: {"model": ForbiddenResponse},
     },
 )
+@router.limiter.limit("60/minute")
 async def list_project_media(
     request: RouteRequest,
     project_id: uuid.UUID,
@@ -694,7 +824,7 @@ async def list_project_media(
 
 
 class ReorderRequest(BaseModel, frozen=True):
-    hashes: list[str]
+    hashes: list[Annotated[str, Field(pattern=_HASH_REGEX)]]
 
 
 @router.put(
@@ -706,6 +836,7 @@ class ReorderRequest(BaseModel, frozen=True):
         404: {"model": NotFoundResponse},
     },
 )
+@router.limiter.limit("5/minute")
 async def reorder_project_media(
     request: RouteRequest,
     project_id: uuid.UUID,
@@ -746,10 +877,11 @@ async def reorder_project_media(
         404: {"model": NotFoundResponse},
     },
 )
+@router.limiter.limit("5/minute")
 async def remove_project_media(
     request: RouteRequest,
     project_id: uuid.UUID,
-    media_hash: str,
+    media_hash: Annotated[str, Field(pattern=_HASH_REGEX)],
 ) -> DeleteResponse:
     """Removes the specified media from the associated project"""
     query = """
@@ -781,3 +913,42 @@ async def remove_project_media(
             )
 
         return DeleteResponse()
+
+
+@router.delete(
+    "/projects/{project_id}/thumbnail",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": DeleteResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+@router.limiter.limit("5/minute")
+async def remove_project_thumbnail(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> DeleteResponse:
+    """Removes the associated thumbnail of a given project"""
+    query = """
+    WITH old_thumbnail AS (
+        SELECT thumbnail_hash
+        FROM projects
+        WHERE id = $1
+    )
+    UPDATE projects
+    SET thumbnail_hash = NULL
+    WHERE id = $1
+    RETURNING id, (SELECT thumbnail_hash FROM old_thumbnail) AS old_hash
+    """
+
+    response = await request.app.pool.fetchrow(query, project_id)
+
+    if not response:
+        raise NotFoundError
+
+    if response["old_hash"]:
+        await request.app.storage.delete_thumbnail(response["old_hash"])
+
+    return DeleteResponse()

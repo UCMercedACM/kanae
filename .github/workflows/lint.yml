@@ -19,7 +19,6 @@ jobs:
         version: ['3.12', '3.13', '3.14']
 
     env:
-      UV_NO_BUILD: true
       UV_NO_DEV: true
       UV_NO_DEFAULT_GROUPS: true
 

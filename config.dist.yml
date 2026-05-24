@@ -141,6 +141,24 @@ storage:
   # Generate this via: openssl rand -hex 32
   # For further details, see: https://garagehq.deuxfleurs.fr/documentation/quick-start/
   secret_key: ""
+  
+  # Public bucket for anonymously-readable media (e.g. project thumbnails).
+  # Served via Garage's website mode without presigning, so its contents are
+  # cacheable by browsers/CDNs and never expire (objects are content-addressed
+  # by BLAKE3 hash). Run "mise run garage:setup" to create + configure this
+  # bucket after filling in the fields below.
+
+  # Public bucket for anonymously-readable media (e.g. project thumbnails)
+  # These contents are meant to be viewable publicly, i.e., for media such as project thumbnails 
+  public:
+
+    # Name of the public bucket. Must be different from `storage.bucket` above. Defaults to `kanae-public`
+    bucket: "kanae-public"
+
+    # Externally-reachable base URL for the public bucket, no trailing slash.
+    # Under Garage's default website mode this is "http://<bucket>.web.garage.localhost:3902"
+    # for local dev, or whatever CDN/reverse proxy fronts the public bucket in prod.
+    url: "http://kanae-public.web.garage.localhost:3902"
 
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.

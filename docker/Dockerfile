@@ -22,14 +22,14 @@ COPY pyproject.toml uv.lock logging.conf.json /kanae/
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --no-build --frozen --no-install-project
+    uv sync --frozen --no-install-project
 
 # Add project source code
 COPY ./src /kanae
 
 # Install the rest (this allows for optimal caching)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-build --frozen
+    uv sync --frozen
 
 FROM python:3.14-slim-trixie
 
