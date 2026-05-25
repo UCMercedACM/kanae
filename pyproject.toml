@@ -22,19 +22,19 @@ dependencies = [
     "pyvips[binary]~=3.1.1",
     "pyyaml~=6.0.3",
     "uvloop~=0.22.1 ; sys_platform != 'win32'",
-    "valkey-glide~=2.3.1",
+    "valkey-glide~=2.4.0",
     "winloop~=0.6.2 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
 dev = [
-    "watchfiles~=1.1.1",
+    "watchfiles~=1.2.0",
     { include-group = "lint" },
     { include-group = "test" },
 ]
 lint = [
     "ruff~=0.15.11",
-    "ty==0.0.37",
+    "ty==0.0.39",
     { include-group = "types" },
 ]
 types = [
