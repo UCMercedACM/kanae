@@ -45,6 +45,9 @@ _DOCKERFILE = Path("tests/docker/Dockerfile")
 
 _KANAE_CONFIG = KanaeConfig.load_from_file(_CONFIG_PATH)
 
+# We need to "fake" the webhook master key because it's an operator secret
+_TEST_WEBHOOK_MASTER_KEY = "00" * 32
+
 _FAKE_COOKIE = "fake-kratos-session"
 _DISCOVER_TABLES_SQL = """
 SELECT format('%I.%I', table_schema, table_name) AS qname
@@ -344,6 +347,9 @@ def kanae(setup: KanaeServices) -> Kanae:
     test_valkey_uri = setup.valkey.get_connection_url()
     test_app.config.kanae.limiter["storage_uri"] = test_valkey_uri
     test_app.limiter.storage_uri = test_valkey_uri
+    test_app.config.ory = test_app.config.ory.model_copy(
+        update={"kratos_webhook_master_key": _TEST_WEBHOOK_MASTER_KEY}
+    )
     return test_app
 
 
