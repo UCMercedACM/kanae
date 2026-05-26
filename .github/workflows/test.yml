@@ -9,6 +9,8 @@ on:
     branches:
       - main
 
+   workflow_dispatch
+
 jobs:
   Test:
     name: Test (${{ matrix.version }})
