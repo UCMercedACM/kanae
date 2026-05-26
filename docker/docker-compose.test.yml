@@ -38,22 +38,8 @@ services:
         restart: true
       migrate:
         condition: service_completed_successfully
-    # Without this `up -d --wait` returns the moment the container is
-    # *running* — not when granian has actually bound port 8000. That race
-    # is invisible on local hardware (init.sh's Ory bootstrap masks the
-    # gap) but real on GitHub Actions runners, where the first hurl request
-    # arrives before the listener exists.
-    #
-    # Probe is a real HTTP GET against /docs rather than a bare TCP connect:
-    # granian/uvloop has previously segfaulted on connections that close
-    # before any HTTP bytes arrive (exit 139). /docs is the lowest-risk
-    # endpoint — always 200, plain HTML, no DB/auth/Keto involvement.
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=2).read()"
+    healthcheck: 
+      test: curl -fsS --max-time 2 http://127.0.0.1:8000
       interval: 3s
       timeout: 5s
       retries: 20
