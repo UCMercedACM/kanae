@@ -57,37 +57,37 @@ jobs:
         run: |
           uv run pytest
 
-  # Integration:
-  #   name: Integration Test
-  #   runs-on: ubuntu-24.04
+  Integration:
+    name: Integration
+    runs-on: ubuntu-24.04
 
-  #   env:
-  #     HURL_VERSION: 8.0.1
+    env:
+      HURL_VERSION: 8.0.1
 
-  #   steps:
-  #     - name: Checkout Repository
-  #       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-  #     - name: Install uv
-  #       uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-  #       with:
-  #         version: "latest"
-  #         enable-cache: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
 
-  #     - name: Install Hurl
-  #       run: |
-  #         sudo apt-add-repository -y ppa:lepapareil/hurl
-  #         sudo apt install hurl="${HURL_VERSION}"*
+      - name: Install Hurl
+        run: |
+          sudo apt-add-repository -y ppa:lepapareil/hurl
+          sudo apt install hurl="${HURL_VERSION}"*
 
-  #     - name: Prepare integration stack
-  #       run: |
-  #         bash ./tests/integration/init.sh
+      - name: Prepare integration stack
+        run: |
+          bash ./tests/integration/init.sh
 
-  #     - name: Run integration tests
-  #       run: |
-  #         hurl --test --variables-file tests/integration/vars.env --secrets-file tests/integration/secrets.env tests/integration/scenarios/*.hurl
+      - name: Run integration tests
+        run: |
+          hurl --test --variables-file tests/integration/vars.env --secrets-file tests/integration/secrets.env tests/integration/scenarios/*.hurl
 
-  #     - name: Clean up integration stack
-  #       run: |
-  #         docker compose -f docker/docker-compose.test.yml --env-file docker/.env down -v=True --remove-orphans
+      - name: Clean up integration stack
+        run: |
+          docker compose -f docker/docker-compose.test.yml --env-file docker/.env down -v=True --remove-orphans
 
