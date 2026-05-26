@@ -40,6 +40,13 @@ if [[ ! -f "$ENV_FILE" ]]; then
 	log "creating $ENV_FILE from $ENV_EXAMPLE"
 	cp "$ENV_EXAMPLE" "$ENV_FILE"
 
+	# example.env ships a developer's hardcoded CONFIG_LOCATION. Anywhere
+	# else (CI, fresh clones, anyone but the original author) that path
+	# doesn't exist, and docker's bind-mount fallback silently creates it
+	# as an empty *directory* — kanae then crashes with IsADirectoryError
+	# the moment granian tries to open /kanae/config.yml. Anchor it to
+	# the actual repo's config.yml so docker mounts a real file.
+	sed -i "s|^CONFIG_LOCATION=.*|CONFIG_LOCATION=$ROOT/config.yml|" "$ENV_FILE"
 	sed -i "s|^KRATOS_SECRETS_COOKIE=.*|KRATOS_SECRETS_COOKIE=$(openssl rand -hex 32)|" "$ENV_FILE"
 	sed -i "s|^KRATOS_SECRETS_CIPHER=.*|KRATOS_SECRETS_CIPHER=$(openssl rand -hex 16)|" "$ENV_FILE"
 
