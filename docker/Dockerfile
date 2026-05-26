@@ -37,8 +37,11 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/kanae
 ENV HOME=/tmp
 
-# Set up non-root user
-RUN groupadd --system --gid 999 kanae \
+# Add curl and set up non-root user
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 999 kanae \
  && useradd --system --gid 999 --uid 999 --no-create-home kanae
 
 # Copy the server from the builder
