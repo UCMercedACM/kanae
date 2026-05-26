@@ -39,6 +39,16 @@ jobs:
         run: |
           hurl --test --variables-file tests/integration/vars.env --secrets-file tests/integration/secrets.env tests/integration/scenarios/*.hurl
 
+      # Dump container logs whenever something upstream failed. Without this
+      # a kanae segfault or migration error is invisible — the hurl step
+      # just reports connection errors and we have to guess at the cause.
+      - name: Dump stack logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker/docker-compose.test.yml --env-file docker/.env ps -a
+          docker compose -f docker/docker-compose.test.yml --env-file docker/.env logs --no-color --tail=200
+
       - name: Clean up integration stack
+        if: always()
         run: |
           docker compose -f docker/docker-compose.test.yml --env-file docker/.env down -v=True --remove-orphans

@@ -42,15 +42,18 @@ services:
     # *running* — not when granian has actually bound port 8000. That race
     # is invisible on local hardware (init.sh's Ory bootstrap masks the
     # gap) but real on GitHub Actions runners, where the first hurl request
-    # arrives before the listener exists and gets "connection reset by
-    # peer" or "Empty reply from server". A socket-open check on 8000 is
-    # enough: granian only binds the port after FastAPI startup completes.
+    # arrives before the listener exists.
+    #
+    # Probe is a real HTTP GET against /docs rather than a bare TCP connect:
+    # granian/uvloop has previously segfaulted on connections that close
+    # before any HTTP bytes arrive (exit 139). /docs is the lowest-risk
+    # endpoint — always 200, plain HTML, no DB/auth/Keto involvement.
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - "import socket; s = socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8000))"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=2).read()"
       interval: 3s
       timeout: 5s
       retries: 20
