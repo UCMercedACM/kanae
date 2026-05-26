@@ -5,6 +5,10 @@ uv = "0.11.16"
 atlas = "1.2.0"
 
 yq = "4.53.2"
+hurl = "8.0.1"
+shellcheck = "0.11.0"
+shfmt = "3.13.1"
+act = "0.2.88"
 
 
 [settings]

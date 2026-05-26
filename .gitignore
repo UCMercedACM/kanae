@@ -181,3 +181,6 @@ cython_debug/
 .pypirc
 
 garage
+
+# Generated per-run by tests/integration/init.sh — contains test PASSWORD + identity UUIDs
+tests/integration/secrets.env
