@@ -135,8 +135,9 @@ def test_disallowed_content_type_raises_415(content_type: str) -> None:
 def test_validator_terminates_in_a_known_outcome(content_type: str, size: int) -> None:
     try:
         _validate_media(content_type, size)
-    except (HTTPException, BadRequestError):
-        # Any 4xx-shaped rejection is fine.
+    except HTTPException:
+        # Any 4xx-shaped rejection is fine. BadRequestError is a subclass
+        # of HTTPException via BaseHTTPException, so it's already covered.
         return
     # Only valid (content_type, size) combinations should fall through.
     assert content_type in _ALLOWED_TYPES
