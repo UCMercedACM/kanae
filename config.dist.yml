@@ -8,8 +8,10 @@
 kanae:
 
   # Host that the server will use.
-  # Set to 0.0.0.0 if running in Docker
-  host: "localhost"
+  # Defaults to 0.0.0.0 because this file is otherwise wired for Docker
+  # (every other URL uses a service name). Set to "localhost" if running
+  # kanae directly on the host instead of inside a container.
+  host: "0.0.0.0"
 
   # Port that the server binds to.
   # Defaults to 8000
