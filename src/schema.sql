@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-
 CREATE TYPE event_type AS ENUM (
     'general',
     'sig_ai',

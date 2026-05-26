@@ -4,7 +4,11 @@ redactions = ["DB_PASSWORD"]
 uv = "0.11.16"
 atlas = "1.2.0"
 
+shellcheck = "0.11.0"
+shfmt = "3.13.1"
+
 yq = "4.53.2"
+hurl = "8.0.1"
 
 
 [settings]
@@ -45,6 +49,20 @@ run = "ruff format src"
 [tasks."server:check"]
 description = "Lint and format backend codebase. This is necessary to handle import sorting and formatting. TD;LR: Run this task once you are done with development at the end of the PR"
 run = [{ task = "server:lint" }, { task = "server:format" }]
+
+[tasks."tests:lint"]
+description = "Lints the testing codebase by type checking and general linting"
+env._.path = ".venv/bin"
+run = ["ty check tests/*.py --error-on-warning", "ruff check tests --fix --exit-non-zero-on-fix"]
+
+[tasks."tests:format"]
+description = "Formats the testing codebase"
+env._.path = ".venv/bin"
+run = "ruff format tests"
+
+[tasks."tests:check"]
+description = "Lint and format testing codebase. This is necessary to handle import sorting and formatting. TD;LR: Run this task once you are done with development at the end of the PR"
+run = [{ task = "tests:lint" }, { task = "tests:format" }]
 
 [tasks."server:check-env"]
 hide = true

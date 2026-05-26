@@ -15,3 +15,6 @@
 
 # Testing files
 **/tests
+
+# Garage runtime state.
+docker/garage/

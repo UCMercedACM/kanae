@@ -1,7 +1,7 @@
 from typing import Annotated, Optional
 
-from fastapi import Query
-from pydantic import BaseModel
+from fastapi import Path, Query
+from pydantic import BaseModel, Field
 
 from utils.checks import Role, has_role
 from utils.errors import (
@@ -13,17 +13,25 @@ from utils.router import KanaeRouter
 
 router = KanaeRouter(tags=["Tags"])
 
+# Represents the limits of signed 32-bit int (1 - 2,147,483,647)
+# We use INT in our schema, which is 32-bit,
+# so safely assume the max is 32-bits
+_TAG_ID_MIN: int = 1
+_TAG_ID_MAX: int = 2**31 - 1
+
+_NO_NULL_REGEX = r"^[^\x00]+$"
+
 
 class Tags(BaseModel, frozen=True):
     id: int
-    title: str
-    description: str
+    title: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 @router.get("/tags")
 async def get_tags(
     request: RouteRequest,
-    title: Annotated[Optional[str], Query(min_length=3)] = None,
+    title: Annotated[Optional[str], Query(min_length=3, pattern=_NO_NULL_REGEX)] = None,
 ) -> list[Tags]:
     """Get all tags that can be used or sort for a list of tags"""
     query = """
@@ -40,7 +48,7 @@ async def get_tags(
         ORDER BY similarity(title, $1) DESC
         """
 
-    args = title or ()
+    args: tuple[str, ...] = (title,) if title else ()
     records = await request.app.pool.fetch(query, *args)
     return [Tags(**dict(row)) for row in records]
 
@@ -49,7 +57,10 @@ async def get_tags(
     "/tags/{tag_id}",
     responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
 )
-async def get_tag_by_id(request: RouteRequest, tag_id: int) -> Tags:
+async def get_tag_by_id(
+    request: RouteRequest,
+    tag_id: Annotated[int, Path(ge=_TAG_ID_MIN, le=_TAG_ID_MAX)],
+) -> Tags:
     """Get tag via ID"""
     query = """
     SELECT id, title, description
@@ -64,8 +75,8 @@ async def get_tag_by_id(request: RouteRequest, tag_id: int) -> Tags:
 
 
 class ModifiedTag(BaseModel):
-    title: str
-    description: str
+    title: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 @router.put(
@@ -76,7 +87,7 @@ class ModifiedTag(BaseModel):
 @router.limiter.limit("5/minute")
 async def edit_tag(
     request: RouteRequest,
-    tag_id: int,
+    tag_id: Annotated[int, Path(ge=_TAG_ID_MIN, le=_TAG_ID_MAX)],
     req: ModifiedTag,
 ) -> Tags:
     """Modify specified tag"""
@@ -102,7 +113,7 @@ async def edit_tag(
 @router.limiter.limit("5/minute")
 async def delete_tag(
     request: RouteRequest,
-    tag_id: int,
+    tag_id: Annotated[int, Path(ge=_TAG_ID_MIN, le=_TAG_ID_MAX)],
 ) -> DeleteResponse:
     """Remove specified tag"""
     query = """

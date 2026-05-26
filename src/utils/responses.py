@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 from typing import Any
 
@@ -18,9 +19,16 @@ class ORJSONResponse(JSONResponse):
     """
 
     def render(self, content: Any) -> bytes:  # noqa: ANN401
-        return orjson.dumps(
-            content, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY
-        )
+        # We default to str for unknown types, but for cases where the default is a known type (i.e., int)
+        # default back to using the stdlib json as that can handle arbitrary-precision ints
+        try:
+            return orjson.dumps(
+                content,
+                option=orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY,
+                default=str,
+            )
+        except TypeError:
+            return json.dumps(content, default=str).encode("utf-8")
 
 
 ### Error responses meant for OpenAPI types

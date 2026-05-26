@@ -7,9 +7,11 @@
 # Entries pertaining to Kanae are located here
 kanae:
 
-  # Host that the server will use.
-  # Set to 0.0.0.0 if running in Docker
-  host: "localhost"
+  # Host that the server will use. Defaults to 0.0.0.0 so the kanae
+  # process is reachable when running inside Docker (the integration-test
+  # stack publishes port 8000 to the host). Set to "localhost" if running
+  # kanae directly on the host and you only want loopback access.
+  host: "0.0.0.0"
 
   # Port that the server binds to.
   # Defaults to 8000
@@ -94,7 +96,7 @@ kanae:
     # Valkey storage-backend URI
     storage_uri: "valkey://localhost:6379/"
 
-# Ory Kratos and Keto configurations for Kanae
+# Ory Kratos and Keto configurations for Kanae.
 ory:
 
   # Kratos public API. Used for `/sessions/whoami` during auth dependency resolution
@@ -121,7 +123,7 @@ ory:
 # S3 storage configs. These are used when storing media such as images, videos, etc
 storage:
 
-  # URL that points to the S3 object store. In this case, it's Garage
+  # URL that points to the S3 object store. In this case, it's Garage.
   url: "http://localhost:3900"
 
   # Region that the S3 object store lives in.
@@ -163,4 +165,4 @@ storage:
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
-postgres_uri: "postgresql://user:password@localhost:5432/user"
+postgres_uri: "postgresql://postgres:password@localhost:5432/kanae"

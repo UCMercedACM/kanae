@@ -51,23 +51,24 @@ _ALLOWED_VIDEO_TYPES = frozenset(
 )
 
 _HASH_REGEX = r"^[0-9a-f]{64}$"
+_NO_NULL_REGEX = r"^[^\x00]+$"
 
 
 class ProjectThumbnail(BaseModel, frozen=True):
-    hash: str
-    url: str
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class ProjectMember(BaseModel, frozen=True):
     id: uuid.UUID
-    name: str
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class Projects(BaseModel, frozen=True):
     id: uuid.UUID
-    name: str
-    description: str
-    link: str
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    link: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     type: Literal[
         "independent",
         "sig_ai",
@@ -77,16 +78,16 @@ class Projects(BaseModel, frozen=True):
         "sig_arch",
         "sig_graph",
     ]
-    tags: Optional[list[str]] = None
+    tags: Optional[list[Annotated[str, Field(pattern=_NO_NULL_REGEX)]]] = None
     active: bool
     founded_at: datetime.datetime
 
 
 class FullProjects(BaseModel, frozen=True):
     id: uuid.UUID
-    name: str
-    description: str
-    link: str
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    link: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     thumbnail: Optional[ProjectThumbnail] = None
     members: list[ProjectMember]
     type: Literal[
@@ -98,7 +99,7 @@ class FullProjects(BaseModel, frozen=True):
         "sig_arch",
         "sig_graph",
     ]
-    tags: Optional[list[str]] = None
+    tags: Optional[list[Annotated[str, Field(pattern=_NO_NULL_REGEX)]]] = None
     active: bool
     founded_at: datetime.datetime
 
@@ -106,7 +107,7 @@ class FullProjects(BaseModel, frozen=True):
 @router.get("/projects")
 async def list_projects(
     request: RouteRequest,
-    name: Annotated[Optional[str], Query(min_length=3)] = None,
+    name: Annotated[Optional[str], Query(min_length=3, pattern=_NO_NULL_REGEX)] = None,
     since: Optional[datetime.datetime] = None,
     until: Optional[datetime.datetime] = None,
     *,
@@ -199,9 +200,9 @@ async def get_project(request: RouteRequest, project_id: uuid.UUID) -> FullProje
 
 
 class ModifiedProject(BaseModel, frozen=True):
-    name: str
-    description: str
-    link: str
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    link: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 @router.put(
@@ -261,9 +262,9 @@ async def delete_project(
 
 
 class CreateProject(BaseModel, frozen=True):
-    name: str
-    description: str
-    link: str
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    link: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     type: Literal[
         "independent",
         "sig_ai",
@@ -273,7 +274,7 @@ class CreateProject(BaseModel, frozen=True):
         "sig_arch",
         "sig_graph",
     ]
-    tags: Optional[list[str]] = None
+    tags: Optional[list[Annotated[str, Field(pattern=_NO_NULL_REGEX)]]] = None
     active: bool
     founded_at: datetime.datetime
 
@@ -364,6 +365,10 @@ async def join_project(
             await tr.rollback()
             msg = "Authenticated member has already joined the requested project"
             raise ConflictError(msg)
+        except asyncpg.ForeignKeyViolationError:
+            await tr.rollback()
+            msg = "Project or member does not exist"
+            raise NotFoundError(msg)
         else:
             await tr.commit()
             return JoinResponse(message="ok")
@@ -402,11 +407,17 @@ async def bulk_join_project(
         tr = connection.transaction()
         await tr.start()
         try:
-            await connection.executemany(query, project_id, [entry.id for entry in req])
+            await connection.executemany(
+                query, [(project_id, entry.id) for entry in req]
+            )
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Authenticated member has already joined the requested project"
             raise ConflictError(msg)
+        except asyncpg.ForeignKeyViolationError:
+            await tr.rollback()
+            msg = "Project or one of the supplied members does not exist"
+            raise NotFoundError(msg)
         else:
             await tr.commit()
             return JoinResponse(message="ok")
@@ -493,27 +504,27 @@ def _validate_media(content_type: str, size: int) -> None:
 
 
 class SimpleUploadResponse(BaseModel, frozen=True):
-    url: str
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class MultipartUploadResponse(BaseModel, frozen=True):
-    upload_id: str
+    upload_id: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     size: int
     chunks: list[UploadChunk]
 
 
 class MediaRecord(BaseModel, frozen=True):
-    hash: str
-    content_type: str
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     kind: Literal["image", "video"]
     size: int
     created_at: datetime.datetime
-    url: str
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class UploadRequest(BaseModel, frozen=True):
     hash: Annotated[str, Field(pattern=_HASH_REGEX)]
-    content_type: str
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     size: int
 
 
@@ -577,9 +588,9 @@ class CompletedChunk(TypedDict):
 
 class CommitRequest(BaseModel, frozen=True):
     hash: Annotated[str, Field(pattern=_HASH_REGEX)]
-    content_type: str
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     size: int
-    upload_id: Optional[str] = None
+    upload_id: Optional[Annotated[str, Field(pattern=_NO_NULL_REGEX)]] = None
     chunks: Optional[list[CompletedChunk]] = None
 
 
@@ -689,7 +700,7 @@ async def commit_media(
 
 class SetThumbnailRequest(BaseModel, frozen=True):
     hash: Annotated[str, Field(pattern=_HASH_REGEX)]
-    content_type: str
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 @router.post(

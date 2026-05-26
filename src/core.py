@@ -1190,9 +1190,10 @@ class Kanae(FastAPI):
     def request_validation_error_handler(
         self, request: RouteRequest, exc: RequestValidationError
     ) -> Response:
-        # The errors seem to be extremely inconsistent
-        # For now, we'll log them down for further analysis
-        errors = exc.errors()
+        errors = [
+            {key: value for key, value in error.items() if key not in {"ctx", "url"}}
+            for error in exc.errors()
+        ]
         message = RequestValidationErrorResponse(errors=errors)
         self._logger.warning("Request Validation Error! Message:\n%s", errors)
         return ORJSONResponse(
@@ -1253,6 +1254,6 @@ class Kanae(FastAPI):
             for path in self.openapi_schema["paths"].values():
                 for method in path.values():
                     responses = method.get("responses")
-                    if str(status.HTTP_422_UNPROCESSABLE_ENTITY) in responses:
-                        del responses[str(status.HTTP_422_UNPROCESSABLE_ENTITY)]
+                    if str(status.HTTP_422_UNPROCESSABLE_CONTENT) in responses:
+                        del responses[str(status.HTTP_422_UNPROCESSABLE_CONTENT)]
         return self.openapi_schema

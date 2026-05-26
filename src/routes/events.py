@@ -10,7 +10,7 @@ from argon2.low_level import Type
 from dateutil import tz
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, Query
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from utils.auth import use_session
 from utils.checks import Event, Role, has_any_role, has_permissions
@@ -37,6 +37,8 @@ _CONDENSED_KEYS = {
     "time_cost": "t",
     "parallelism": "p",
 }
+
+_NO_NULL_REGEX = r"^[^\x00]+$"
 
 router = KanaeRouter(tags=["Events"])
 
@@ -82,11 +84,11 @@ class EventTimezone:
 
 class Events(BaseModel, frozen=True):
     id: uuid.UUID
-    name: str
-    description: str
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     start_at: datetime.datetime
     end_at: datetime.datetime
-    location: str
+    location: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     type: Literal[
         "general",
         "sig_ai",
@@ -98,14 +100,14 @@ class Events(BaseModel, frozen=True):
         "social",
         "misc",
     ]
-    timezone: str
+    timezone: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     creator_id: uuid.UUID
 
 
 @router.get("/events")
 async def list_events(
     request: RouteRequest,
-    name: Annotated[Optional[str], Query(min_length=3)] = None,
+    name: Annotated[Optional[str], Query(min_length=3, pattern=_NO_NULL_REGEX)] = None,
     *,
     params: Annotated[KanaeParams, Depends()],
 ) -> KanaePages[Events]:
@@ -124,7 +126,7 @@ async def list_events(
         ORDER BY similarity(name, $1) DESC
         """
 
-    args = name or ()
+    args: tuple[str, ...] = (name,) if name else ()
     return await paginate(request.app.pool, query, *args, params=params)  # ty: ignore[invalid-return-type]
 
 
@@ -135,7 +137,7 @@ async def list_events(
 async def get_event(request: RouteRequest, event_id: uuid.UUID) -> Events:
     """Retrieve event details via ID"""
     query = """
-    SELECT id, name, description, start_at, end_at, location, type, timezone, creator_id
+    SELECT id, name, description, start_at, end_at, location, type, creator_id
     FROM events
     WHERE id = $1;
     """
@@ -148,15 +150,15 @@ async def get_event(request: RouteRequest, event_id: uuid.UUID) -> Events:
 
 
 class ModifiedEvent(BaseModel, frozen=True):
-    name: str
-    description: str
-    location: str
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    location: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class ModifiedEventWithDatetime(ModifiedEvent, frozen=True):
     start_at: datetime.datetime
     end_at: datetime.datetime
-    timezone: str
+    timezone: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 @router.put(
@@ -274,7 +276,7 @@ async def create_events(
         await tr.start()
 
         try:
-            rows = await request.app.pool.fetchrow(
+            rows = await connection.fetchrow(
                 query,
                 *req.model_dump(exclude={"id", "creator_id"}).values(),
                 session.identity.id,
@@ -282,7 +284,7 @@ async def create_events(
             encoded_hash = request.app.ph.hash(str(rows["id"]))
 
             # note that the salt is stored along with the hash
-            await request.app.pool.execute(
+            await connection.execute(
                 attendance_query,
                 rows["id"],
                 "$".join(encoded_hash.split("$")[-2:]),
@@ -292,6 +294,10 @@ async def create_events(
             await tr.rollback()
             msg = "Requested project already exists"
             raise ConflictError(msg)
+        except asyncpg.ForeignKeyViolationError:
+            await tr.rollback()
+            msg = "Creator member does not exist"
+            raise NotFoundError(msg)
         else:
             await tr.commit()
             return Events(**dict(rows))
@@ -344,6 +350,10 @@ async def join_event(
             await tr.rollback()
             msg = "Authenticated member has already joined the requested event"
             raise ConflictError(msg)
+        except asyncpg.ForeignKeyViolationError:
+            await tr.rollback()
+            msg = "Event or member no longer exists"
+            raise NotFoundError(msg)
         else:
             await tr.commit()
             return JoinResponse()
@@ -354,9 +364,9 @@ class VerifyFailedResponse(ErrorResponse, frozen=True):
 
 
 class VerifyRequest(BaseModel, frozen=True):
-    code: str
+    code: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
-    @model_validator(mode="before")
+    @model_validator(mode="after")
     def check_code_length(self) -> Self:
         if len(self.code) > 8:
             msg = "Must be 8 characters or less"

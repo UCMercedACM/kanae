@@ -1,7 +1,7 @@
-import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from enum import StrEnum
 from typing import Annotated, Literal, NamedTuple, Protocol
+from uuid import UUID
 
 from fastapi import Depends
 from fastapi.params import Depends as _Depends
@@ -66,6 +66,16 @@ async def _async_any(awaitables: Iterable[Awaitable[bool]]) -> bool:
         if await aw:
             return True
     return False
+
+
+# Very cheap way to determine a UUID
+# See: https://stackoverflow.com/a/56492650
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 ### Resources
@@ -270,11 +280,11 @@ def has_permissions[ContextT: CheckContext](
         missing = [
             perm
             for perm in permissions
-            if not await ctx.ory.check_permission(
+            for raw in (str(ctx.request.path_params[perm.resource.path_parameter]),)
+            if not _is_uuid(raw)
+            or not await ctx.ory.check_permission(
                 namespace=perm.resource.namespace,
-                resource=str(
-                    uuid.UUID(ctx.request.path_params[perm.resource.path_parameter])
-                ),
+                resource=raw.lower(),
                 relation=perm.relation,
                 subject_id=ctx.session.identity.id,
             )

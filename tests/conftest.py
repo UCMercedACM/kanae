@@ -1,38 +1,35 @@
-# ty: ignore[unresolved-import]
-
 import asyncio
+import datetime
 import logging
+import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
+from pathlib import Path
 from types import TracebackType
-from typing import Any, NamedTuple, Optional, Self, TypedDict, Unpack, cast
+from typing import Any, Literal, NamedTuple, Optional, Self, TypedDict, Unpack, cast
 from unittest.mock import Mock
 from urllib.parse import quote
 
+import asyncpg
 import httpx
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI, Request, Response
-from glide import (
-    GlideClient,
-    GlideClientConfiguration,
-    NodeAddress,
-    ServerCredentials,
-)
-from glide_shared.exceptions import ConnectionError as GlideConnectionError
+from fastapi_pagination import add_pagination
+from starlette.middleware.cors import CORSMiddleware
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.exceptions import ContainerStartException
+from testcontainers.core.image import DockerImage
 from testcontainers.core.network import Network
 from testcontainers.core.utils import raise_for_deprecated_parameter
-from testcontainers.core.waiting_utils import (
-    WaitStrategy,
-    wait_container_is_ready,
-    wait_for_logs,
-)
+from testcontainers.core.wait_strategies import LogMessageWaitStrategy
+from testcontainers.core.waiting_utils import WaitStrategy
 from testcontainers.postgres import PostgresContainer
 from yarl import URL
 
 from core import Kanae, KanaeConfig, find_config
+from routes import router
+from utils.checks import Role
 from utils.glide import GlideManager
 from utils.limiter import get_remote_address
 from utils.limiter.extension import (
@@ -41,16 +38,46 @@ from utils.limiter.extension import (
     rate_limit_exceeded_handler,
 )
 from utils.limiter.middleware import LimiterASGIMiddleware, LimiterMiddleware
+from utils.ory import KanaeSession, KratosIdentity, OryClient
 
-CONFIG_PATH = find_config()
+_CONFIG_PATH = find_config()
+_DOCKERFILE = Path("tests/docker/Dockerfile")
 
-config = KanaeConfig.load_from_file(CONFIG_PATH)
+_KANAE_CONFIG = KanaeConfig.load_from_file(_CONFIG_PATH)
+
+# We need to "fake" the webhook master key because it's an operator secret
+_TEST_WEBHOOK_MASTER_KEY = "00" * 32
+
+_FAKE_COOKIE = "fake-kratos-session"
+_DISCOVER_TABLES_SQL = """
+SELECT format('%I.%I', table_schema, table_name) AS qname
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_type = 'BASE TABLE'
+ORDER BY table_name
+"""
 
 
 async def _async_rate_limit_exceeded_handler(
     request: Request, exc: RateLimitExceeded
 ) -> Response:
     return await rate_limit_exceeded_handler(request, exc)
+
+
+### Types/Structs
+
+
+class KanaeServices(NamedTuple):
+    postgres: PostgresContainer
+    valkey: "ValkeyContainer"
+
+
+class _LimiterFactoryKwargs(TypedDict, total=False):
+    key_func: Callable[..., str]
+    config: KanaeConfig
+    enabled: bool
+    headers_enabled: bool
+    key_style: Literal["endpoint", "url"]
 
 
 class _DockerContainerKwargs(TypedDict, total=False):
@@ -63,6 +90,16 @@ class _DockerContainerKwargs(TypedDict, total=False):
     network: Network | None
     network_aliases: list[str] | None
     _wait_strategy: WaitStrategy | None
+
+
+class _PermissionKey(NamedTuple):
+    namespace: str
+    resource: str
+    relation: str
+    subject_id: str
+
+
+### Custom containers
 
 
 class ValkeyContainer(DockerContainer):
@@ -82,30 +119,7 @@ class ValkeyContainer(DockerContainer):
         self.with_exposed_ports(self.port)
         if self.password:
             self.with_command(f"valkey-server --requirepass {self.password}")
-
-    @wait_container_is_ready(GlideConnectionError)
-    def _connect(self) -> None:
-        if not asyncio.run(self._ping()):
-            msg = "Could not connect to Valkey"
-            raise GlideConnectionError(msg)
-
-    async def _ping(self) -> bool:
-        config = GlideClientConfiguration(
-            addresses=[
-                NodeAddress(
-                    host=self.get_container_host_ip(),
-                    port=int(self.get_exposed_port(self.port)),
-                )
-            ],
-            credentials=ServerCredentials(password=self.password)
-            if self.password
-            else None,
-        )
-        client = await GlideClient.create(config)
-        try:
-            return bool(await client.ping())
-        finally:
-            await client.close()
+        self.waiting_for(LogMessageWaitStrategy("Ready to accept connections tcp"))
 
     def get_connection_url(self, dbname: str | None = None) -> str:
         if self._container is None:
@@ -124,15 +138,92 @@ class ValkeyContainer(DockerContainer):
             url = f"{url}/{dbname}"
         return url
 
-    def start(self) -> Self:
-        super().start()
-        self._connect()
-        return self
+
+### Fake/test clients
 
 
-class KanaeServices(NamedTuple):
-    postgres: PostgresContainer
-    valkey: ValkeyContainer
+class _FakeCacheableWhoami:
+    __slots__ = ("_owner",)
+
+    def __init__(self, owner: "FakeOryClient") -> None:
+        self._owner = owner
+
+    async def __call__(self, cookie: str) -> Optional[KanaeSession]:
+        return self._owner.session
+
+    # These has to be async to work as they are mocking the real ones
+    async def cache_invalidate(self, cookie: str) -> None:
+        return None
+
+
+class FakeOryClient:
+    __slots__ = ("client", "permissions", "revoked_sessions", "session", "whoami")
+
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self.client = client
+        self.session: Optional[KanaeSession] = None
+        self.permissions: set[_PermissionKey] = set()
+        self.revoked_sessions: list[str] = []
+        self.whoami: _FakeCacheableWhoami = _FakeCacheableWhoami(self)
+
+    async def check_permission(
+        self,
+        namespace: str,
+        resource: str,
+        relation: str,
+        subject_id: str,
+    ) -> bool:
+        key = _PermissionKey(namespace, str(resource), relation, str(subject_id))
+        return key in self.permissions
+
+    async def revoke_session(self, session_id: str) -> None:
+        self.revoked_sessions.append(session_id)
+
+    def login_as(
+        self,
+        *roles: Role,
+        identity_id: Optional[str] = None,
+        email: str = "test@test.local",
+    ) -> str:
+        identity_id = identity_id or str(uuid.uuid4())
+        now = datetime.datetime.now(datetime.UTC)
+        self.session = KanaeSession(
+            id=uuid.uuid4(),
+            active=True,
+            expires_at=now + datetime.timedelta(days=1),
+            authenticated_at=now,
+            issued_at=now,
+            identity=KratosIdentity(
+                id=identity_id,
+                schema_id="default",
+                traits={
+                    "email": email,
+                    "name": email.split("@", maxsplit=1)[0],
+                    "display_name": email,
+                },
+            ),
+        )
+        for role in roles:
+            self.permissions.add(
+                _PermissionKey("Role", role.value, "member", identity_id)
+            )
+        self.client.cookies.set("ory_kratos_session", _FAKE_COOKIE)
+        return identity_id
+
+    def logout(self) -> None:
+        self.session = None
+        self.client.cookies.delete("ory_kratos_session")
+
+    def grant(
+        self,
+        namespace: str,
+        resource: str,
+        relation: str,
+        subject_id: str,
+    ) -> None:
+        self.permissions.add(
+            _PermissionKey(namespace, str(resource), relation, str(subject_id))
+        )
 
 
 class KanaeTestClient:
@@ -161,37 +252,118 @@ class KanaeTestClient:
         await self.client.aclose()
 
 
-@pytest.fixture(scope="session")
-def get_app() -> Kanae:
-    return Kanae(config=config)
+### Fake ory fixtures
 
 
-@pytest.fixture(scope="session")
-def setup() -> Generator[KanaeServices, None, None]:
-    with PostgresContainer() as postgres, ValkeyContainer() as valkey:
-        wait_for_logs(postgres, "ready", timeout=15.0)
-        wait_for_logs(valkey, "accept connections tcp", timeout=15.0)
+@pytest.fixture(scope="function")
+def fake_ory(client: KanaeTestClient, kanae: Kanae) -> FakeOryClient:
+    fake = FakeOryClient(client=client.client)
+    kanae.ory = cast("OryClient", fake)
+    return fake
 
-        yield KanaeServices(postgres, valkey)
+
+@pytest.fixture(scope="function")
+def make_session(fake_ory: FakeOryClient) -> Callable[..., str]:
+    return fake_ory.login_as
+
+
+### Testcontainer fixtures
 
 
 @pytest.fixture(scope="session")
 def valkey() -> Generator[ValkeyContainer, None, None]:
     with ValkeyContainer() as valkey:
-        wait_for_logs(valkey, "accept connections tcp", timeout=15.0)
         yield valkey
 
 
-@pytest_asyncio.fixture(scope="function")
-async def app(
-    get_app: Kanae, setup: KanaeServices
-) -> AsyncGenerator[KanaeTestClient, None]:
-    get_app.config.postgres_uri = setup.postgres.get_connection_url(driver=None)
-    async with (
-        LifespanManager(app=get_app),
-        KanaeTestClient(app=get_app) as client,
+@pytest.fixture(scope="session")
+def setup() -> Generator[KanaeServices, None, None]:
+    with (
+        DockerImage(
+            path=_DOCKERFILE.parents[2],
+            dockerfile_path=_DOCKERFILE,
+            tag="kanae-pg-test:latest",
+        ) as image,
+        PostgresContainer(str(image)) as postgres,
+        ValkeyContainer() as valkey,
     ):
-        yield client
+        yield KanaeServices(postgres, valkey)
+
+
+### App-based fixtures
+
+
+@pytest.fixture(scope="session")
+def get_app() -> Kanae:
+    return Kanae(config=_KANAE_CONFIG)
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _truncate_sql(setup: KanaeServices) -> str:
+    dsn = setup.postgres.get_connection_url(driver=None)
+
+    connection = await asyncpg.connect(dsn)
+
+    try:
+        rows = await connection.fetch(_DISCOVER_TABLES_SQL)
+    finally:
+        await connection.close()
+
+    if not rows:
+        return ""
+
+    tables = ", ".join(r["qname"] for r in rows)
+    return f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"
+
+
+### Actual running clients and apps fixtures
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _running_app(kanae: Kanae) -> AsyncGenerator[KanaeTestClient, None]:
+    async with (
+        LifespanManager(app=kanae),
+        KanaeTestClient(app=kanae) as test_client,
+    ):
+        yield test_client
+
+
+@pytest.fixture(scope="session")
+def kanae(setup: KanaeServices) -> Kanae:
+    """Mirrors production-version of Kanae"""
+    test_app = Kanae(config=_KANAE_CONFIG)
+    test_app.include_router(router)
+    test_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_KANAE_CONFIG.kanae.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "PUT", "POST", "DELETE", "OPTIONS", "PATCH"],
+        allow_headers=["Content-Type"],
+    )
+    add_pagination(test_app)
+    test_app.limiter = router.limiter
+    test_app.config.postgres_uri = setup.postgres.get_connection_url(driver=None)
+
+    test_valkey_uri = setup.valkey.get_connection_url()
+    test_app.config.kanae.limiter["storage_uri"] = test_valkey_uri
+    test_app.limiter.storage_uri = test_valkey_uri
+    test_app.config.ory = test_app.config.ory.model_copy(
+        update={"kratos_webhook_master_key": _TEST_WEBHOOK_MASTER_KEY}
+    )
+    return test_app
+
+
+@pytest_asyncio.fixture(scope="function", loop_scope="session")
+async def client(
+    _running_app: KanaeTestClient, kanae: Kanae, _truncate_sql: str
+) -> AsyncGenerator[KanaeTestClient, None]:
+    yield _running_app
+
+    if _truncate_sql:
+        await kanae.pool.execute(_truncate_sql)
+
+    await kanae.limiter._reset()
+    _running_app.client.cookies.clear()
 
 
 @pytest_asyncio.fixture(
@@ -206,10 +378,12 @@ async def build_fastapi_app(
 ) -> AsyncGenerator[Callable[..., tuple[FastAPI, KanaeLimiter]], None]:
     async with GlideManager(uri=valkey.get_connection_url()) as manager:
 
-        def _factory(**limiter_args: object) -> tuple[FastAPI, KanaeLimiter]:
+        def _factory(
+            **limiter_args: Unpack[_LimiterFactoryKwargs],
+        ) -> tuple[FastAPI, KanaeLimiter]:
             middleware, exception_handler = request.param
 
-            test_config = KanaeConfig.load_from_file(CONFIG_PATH)
+            test_config = KanaeConfig.load_from_file(_CONFIG_PATH)
             test_config.kanae.limiter["storage_uri"] = valkey.get_connection_url()
 
             limiter_args.setdefault("key_func", get_remote_address)

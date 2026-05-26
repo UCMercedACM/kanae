@@ -1,5 +1,5 @@
 # ruff: noqa: S101
-# ty: ignore[unresolved-import]
+
 
 from collections.abc import Callable
 from typing import Any
@@ -337,7 +337,9 @@ async def test_callable_cost(build_fastapi_app: AppFactory) -> None:
         return PlainTextResponse("test")
 
     @app.get("/t2")
-    @limiter.limit("50/minute", cost=lambda request: int(request.headers["foo"]) * 1.5)
+    @limiter.limit(
+        "50/minute", cost=lambda request: round(int(request.headers["foo"]) * 1.5)
+    )
     async def t2(request: Request) -> Response:
         return PlainTextResponse("test")
 
