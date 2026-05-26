@@ -67,6 +67,15 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 	key="$webhook_key" yq -i '.ory.kratos_webhook_master_key = strenv(key)' "$CONFIG_FILE"
 	key="$garage_key_id" yq -i '.storage.key_id = strenv(key)' "$CONFIG_FILE"
 	key="$garage_secret_key" yq -i '.storage.secret_key = strenv(key)' "$CONFIG_FILE"
+
+	yq -i '.kanae.limiter.storage_uri = "valkey://valkey:6379/"' "$CONFIG_FILE"
+	yq -i '.ory.kratos_public_url = "http://kratos:4433"' "$CONFIG_FILE"
+	yq -i '.ory.kratos_admin_url = "http://kratos:4434"' "$CONFIG_FILE"
+	yq -i '.ory.keto_read_url    = "http://keto:4466"' "$CONFIG_FILE"
+	yq -i '.ory.keto_write_url   = "http://keto:4467"' "$CONFIG_FILE"
+	yq -i '.storage.url          = "http://garage:3900"' "$CONFIG_FILE"
+	yq -i '.postgres_uri = "postgresql://postgres:password@database:5432/kanae"' "$CONFIG_FILE"
+
 	fresh_config=1
 else
 	log "$CONFIG_FILE already exists, leaving as-is"

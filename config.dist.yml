@@ -7,10 +7,10 @@
 # Entries pertaining to Kanae are located here
 kanae:
 
-  # Host that the server will use.
-  # Defaults to 0.0.0.0 because this file is otherwise wired for Docker
-  # (every other URL uses a service name). Set to "localhost" if running
-  # kanae directly on the host instead of inside a container.
+  # Host that the server will use. Defaults to 0.0.0.0 so the kanae
+  # process is reachable when running inside Docker (the integration-test
+  # stack publishes port 8000 to the host). Set to "localhost" if running
+  # kanae directly on the host and you only want loopback access.
   host: "0.0.0.0"
 
   # Port that the server binds to.
@@ -94,25 +94,25 @@ kanae:
     key_style: "url"
 
     # Valkey storage-backend URI
-    storage_uri: "valkey://valkey:6379/"
+    storage_uri: "valkey://localhost:6379/"
 
-# Ory Kratos and Keto configurations for Kanae
+# Ory Kratos and Keto configurations for Kanae.
 ory:
 
   # Kratos public API. Used for `/sessions/whoami` during auth dependency resolution
   # and for self-service flows proxied to the frontend.
-  kratos_public_url: "http://kratos:4433"
+  kratos_public_url: "http://localhost:4433"
 
   # Kratos admin API. Used for identity lookups, session revocation, and identity updates.
   # Do not expose this externally.
-  kratos_admin_url: "http://kratos:4434"
+  kratos_admin_url: "http://localhost:4434"
 
   # Keto read API. Used for permission checks (`/relation-tuples/check`) and tuple expansions.
-  keto_read_url: "http://keto:4466"
+  keto_read_url: "http://localhost:4466"
 
   # Keto write API. Used for creating and deleting relation tuples on project/event
   # create, join, transfer, and demote flows.
-  keto_write_url: "http://keto:4467"
+  keto_write_url: "http://localhost:4467"
 
   # Master secret key for Kratos's webhook origin. 
   # The master key will be used to derive the individual hook tokens via blake3 keyed-hash
@@ -124,8 +124,7 @@ ory:
 storage:
 
   # URL that points to the S3 object store. In this case, it's Garage.
-  # Uses the Docker service name so kanae can reach Garage from inside the container.
-  url: "http://garage:3900"
+  url: "http://localhost:3900"
 
   # Region that the S3 object store lives in.
   # For using Garage, leave it as "garage"
@@ -166,4 +165,4 @@ storage:
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
-postgres_uri: "postgresql://postgres:password@database:5432/kanae"
+postgres_uri: "postgresql://postgres:password@localhost:5432/kanae"
