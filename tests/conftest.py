@@ -357,17 +357,6 @@ def kanae(setup: KanaeServices) -> Kanae:
 async def client(
     _running_app: KanaeTestClient, kanae: Kanae, _truncate_sql: str
 ) -> AsyncGenerator[KanaeTestClient, None]:
-    """Per-test HTTP client. Shares the session-scoped lifespan via
-    `_running_app`, then resets state on teardown so the next test starts
-    clean:
-
-    - Truncate every user table (rows survive between tests otherwise).
-    - Reset rate-limiter counters (Valkey storage outlives the test).
-    - Drop the HTTP cookie jar (`login_as` sets `ory_kratos_session`).
-
-    Opt-in by parameter — `test_limiter.py` doesn't request this, so it
-    pays no Postgres setup cost.
-    """
     yield _running_app
 
     if _truncate_sql:
