@@ -112,8 +112,8 @@ export PASSWORD
 		export AWS_ACCESS_KEY_ID="$GARAGE_KEY_ID"
 		export AWS_SECRET_ACCESS_KEY="$GARAGE_SECRET_KEY"
 
-		NODE_ID=$(docker compose -f "$COMPOSE_FILE" exec -T garage /garage status 2>/dev/null |
-			awk '/HEALTHY NODES/{f=2; next} f==2{f=1; next} f==1 && NF{print $1; exit}')
+		NODE_ID=$(docker compose -f "$COMPOSE_FILE" exec -T garage /garage status 2>/dev/null \
+			| awk '/HEALTHY NODES/{f=2; next} f==2{f=1; next} f==1 && NF{print $1; exit}')
 		log "assigning layout to node: $NODE_ID"
 		docker compose -f "$COMPOSE_FILE" exec -T garage /garage layout assign -z dc1 -c 5G "$NODE_ID"
 		docker compose -f "$COMPOSE_FILE" exec -T garage /garage layout apply --version 1
@@ -195,18 +195,18 @@ _garage_pid=$!
 		body="${resp%$'\n'*}"
 
 		case "$code" in
-		201)
-			jq -r '.id' <<<"$body"
-			;;
-		409)
-			curl -fsS -H 'Accept: application/json' \
-				"$KRATOS_ADMIN_URL/admin/identities?credentials_identifier=$email" |
-				jq -r '.[0].id'
-			;;
-		*)
-			printf 'kratos POST /admin/identities failed (%s): %s\n' "$code" "$body" >&2
-			exit 1
-			;;
+			201)
+				jq -r '.id' <<<"$body"
+				;;
+			409)
+				curl -fsS -H 'Accept: application/json' \
+					"$KRATOS_ADMIN_URL/admin/identities?credentials_identifier=$email" \
+					| jq -r '.[0].id'
+				;;
+			*)
+				printf 'kratos POST /admin/identities failed (%s): %s\n' "$code" "$body" >&2
+				exit 1
+				;;
 		esac
 	}
 
