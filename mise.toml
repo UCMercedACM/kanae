@@ -64,6 +64,26 @@ run = "ruff format tests"
 description = "Lint and format testing codebase. This is necessary to handle import sorting and formatting. TD;LR: Run this task once you are done with development at the end of the PR"
 run = [{ task = "tests:lint" }, { task = "tests:format" }]
 
+
+[tasks."scripts:lint"]
+description = "Lints all bash scripts via Shellcheck"
+dir = "{{ config_root }}"
+run = """
+#!/usr/bin/env bash
+
+shopt -s globstar nullglob dotglob
+shellcheck {{ config_root }}/**/*.sh
+"""
+
+[tasks."scripts:format"]
+description = "Formats all bash scripts via shfmt"
+dir = "{{ config_root }}"
+run = "shfmt -l -w -bn -ci {{ config_root }}"
+
+[tasks."scripts:check"]
+description = "Lints and formats all bash scripts"
+run = [{ task = "scripts:lint" }, { task = "scripts:format" }]
+
 [tasks."server:check-env"]
 hide = true
 run = "test -f {{ config_root }}/docker/.env"
