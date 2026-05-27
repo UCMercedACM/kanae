@@ -57,16 +57,30 @@ YEL=$'\033[0;33m'
 BLU=$'\033[0;34m'
 RST=$'\033[0m'
 
-step() { printf "\n${BLU}━━ %s ━━${RST}\n" "$1"; }
-ok() { printf "${GRN}✓${RST} %s\n" "$1"; }
-warn() { printf "${YEL}⚠${RST} %s\n" "$1"; }
+H_CONTENT_TYPE="Content-Type: application/json"
+JQ_HASH='.hash // empty'
+
+step() {
+	local msg="$1"
+	printf "\n${BLU}━━ %s ━━${RST}\n" "$msg"
+}
+ok() {
+	local msg="$1"
+	printf "${GRN}✓${RST} %s\n" "$msg"
+}
+warn() {
+	local msg="$1"
+	printf "${YEL}⚠${RST} %s\n" "$msg"
+}
 fail() {
-	printf "${RED}✗${RST} %s\n" "$1" >&2
+	local msg="$1"
+	printf "${RED}✗${RST} %s\n" "$msg" >&2
 	exit 1
 }
 
 require() {
-	command -v "$1" >/dev/null 2>&1 || fail "missing required tool: $1"
+	local cmd="$1"
+	command -v "$cmd" >/dev/null 2>&1 || fail "missing required tool: $cmd"
 }
 
 assert_http() {
@@ -84,17 +98,19 @@ assert_http() {
 # Compute a file's BLAKE3 hex digest. Uses uvx so we don't depend on the
 # project's venv being active.
 blake3_hash() {
+	local file="$1"
 	uvx --quiet --from blake3 python -c '
 import sys
 from blake3 import blake3
 with open(sys.argv[1], "rb") as f:
     print(blake3(f.read()).hexdigest())
-' "$1"
+' "$file"
 }
 
 # Derive a content-type from a file extension. Returns 1 if unrecognized.
 content_type_for() {
-	local ext="${1##*.}"
+	local file="$1"
+	local ext="${file##*.}"
 	case "${ext,,}" in
 		gif) echo "image/gif" ;;
 		png) echo "image/png" ;;
@@ -148,7 +164,7 @@ CSRF=$(curl -sc "$COOKIES" -b "$COOKIES" \
 	| jq -r '.ui.nodes[] | select(.attributes.name=="csrf_token") | .attributes.value')
 
 REG_RESP=$(curl -sc "$COOKIES" -b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-H "Accept: application/json" \
 	-X POST "$KRATOS_PUBLIC/self-service/registration?flow=$FLOW" \
 	-d '{
@@ -181,7 +197,7 @@ ok "members row synced"
 step "3. grant manager role"
 
 curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{
     "namespace":  "Role",
     "object":     "manager",
@@ -203,7 +219,7 @@ PROJ_BODY='{
 }'
 CREATE_RESP=$(curl -s -X POST "$KANAE/projects/create" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "$PROJ_BODY")
 PROJECT_ID=$(jq -r '.id // empty' <<<"$CREATE_RESP")
 [[ -n "$PROJECT_ID" ]] || fail "project create failed: $CREATE_RESP"
@@ -212,7 +228,7 @@ ok "project id: $PROJECT_ID"
 step "5. grant Project owners"
 
 curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{
     "namespace":  "Project",
     "object":     "'"$PROJECT_ID"'",
@@ -231,7 +247,7 @@ upload_single() {
 	local upload_resp
 	upload_resp=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/media/upload" \
 		-b "$COOKIES" \
-		-H "Content-Type: application/json" \
+		-H "$H_CONTENT_TYPE" \
 		-d "{\"hash\":\"$hash\",\"content_type\":\"$content_type\",\"size\":$size}")
 
 	# Dedup path: response is a MediaRecord (has a `hash` field). Nothing to PUT.
@@ -254,9 +270,9 @@ upload_single() {
 	local commit_resp commit_hash
 	commit_resp=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/media/commit" \
 		-b "$COOKIES" \
-		-H "Content-Type: application/json" \
+		-H "$H_CONTENT_TYPE" \
 		-d "{\"hash\":\"$hash\",\"content_type\":\"$content_type\",\"size\":$size}")
-	commit_hash=$(jq -r '.hash // empty' <<<"$commit_resp")
+	commit_hash=$(jq -r "$JQ_HASH" <<<"$commit_resp")
 	[[ "$commit_hash" == "$hash" ]] \
 		|| fail "commit response did not echo hash: $commit_resp"
 }
@@ -269,7 +285,7 @@ upload_multipart() {
 	local upload_resp
 	upload_resp=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/media/upload" \
 		-b "$COOKIES" \
-		-H "Content-Type: application/json" \
+		-H "$H_CONTENT_TYPE" \
 		-d "{\"hash\":\"$hash\",\"content_type\":\"$content_type\",\"size\":$size}")
 
 	# Dedup path: response is a MediaRecord. Nothing to upload.
@@ -321,9 +337,9 @@ print(json.dumps(results))
 	local commit_resp commit_hash
 	commit_resp=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/media/commit" \
 		-b "$COOKIES" \
-		-H "Content-Type: application/json" \
+		-H "$H_CONTENT_TYPE" \
 		-d "{\"hash\":\"$hash\",\"content_type\":\"$content_type\",\"size\":$size,\"upload_id\":\"$upload_id\",\"chunks\":$completed}")
-	commit_hash=$(jq -r '.hash // empty' <<<"$commit_resp")
+	commit_hash=$(jq -r "$JQ_HASH" <<<"$commit_resp")
 	[[ "$commit_hash" == "$hash" ]] \
 		|| fail "multipart commit response did not echo hash: $commit_resp"
 }
@@ -388,9 +404,9 @@ FIRST_SIZE=$(stat -c %s "$FIRST_FILE")
 FIRST_CT=$(content_type_for "$FIRST_FILE")
 DEDUP_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/media/upload" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "{\"hash\":\"$FIRST_HASH\",\"content_type\":\"$FIRST_CT\",\"size\":$FIRST_SIZE}")
-DEDUP_HASH=$(jq -r '.hash // empty' <<<"$DEDUP_RESP")
+DEDUP_HASH=$(jq -r "$JQ_HASH" <<<"$DEDUP_RESP")
 [[ "$DEDUP_HASH" == "$FIRST_HASH" ]] \
 	|| fail "dedup did not return existing record: $DEDUP_RESP"
 ok "dedup returned existing record"
@@ -400,7 +416,7 @@ step "9. POST /media/upload with disallowed content-type -> 415"
 
 assert_http 415 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"application/pdf","size":1024}'
 
 # ── 10. negative: zero size -> 400 ────────────────────────────────────────────
@@ -408,7 +424,7 @@ step "10. POST /media/upload with size=0 -> 400"
 
 assert_http 400 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"image/gif","size":0}'
 
 # ── 11. negative: oversized image -> 413 ──────────────────────────────────────
@@ -416,7 +432,7 @@ step "11. POST /media/upload with image size > 32 MB -> 413"
 
 assert_http 413 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"image/gif","size":40000000}'
 
 # ── 12. negative: oversized video -> 413 ──────────────────────────────────────
@@ -424,7 +440,7 @@ step "12. POST /media/upload with video size > 2 GB -> 413"
 
 assert_http 413 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"video/mp4","size":3000000000}'
 
 # ── 13. reorder: reverse the list ─────────────────────────────────────────────
@@ -433,7 +449,7 @@ step "13. PUT /media/positions reverses the order"
 REVERSED=$(printf '%s\n' "${HASHES[@]}" | tac | jq -R . | jq -sc .)
 REORDER_RESP=$(curl -s -X PUT "$KANAE/projects/$PROJECT_ID/media/positions" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "{\"hashes\":$REVERSED}")
 REORDER_MSG=$(jq -r '.message // empty' <<<"$REORDER_RESP")
 [[ -n "$REORDER_MSG" ]] || fail "reorder failed: $REORDER_RESP"
@@ -454,7 +470,7 @@ step "15. PUT /media/positions with hash not in project -> 404"
 
 assert_http 404 PUT "$KANAE/projects/$PROJECT_ID/media/positions" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"hashes":["0000000000000000000000000000000000000000000000000000000000000000"]}'
 
 # ── 16. delete one media ──────────────────────────────────────────────────────
@@ -519,7 +535,7 @@ ok "using $(basename "$THUMB_SRC_FILE") ($THUMB_SRC_CT) — $THUMB_SRC_HASH"
 
 THUMB_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/thumbnail" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "{\"hash\":\"$THUMB_SRC_HASH\",\"content_type\":\"$THUMB_SRC_CT\"}")
 THUMB_MSG=$(jq -r '.message // empty' <<<"$THUMB_RESP")
 [[ -n "$THUMB_MSG" ]] || fail "thumbnail set failed: $THUMB_RESP"
@@ -533,7 +549,7 @@ THUMB_OBJ=$(jq -c '.thumbnail' <<<"$PROJ_RESP")
 [[ -n "$THUMB_OBJ" && "$THUMB_OBJ" != "null" ]] \
 	|| fail "thumbnail missing from project response: $PROJ_RESP"
 
-THUMB_HASH=$(jq -r '.hash // empty' <<<"$THUMB_OBJ")
+THUMB_HASH=$(jq -r "$JQ_HASH" <<<"$THUMB_OBJ")
 THUMB_URL=$(jq -r '.url // empty' <<<"$THUMB_OBJ")
 [[ -n "$THUMB_HASH" && -n "$THUMB_URL" ]] \
 	|| fail "thumbnail object missing hash or url: $THUMB_OBJ"
@@ -594,7 +610,7 @@ else
 	ok "replacing with $(basename "$THUMB_ALT_FILE") — $THUMB_ALT_HASH"
 	curl -sf -X POST "$KANAE/projects/$PROJECT_ID/thumbnail" \
 		-b "$COOKIES" \
-		-H "Content-Type: application/json" \
+		-H "$H_CONTENT_TYPE" \
 		-d "{\"hash\":\"$THUMB_ALT_HASH\",\"content_type\":\"$THUMB_ALT_CT\"}" >/dev/null \
 		|| fail "replacement POST failed"
 
@@ -611,7 +627,7 @@ step "25. POST /thumbnail with video content-type -> 400"
 
 assert_http 400 POST "$KANAE/projects/$PROJECT_ID/thumbnail" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"hash":"0000000000000000000000000000000000000000000000000000000000000000","content_type":"video/mp4"}'
 
 # ── 26. thumbnail URLs — open these in a browser to verify ────────────────────

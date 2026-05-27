@@ -56,16 +56,30 @@ YEL=$'\033[0;33m'
 BLU=$'\033[0;34m'
 RST=$'\033[0m'
 
-step() { printf "\n${BLU}━━ %s ━━${RST}\n" "$1"; }
-ok() { printf "${GRN}✓${RST} %s\n" "$1"; }
-warn() { printf "${YEL}⚠${RST} %s\n" "$1"; }
+H_ACCEPT="Accept: application/json"
+H_CONTENT_TYPE="Content-Type: application/json"
+
+step() {
+	local msg="$1"
+	printf "\n${BLU}━━ %s ━━${RST}\n" "$msg"
+}
+ok() {
+	local msg="$1"
+	printf "${GRN}✓${RST} %s\n" "$msg"
+}
+warn() {
+	local msg="$1"
+	printf "${YEL}⚠${RST} %s\n" "$msg"
+}
 fail() {
-	printf "${RED}✗${RST} %s\n" "$1" >&2
+	local msg="$1"
+	printf "${RED}✗${RST} %s\n" "$msg" >&2
 	exit 1
 }
 
 require() {
-	command -v "$1" >/dev/null 2>&1 || fail "missing required tool: $1"
+	local cmd="$1"
+	command -v "$cmd" >/dev/null 2>&1 || fail "missing required tool: $cmd"
 }
 
 assert_http() {
@@ -105,21 +119,21 @@ ok "kanae responding"
 step "1. register $EMAIL"
 
 FLOW=$(curl -sc "$COOKIES" -b "$COOKIES" \
-	-H "Accept: application/json" \
+	-H "$H_ACCEPT" \
 	"$KRATOS_PUBLIC/self-service/registration/browser" \
 	| jq -r .id)
 [[ -n "$FLOW" && "$FLOW" != "null" ]] || fail "no registration flow id"
 ok "flow id: $FLOW"
 
 CSRF=$(curl -sc "$COOKIES" -b "$COOKIES" \
-	-H "Accept: application/json" \
+	-H "$H_ACCEPT" \
 	"$KRATOS_PUBLIC/self-service/registration/flows?id=$FLOW" \
 	| jq -r '.ui.nodes[] | select(.attributes.name=="csrf_token") | .attributes.value')
 [[ -n "$CSRF" ]] || fail "no csrf token"
 
 REG_RESP=$(curl -sc "$COOKIES" -b "$COOKIES" \
-	-H "Content-Type: application/json" \
-	-H "Accept: application/json" \
+	-H "$H_CONTENT_TYPE" \
+	-H "$H_ACCEPT" \
 	-X POST "$KRATOS_PUBLIC/self-service/registration?flow=$FLOW" \
 	-d '{
     "method": "password",
@@ -171,14 +185,14 @@ PROJ_BODY='{
 }'
 assert_http 403 POST "$KANAE/projects/create" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "$PROJ_BODY"
 
 # ── 5. grant Role.MANAGER ─────────────────────────────────────────────────────
 step "5. grant Role:manager#member to identity"
 
 curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{
     "namespace":  "Role",
     "object":     "manager",
@@ -198,7 +212,7 @@ step "6. POST /projects/create with role -> 200"
 
 CREATE_RESP=$(curl -s -X POST "$KANAE/projects/create" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "$PROJ_BODY")
 PROJECT_ID=$(jq -r '.id // empty' <<<"$CREATE_RESP")
 [[ -n "$PROJECT_ID" ]] \
@@ -210,7 +224,7 @@ step "7. grant Project:<id>#owners and edit"
 
 # The handler doesn't write owner tuples yet (TODO followup) — write manually.
 curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{
     "namespace":  "Project",
     "object":     "'"$PROJECT_ID"'",
@@ -222,7 +236,7 @@ ok "owner tuple written, cache flushed"
 
 EDIT_RESP=$(curl -s -X PUT "$KANAE/projects/$PROJECT_ID" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"name":"Renamed Project","description":"edited","link":"https://example.com"}')
 EDITED_NAME=$(jq -r '.name // empty' <<<"$EDIT_RESP")
 [[ "$EDITED_NAME" == "Renamed Project" ]] \
@@ -233,20 +247,20 @@ ok "edit succeeded — Project.edit resolves through owners->editors permit chai
 step "8. settings flow profile update"
 
 SFLOW=$(curl -sc "$COOKIES" -b "$COOKIES" \
-	-H "Accept: application/json" \
+	-H "$H_ACCEPT" \
 	"$KRATOS_PUBLIC/self-service/settings/browser" \
 	| jq -r .id)
 [[ -n "$SFLOW" && "$SFLOW" != "null" ]] || fail "no settings flow id"
 
 SCSRF=$(curl -sc "$COOKIES" -b "$COOKIES" \
-	-H "Accept: application/json" \
+	-H "$H_ACCEPT" \
 	"$KRATOS_PUBLIC/self-service/settings/flows?id=$SFLOW" \
 	| jq -r '.ui.nodes[] | select(.attributes.name=="csrf_token") | .attributes.value')
 
 NEW_NAME="Renamed User"
 SETTINGS_RESP=$(curl -sc "$COOKIES" -b "$COOKIES" \
-	-H "Content-Type: application/json" \
-	-H "Accept: application/json" \
+	-H "$H_CONTENT_TYPE" \
+	-H "$H_ACCEPT" \
 	-X POST "$KRATOS_PUBLIC/self-service/settings?flow=$SFLOW" \
 	-d '{
     "method":     "profile",
@@ -286,14 +300,14 @@ EVENT_BODY='{
 }'
 assert_http 403 POST "$KANAE/events/create" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "$EVENT_BODY"
 
 # ── 10. grant Role:leads#member ───────────────────────────────────────────────
 step "10. grant Role:leads#member to identity"
 
 curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{
     "namespace":  "Role",
     "object":     "leads",
@@ -308,7 +322,7 @@ step "11. POST /events/create with role -> 200"
 
 CREATE_EVENT_RESP=$(curl -s -X POST "$KANAE/events/create" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d "$EVENT_BODY")
 EVENT_ID=$(jq -r '.id // empty' <<<"$CREATE_EVENT_RESP")
 [[ -n "$EVENT_ID" ]] \
@@ -320,7 +334,7 @@ step "12. grant Event:<id>#owners and edit"
 
 # The handler doesn't write owner tuples yet (TODO followup) — write manually.
 curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{
     "namespace":  "Event",
     "object":     "'"$EVENT_ID"'",
@@ -332,7 +346,7 @@ ok "owner tuple written, cache flushed"
 
 EDIT_EVENT_RESP=$(curl -s -X PUT "$KANAE/events/$EVENT_ID" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json" \
+	-H "$H_CONTENT_TYPE" \
 	-d '{"name":"Renamed Event","description":"edited","location":"UC Merced Library"}')
 EDITED_EVENT_NAME=$(jq -r '.name // empty' <<<"$EDIT_EVENT_RESP")
 [[ "$EDITED_EVENT_NAME" == "Renamed Event" ]] \
@@ -344,7 +358,7 @@ step "13. POST /events/<id>/join"
 
 JOIN_EVENT_RESP=$(curl -s -X POST "$KANAE/events/$EVENT_ID/join" \
 	-b "$COOKIES" \
-	-H "Content-Type: application/json")
+	-H "$H_CONTENT_TYPE")
 JOIN_EVENT_MSG=$(jq -r '.message // empty' <<<"$JOIN_EVENT_RESP")
 [[ -n "$JOIN_EVENT_MSG" ]] \
 	|| fail "event join failed: $JOIN_EVENT_RESP"
