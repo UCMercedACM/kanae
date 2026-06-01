@@ -1,8 +1,8 @@
 redactions = ["DB_PASSWORD"]
 
 [tools]
-uv = "0.11.16"
-atlas = "1.2.0"
+uv = "0.11.17"
+atlas = "1.2.1"
 
 shellcheck = "0.11.0"
 shfmt = "3.13.1"
