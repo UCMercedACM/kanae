@@ -19,7 +19,7 @@ from utils.request import RouteRequest
 from utils.responses import NotFoundResponse, SuccessResponse, UnauthorizedResponse
 from utils.router import KanaeRouter
 
-from .events import Events
+from .events import Events, FullEvents
 from .projects import Projects
 
 # Per-hook context labels. If regenerating hook keys, the version suffix must be bumped to change them
@@ -155,7 +155,7 @@ async def get_logged_events(
     *,
     planned: Optional[bool] = None,
     attended: Optional[bool] = None,
-) -> list[Events]:
+) -> list[FullEvents]:
     """Obtains events associated with the currently authenticated member.
 
     Note that using both `planned` and `attended` queries would result in events that have been planned and attended
@@ -177,15 +177,25 @@ async def get_logged_events(
     # This error says "possible SQL injection", but the variables are not passed in to the query directly
     # Instead, they are used to check for the constraint query
     query = f"""
-    SELECT events.id, events.name, events.description, events.start_at, events.end_at, events.location, events.type, events.timezone, events.creator_id
+    SELECT
+        events.id, events.name, events.description, events.start_at, events.end_at, events.location, events.type, events.timezone,
+        CASE WHEN events.thumbnail_hash IS NOT NULL THEN
+            jsonb_build_object(
+                'hash', events.thumbnail_hash,
+                'url', $2 || '/thumbnails/' || events.thumbnail_hash || '.webp'
+            )
+        END AS thumbnail,
+        events.creator_id
     FROM members
         INNER JOIN events_members ON members.id = events_members.member_id {constraint}
         INNER JOIN events ON events_members.event_id = events.id
     WHERE members.id = $1
     GROUP BY events.id;
     """
-    rows = await request.app.pool.fetch(query, session.identity.id)
-    return [Events(**dict(record)) for record in rows]
+    rows = await request.app.pool.fetch(
+        query, session.identity.id, request.app.storage.base_thumbnail_url
+    )
+    return [FullEvents(**dict(record)) for record in rows]
 
 
 @router.post("/members/logout", responses={200: {"model": SuccessResponse}})

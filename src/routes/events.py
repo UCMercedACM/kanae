@@ -12,6 +12,7 @@ from dateutil.relativedelta import relativedelta
 from fastapi import Depends, Query
 from pydantic import BaseModel, Field, model_validator
 
+from core import store_thumbnail
 from utils.auth import use_session
 from utils.checks import Event, Role, has_any_role, has_permissions
 from utils.errors import ConflictError, ForbiddenError, NotFoundError
@@ -19,6 +20,7 @@ from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.responses import (
+    BadRequestResponse,
     ConflictResponse,
     DeleteResponse,
     ErrorResponse,
@@ -38,6 +40,7 @@ _CONDENSED_KEYS = {
     "parallelism": "p",
 }
 
+_HASH_REGEX = r"^[0-9a-f]{64}$"
 _NO_NULL_REGEX = r"^[^\x00]+$"
 
 router = KanaeRouter(tags=["Events"])
@@ -82,6 +85,11 @@ class EventTimezone:
         return tz.gettz(raw_tz) or datetime.UTC
 
 
+class EventThumbnail(BaseModel, frozen=True):
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+
+
 class Events(BaseModel, frozen=True):
     id: uuid.UUID
     name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
@@ -104,49 +112,99 @@ class Events(BaseModel, frozen=True):
     creator_id: uuid.UUID
 
 
+class FullEvents(BaseModel, frozen=True):
+    id: uuid.UUID
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    start_at: datetime.datetime
+    end_at: datetime.datetime
+    location: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    type: Literal[
+        "general",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+        "social",
+        "misc",
+    ]
+    timezone: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    thumbnail: Optional[EventThumbnail] = None
+    creator_id: uuid.UUID
+
+
 @router.get("/events")
 async def list_events(
     request: RouteRequest,
     name: Annotated[Optional[str], Query(min_length=3, pattern=_NO_NULL_REGEX)] = None,
     *,
     params: Annotated[KanaeParams, Depends()],
-) -> KanaePages[Events]:
+) -> KanaePages[FullEvents]:
     """Search a list of events"""
+    args: list = [request.app.storage.base_thumbnail_url]
     query = """
-    SELECT id, name, description, start_at, end_at, location, type, timezone, creator_id
+    SELECT
+        id, name, description, start_at, end_at, location, type, timezone,
+        CASE WHEN thumbnail_hash IS NOT NULL THEN
+            jsonb_build_object(
+                'hash', thumbnail_hash,
+                'url', $1 || '/thumbnails/' || thumbnail_hash || '.webp'
+            )
+        END AS thumbnail,
+        creator_id
     FROM events
     ORDER BY start_at DESC
     """
 
     if name:
         query = """
-        SELECT id,name, description, start_at, end_at, location, type, timezone, creator_id
+        SELECT
+            id, name, description, start_at, end_at, location, type, timezone,
+            CASE WHEN thumbnail_hash IS NOT NULL THEN
+                jsonb_build_object(
+                    'hash', thumbnail_hash,
+                    'url', $1 || '/thumbnails/' || thumbnail_hash || '.webp'
+                )
+            END AS thumbnail,
+            creator_id
         FROM events
-        WHERE name % $1
-        ORDER BY similarity(name, $1) DESC
+        WHERE name % $2
+        ORDER BY similarity(name, $2) DESC
         """
+        args.append(name)
 
-    args: tuple[str, ...] = (name,) if name else ()
     return await paginate(request.app.pool, query, *args, params=params)  # ty: ignore[invalid-return-type]
 
 
 @router.get(
     "/events/{event_id}",
-    responses={200: {"model": Events}, 404: {"model": NotFoundResponse}},
+    responses={200: {"model": FullEvents}, 404: {"model": NotFoundResponse}},
 )
-async def get_event(request: RouteRequest, event_id: uuid.UUID) -> Events:
+async def get_event(request: RouteRequest, event_id: uuid.UUID) -> FullEvents:
     """Retrieve event details via ID"""
     query = """
-    SELECT id, name, description, start_at, end_at, location, type, creator_id
+    SELECT
+        id, name, description, start_at, end_at, location, type,
+        CASE WHEN thumbnail_hash IS NOT NULL THEN
+            jsonb_build_object(
+                'hash', thumbnail_hash,
+                'url', $2 || '/thumbnails/' || thumbnail_hash || '.webp'
+            )
+        END AS thumbnail,
+        creator_id
     FROM events
     WHERE id = $1;
     """
 
-    rows = await request.app.pool.fetchrow(query, event_id)
+    rows = await request.app.pool.fetchrow(
+        query, event_id, request.app.storage.base_thumbnail_url
+    )
     if not rows:
         raise NotFoundError
     event_tz = EventTimezone(pool=request.app.pool)
-    return Events(**dict(rows), timezone=await event_tz.get_raw_timezone(event_id))
+    return FullEvents(**dict(rows), timezone=await event_tz.get_raw_timezone(event_id))
 
 
 class ModifiedEvent(BaseModel, frozen=True):
@@ -238,12 +296,17 @@ async def delete_event(
     """Deletes the specified event"""
     query = """
     DELETE FROM events
-    WHERE id = $1;
+    WHERE id = $1
+    RETURNING thumbnail_hash
     """
 
-    status = await request.app.pool.execute(query, event_id)
-    if status[-1] == "0":
+    status = await request.app.pool.fetchrow(query, event_id)
+    if status is None:
         raise NotFoundError
+
+    if status["thumbnail_hash"]:
+        await request.app.storage.delete_thumbnail(status["thumbnail_hash"])
+
     return DeleteResponse()
 
 
@@ -301,6 +364,107 @@ async def create_events(
         else:
             await tr.commit()
             return Events(**dict(rows))
+
+
+class SetThumbnailRequest(BaseModel, frozen=True):
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+
+
+@router.post(
+    "/events/{event_id}/thumbnail",
+    dependencies=[has_permissions(Event.edit)],
+    responses={
+        200: {"model": SuccessResponse},
+        400: {"model": BadRequestResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+@router.limiter.limit("3/minute")
+async def set_event_thumbnail(
+    request: RouteRequest,
+    event_id: uuid.UUID,
+    req: SetThumbnailRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> SuccessResponse:
+    """Sets the thumbnail used for a given event"""
+    processed_image = await store_thumbnail(
+        request, media_hash=req.hash, content_type=req.content_type
+    )
+
+    # There is a slight but rare race condition if two simultaneous requests can read
+    # the pre-updated thumbnail_hash. Issue a "FOR UPDATE" row lock to prevent this race.
+    # Without it, two simultaneous requests can each read the pre-update `thumbnail_hash`
+    # against their own snapshot, then one's UPDATE commits and the other's cleanup branch
+    # deletes a stale hash — leaving the first writer's WebP object orphaned in the public bucket.
+    #
+    # Unlike projects, events have no media-association table, so there is no
+    # `project_media`-style EXISTS guard: a missing row simply means the event does not exist.
+    query = """
+        WITH locked AS (
+            SELECT thumbnail_hash FROM events
+            WHERE id = $2
+            FOR UPDATE
+        ), old AS (
+            SELECT thumbnail_hash FROM locked
+            WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != $1
+        )
+        UPDATE events
+        SET thumbnail_hash = $1
+        WHERE id = $2
+        RETURNING id, (SELECT thumbnail_hash FROM old) AS old_hash;
+    """
+    response = await request.app.pool.fetchrow(query, processed_image.hash, event_id)
+
+    if response is None:
+        await request.app.storage.delete_thumbnail(processed_image.hash)
+        msg = "Event not found"
+        raise NotFoundError(msg)
+
+    if response["old_hash"]:
+        await request.app.storage.delete_thumbnail(response["old_hash"])
+
+    return SuccessResponse(message="ok")
+
+
+@router.delete(
+    "/events/{event_id}/thumbnail",
+    dependencies=[has_permissions(Event.edit)],
+    responses={
+        200: {"model": DeleteResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+@router.limiter.limit("5/minute")
+async def remove_event_thumbnail(
+    request: RouteRequest,
+    event_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> DeleteResponse:
+    """Removes the associated thumbnail of a given event"""
+    query = """
+    WITH old_thumbnail AS (
+        SELECT thumbnail_hash
+        FROM events
+        WHERE id = $1
+    )
+    UPDATE events
+    SET thumbnail_hash = NULL
+    WHERE id = $1
+    RETURNING id, (SELECT thumbnail_hash FROM old_thumbnail) AS old_hash
+    """
+
+    response = await request.app.pool.fetchrow(query, event_id)
+
+    if not response:
+        raise NotFoundError
+
+    if response["old_hash"]:
+        await request.app.storage.delete_thumbnail(response["old_hash"])
+
+    return DeleteResponse()
 
 
 @router.post(

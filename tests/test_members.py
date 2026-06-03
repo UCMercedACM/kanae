@@ -18,6 +18,8 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 _SETTINGS_CONTEXT = b"kratos.settings.v1"
 _REGISTRATION_CONTEXT = b"kratos.registration.v1"
 
+_VALID_HASH = "a" * 64  # 64 hex chars to match the event thumbnail _HASH_REGEX
+
 
 def _hook_token(*, master_key: str, context: bytes) -> str:
     return blake3(context, key=bytes.fromhex(master_key)).hexdigest()
@@ -333,6 +335,29 @@ async def test_me_events_returns_events(
     assert response.status_code == 200
     body: list[dict[str, Any]] = response.json()
     assert [e["name"] for e in body] == ["hackathon"]
+    assert body[0]["thumbnail"] is None
+
+
+async def test_me_events_surfaces_thumbnail(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    event_id = await _insert_event(kanae.pool, name="gala", creator_id=member_uuid)
+    await _link_member_to_event(
+        kanae.pool, member_id=member_uuid, event_id=event_id, attended=True
+    )
+    await kanae.pool.execute(
+        "UPDATE events SET thumbnail_hash = $2 WHERE id = $1", event_id, _VALID_HASH
+    )
+
+    response = await client.client.get("/members/me/events")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    thumbnail = body[0]["thumbnail"]
+    assert thumbnail["hash"] == _VALID_HASH
+    assert thumbnail["url"].endswith(f"/thumbnails/{_VALID_HASH}.webp")
 
 
 async def test_me_events_planned_filter(

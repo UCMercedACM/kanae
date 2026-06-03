@@ -37,6 +37,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from blake3 import blake3
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError as BotoClientError
 from botocore.session import Session
 from fastapi import Depends, FastAPI, status
 from fastapi.exceptions import HTTPException, RequestValidationError
@@ -56,6 +57,7 @@ from pydantic import BaseModel
 from starlette.datastructures import Headers
 
 from utils.cache import ORJSONSerializer, ValkeyCache, cached_method
+from utils.errors import BadRequestError, NotFoundError
 from utils.glide import GlideManager
 from utils.limiter.extension import (
     KanaeLimiter,
@@ -122,6 +124,22 @@ LATENCY_LOWER_BUCKETS = (0.1, 0.5, 1)
 
 MAX_BYTES = 32 * 1024 * 1024  # 32 MB
 BACKUP_COUNT = 10
+
+ALLOWED_IMAGE_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+    }
+)
+ALLOWED_VIDEO_TYPES = frozenset(
+    {
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+    }
+)
 
 _PRESIGN_PUT_TTL = 900  # 15 min
 _PRESIGN_GET_TTL = 300  # 5 min
@@ -440,6 +458,36 @@ def fetch_and_process_thumbnail(
         )
 
     return ProcessedThumbnail(output, blake3(output).hexdigest())
+
+
+async def store_thumbnail(
+    request: RouteRequest, *, media_hash: str, content_type: str
+) -> ProcessedThumbnail:
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        msg = "Thumbnail must be an image"
+        raise BadRequestError(msg)
+
+    key = request.app.storage._build_key(media_hash, content_type)
+    try:
+        # ty thinks that sync_storage is incorrect, but it's correct
+        processed_image = await asyncio.to_thread(
+            fetch_and_process_thumbnail,
+            request.app.sync_storage,
+            request.app.storage.bucket,
+            key,
+        )
+    except BotoClientError:
+        msg = "No such media exists"
+        raise NotFoundError(msg)
+    except pyvips.Error:
+        msg = "Failed to process image"
+        raise BadRequestError(msg)
+
+    await request.app.storage.put_thumbnail(
+        processed_image.hash, body=processed_image.output
+    )
+
+    return processed_image
 
 
 class ProcessedThumbnail(NamedTuple):

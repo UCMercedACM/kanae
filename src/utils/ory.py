@@ -178,7 +178,12 @@ class OryClient:
 
     ### Session management
 
-    @cached_method(cache_attr="_whoami_cache", ttl=60, key_builder=_whoami_key)
+    @cached_method(
+        cache_attr="_whoami_cache",
+        ttl=60,
+        key_builder=_whoami_key,
+        skip_cache_func=lambda session: session is None,
+    )
     async def whoami(self, cookie: str) -> KanaeSession | None:
         """Resolve a Kratos session for a `Cookie` request header.
 
@@ -244,7 +249,12 @@ class OryClient:
 
     ### Identity utilities and management
 
-    @cached_method(cache_attr="_identity_cache", ttl=360, key_builder=_identity_key)
+    @cached_method(
+        cache_attr="_identity_cache",
+        ttl=360,
+        key_builder=_identity_key,
+        skip_cache_func=lambda identity: identity is None,
+    )
     async def get_identity(self, identity_id: str) -> KratosIdentity | None:
         """Fetch a Kratos identity by id.
 

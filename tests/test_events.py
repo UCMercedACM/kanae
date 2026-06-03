@@ -14,6 +14,8 @@ from utils.checks import Role
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
+_VALID_HASH = "a" * 64  # 64 hex chars to match the route's _HASH_REGEX
+
 
 async def _insert_member(
     pool: asyncpg.Pool,
@@ -534,6 +536,160 @@ async def test_verify_attendance_marks_member_attended(
     )
     assert row is not None
     assert row["attended"] is True
+
+
+# ──────────────────────────────────────────────────────────────────
+# Thumbnail object surfacing in reads (no S3 needed, seeded directly)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_get_event_thumbnail_null_by_default(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    creator_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=creator_id)
+    event_id = await _insert_event(kanae.pool, name="no-thumb", creator_id=creator_id)
+
+    response = await client.client.get(f"/events/{event_id}")
+    assert response.status_code == 200
+    assert response.json()["thumbnail"] is None
+
+
+async def test_get_event_surfaces_thumbnail_object(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    creator_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=creator_id)
+    event_id = await _insert_event(kanae.pool, name="has-thumb", creator_id=creator_id)
+    await kanae.pool.execute(
+        "UPDATE events SET thumbnail_hash = $2 WHERE id = $1", event_id, _VALID_HASH
+    )
+
+    response = await client.client.get(f"/events/{event_id}")
+    assert response.status_code == 200
+    thumbnail = response.json()["thumbnail"]
+    assert thumbnail["hash"] == _VALID_HASH
+    assert thumbnail["url"].endswith(f"/thumbnails/{_VALID_HASH}.webp")
+
+
+async def test_list_events_surfaces_thumbnail_object(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    creator_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=creator_id)
+    event_id = await _insert_event(
+        kanae.pool, name="listed-thumb", creator_id=creator_id
+    )
+    await kanae.pool.execute(
+        "UPDATE events SET thumbnail_hash = $2 WHERE id = $1", event_id, _VALID_HASH
+    )
+
+    response = await client.client.get("/events")
+    assert response.status_code == 200
+    row = next(r for r in response.json()["data"] if r["id"] == str(event_id))
+    assert row["thumbnail"]["hash"] == _VALID_HASH
+    assert row["thumbnail"]["url"].endswith(f"/thumbnails/{_VALID_HASH}.webp")
+
+
+# ──────────────────────────────────────────────────────────────────
+# Set thumbnail, requires Event.edit, 3 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_set_event_thumbnail_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.post(
+        f"/events/{uuid.uuid4()}/thumbnail",
+        json={"hash": _VALID_HASH, "content_type": "image/png"},
+    )
+    assert response.status_code == 401
+
+
+async def test_set_event_thumbnail_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.post(
+        f"/events/{uuid.uuid4()}/thumbnail",
+        json={"hash": _VALID_HASH, "content_type": "image/png"},
+    )
+    assert response.status_code == 403
+
+
+async def test_set_event_thumbnail_rejects_non_image(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail",
+        json={"hash": _VALID_HASH, "content_type": "video/mp4"},
+    )
+    assert response.status_code == 400
+
+
+async def test_set_event_thumbnail_rejects_bad_hash(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail",
+        json={"hash": "not-a-valid-hash", "content_type": "image/png"},
+    )
+    assert response.status_code == 422
+
+
+# ──────────────────────────────────────────────────────────────────
+# Remove thumbnail, requires Event.edit, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_remove_event_thumbnail_requires_session(
+    client: KanaeTestClient,
+) -> None:
+    response = await client.client.delete(f"/events/{uuid.uuid4()}/thumbnail")
+    assert response.status_code == 401
+
+
+async def test_remove_event_thumbnail_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.delete(f"/events/{uuid.uuid4()}/thumbnail")
+    assert response.status_code == 403
+
+
+async def test_remove_event_thumbnail_returns_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    missing = uuid.uuid4()
+    fake_ory.grant("Event", str(missing), "edit", identity_id)
+
+    response = await client.client.delete(f"/events/{missing}/thumbnail")
+    assert response.status_code == 404
+
+
+async def test_remove_event_thumbnail_succeeds_when_unset(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    event_id = await _insert_event(
+        kanae.pool, name="clear-thumb", creator_id=member_uuid
+    )
+    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.delete(f"/events/{event_id}/thumbnail")
+    assert response.status_code == 200
+
+    remaining = await kanae.pool.fetchval(
+        "SELECT thumbnail_hash FROM events WHERE id = $1", event_id
+    )
+    assert remaining is None
 
 
 # ──────────────────────────────────────────────────────────────────
