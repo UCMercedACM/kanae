@@ -4,12 +4,17 @@ import uuid
 from typing import Annotated, Literal, Optional, TypedDict
 
 import asyncpg
-import pyvips
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from core import MultipartUploadChunks, UploadChunk, fetch_and_process_thumbnail
+from core import (
+    ALLOWED_IMAGE_TYPES,
+    ALLOWED_VIDEO_TYPES,
+    MultipartUploadChunks,
+    UploadChunk,
+    store_thumbnail,
+)
 from utils.auth import use_session
 from utils.checks import Project, Role, check_any, has_permissions, has_role
 from utils.errors import BadGatewayError, BadRequestError, ConflictError, NotFoundError
@@ -33,22 +38,6 @@ router = KanaeRouter(tags=["Projects"])
 _SINGLE_PUT_MAX = 16 * 1024 * 1024  # 16 MB — below this, single PUT
 _MAX_IMAGE_SIZE = 32 * 1024 * 1024  # 32 MB
 _MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
-
-_ALLOWED_IMAGE_TYPES = frozenset(
-    {
-        "image/jpeg",
-        "image/png",
-        "image/webp",
-        "image/gif",
-    }
-)
-_ALLOWED_VIDEO_TYPES = frozenset(
-    {
-        "video/mp4",
-        "video/webm",
-        "video/quicktime",
-    }
-)
 
 _HASH_REGEX = r"^[0-9a-f]{64}$"
 _NO_NULL_REGEX = r"^[^\x00]+$"
@@ -480,9 +469,9 @@ def _validate_media(content_type: str, size: int) -> None:
     No return — the DB derives `kind` from `content_type` via a generated
     column, so callers don't need it.
     """
-    if content_type in _ALLOWED_IMAGE_TYPES:
+    if content_type in ALLOWED_IMAGE_TYPES:
         cap, label = _MAX_IMAGE_SIZE, "Image"
-    elif content_type in _ALLOWED_VIDEO_TYPES:
+    elif content_type in ALLOWED_VIDEO_TYPES:
         cap, label = _MAX_VIDEO_SIZE, "Video"
     else:
         msg = f"Unsupported content type: {content_type}"
@@ -721,28 +710,8 @@ async def set_project_thumbnail(
     session: Annotated[KanaeSession, Depends(use_session)],
 ) -> SuccessResponse:
     """Sets the thumbnail used for a given project"""
-    if req.content_type not in _ALLOWED_IMAGE_TYPES:
-        msg = "Thumbnail must be an image"
-        raise BadRequestError(msg)
-
-    key = request.app.storage._build_key(req.hash, req.content_type)
-    try:
-        # ty thinks that sync_storage is incorrect, but it's correct
-        processed_image = await asyncio.to_thread(
-            fetch_and_process_thumbnail,
-            request.app.sync_storage,
-            request.app.storage.bucket,
-            key,
-        )
-    except ClientError:
-        msg = "No such media exists"
-        raise NotFoundError(msg)
-    except pyvips.Error:
-        msg = "Failed to process image"
-        raise BadRequestError(msg)
-
-    await request.app.storage.put_thumbnail(
-        processed_image.hash, body=processed_image.output
+    processed_image = await store_thumbnail(
+        request, media_hash=req.hash, content_type=req.content_type
     )
 
     # There is a slight but rare race condition if two simultatneous requests can read the pre-updated thumbnail_hash

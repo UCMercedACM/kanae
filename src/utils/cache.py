@@ -256,7 +256,10 @@ class PydanticSerializer(CacheSerializer):
         return self._dump(value)
 
     def loads(self, value: Optional[bytes]) -> Optional[BaseModel]:
-        return None if value is None else self._validate(value)
+        # Keeps tripping up on the JSON literal "null"
+        if value is None or value in (b"null", "null"):
+            return None
+        return self._validate(value)
 
 
 class ORJSONSerializer(CacheSerializer):

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS events (
     type event_type DEFAULT 'misc',
     creator_id UUID REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
     timezone TEXT DEFAULT 'UTC',
+    thumbnail_hash TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 

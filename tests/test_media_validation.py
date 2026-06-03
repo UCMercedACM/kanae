@@ -9,16 +9,15 @@ from hypothesis import (
     strategies as st,
 )
 
+from core import ALLOWED_IMAGE_TYPES, ALLOWED_VIDEO_TYPES
 from routes.projects import (
-    _ALLOWED_IMAGE_TYPES,
-    _ALLOWED_VIDEO_TYPES,
     _MAX_IMAGE_SIZE,
     _MAX_VIDEO_SIZE,
     _validate_media,
 )
 from utils.errors import BadRequestError
 
-_ALLOWED_TYPES: frozenset[str] = _ALLOWED_IMAGE_TYPES | _ALLOWED_VIDEO_TYPES
+_ALLOWED_TYPES: frozenset[str] = ALLOWED_IMAGE_TYPES | ALLOWED_VIDEO_TYPES
 _DISALLOWED_FIXED: tuple[str, ...] = (
     "application/pdf",
     "text/plain",
@@ -41,7 +40,7 @@ _DISALLOWED_FIXED: tuple[str, ...] = (
 # ──────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("content_type", sorted(_ALLOWED_IMAGE_TYPES))
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_IMAGE_TYPES))
 @pytest.mark.parametrize(
     "size",
     [
@@ -55,7 +54,7 @@ def test_image_size_within_limit_passes(content_type: str, size: int) -> None:
     assert _validate_media(content_type, size) is None
 
 
-@pytest.mark.parametrize("content_type", sorted(_ALLOWED_IMAGE_TYPES))
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_IMAGE_TYPES))
 @pytest.mark.parametrize(
     "size",
     [
@@ -69,7 +68,7 @@ def test_image_size_over_limit_raises_413(content_type: str, size: int) -> None:
     assert exc_info.value.status_code == 413
 
 
-@pytest.mark.parametrize("content_type", sorted(_ALLOWED_VIDEO_TYPES))
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_VIDEO_TYPES))
 @pytest.mark.parametrize(
     "size",
     [
@@ -82,7 +81,7 @@ def test_video_size_within_limit_passes(content_type: str, size: int) -> None:
     assert _validate_media(content_type, size) is None
 
 
-@pytest.mark.parametrize("content_type", sorted(_ALLOWED_VIDEO_TYPES))
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_VIDEO_TYPES))
 @pytest.mark.parametrize(
     "size",
     [
@@ -97,7 +96,7 @@ def test_video_size_over_limit_raises_413(content_type: str, size: int) -> None:
 
 
 @pytest.mark.parametrize(
-    "content_type", sorted(_ALLOWED_IMAGE_TYPES | _ALLOWED_VIDEO_TYPES)
+    "content_type", sorted(ALLOWED_IMAGE_TYPES | ALLOWED_VIDEO_TYPES)
 )
 @pytest.mark.parametrize("size", [0, -1, -(2**31)])
 def test_non_positive_size_raises_bad_request(content_type: str, size: int) -> None:
@@ -141,7 +140,7 @@ def test_validator_terminates_in_a_known_outcome(content_type: str, size: int) -
         return
     # Only valid (content_type, size) combinations should fall through.
     assert content_type in _ALLOWED_TYPES
-    cap = _MAX_IMAGE_SIZE if content_type in _ALLOWED_IMAGE_TYPES else _MAX_VIDEO_SIZE
+    cap = _MAX_IMAGE_SIZE if content_type in ALLOWED_IMAGE_TYPES else _MAX_VIDEO_SIZE
     assert 0 < size <= cap
 
 
@@ -168,7 +167,7 @@ def test_arbitrary_content_type_outside_allowlist_rejected_415(
 
 
 @given(
-    content_type=st.sampled_from(sorted(_ALLOWED_IMAGE_TYPES)),
+    content_type=st.sampled_from(sorted(ALLOWED_IMAGE_TYPES)),
     size=st.integers(min_value=_MAX_IMAGE_SIZE + 1, max_value=_MAX_VIDEO_SIZE * 2),
 )
 @settings(
@@ -183,7 +182,7 @@ def test_image_oversize_always_413(content_type: str, size: int) -> None:
 
 
 @given(
-    content_type=st.sampled_from(sorted(_ALLOWED_VIDEO_TYPES)),
+    content_type=st.sampled_from(sorted(ALLOWED_VIDEO_TYPES)),
     size=st.integers(min_value=_MAX_VIDEO_SIZE + 1, max_value=_MAX_VIDEO_SIZE * 4),
 )
 @settings(
