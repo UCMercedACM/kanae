@@ -19,7 +19,7 @@ pin = true
 [env]
 _.file = [{ path = "{{ config_root }}/docker/.env" }]
 DATABASE_URL = "postgres://{{env.DB_USERNAME}}:{{env.DB_PASSWORD}}@localhost:5432/{{env.DB_DATABASE_NAME}}?search_path=public&sslmode=disable"
-
+DEV_DATABASE_URL = "postgres://{{env.DB_USERNAME}}:{{env.DB_PASSWORD}}@localhost:5432/postgres?search_path=public&sslmode=disable"
 
 # Docker
 [tasks."docker:preview"]
@@ -92,12 +92,12 @@ run_windows = "Test-Path {{ config_root }}/docker/.env"
 [tasks."server:schema:plan"]
 depends = ["server:check-env"]
 description = "Plans schema diffs"
-run = "atlas schema plan --to file://src/schema.sql --env dev --var url=$DATABASE_URL"
+run = "atlas schema plan --to file://src/schema.sql --env dev --var url=$DATABASE_URL --var dev_url=$DEV_DATABASE_URL"
 
 [tasks."server:schema:apply"]
 depends = ["server:check-env"]
 description = "Applies schema diffs to database"
-run = "atlas schema apply --auto-approve --env dev --var url=$DATABASE_URL"
+run = "atlas schema apply --auto-approve --env dev --var url=$DATABASE_URL --var dev_url=$DEV_DATABASE_URL"
 
 [tasks."server:docker:up"]
 depends = ["server:check-env"]
