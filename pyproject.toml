@@ -34,7 +34,7 @@ dev = [
 ]
 lint = [
     "ruff~=0.15.11",
-    "ty==0.0.42",
+    "ty==0.0.48",
     { include-group = "types" },
 ]
 types = [
