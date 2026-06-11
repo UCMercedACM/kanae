@@ -1,3 +1,4 @@
+import datetime
 from collections.abc import Awaitable, Callable, Iterable
 from enum import StrEnum
 from typing import Annotated, Literal, NamedTuple, Protocol
@@ -14,6 +15,7 @@ from utils.request import RouteRequest
 from .errors import (
     CheckAnyFailure,
     CheckFailure,
+    ElevationError,
     MissingAnyRole,
     MissingPermissions,
     MissingRole,
@@ -33,6 +35,7 @@ class Check[ContextT](Protocol):
 
 
 class Role(StrEnum):
+    ROOT = "root"
     ADMIN = "admin"
     MANAGER = "manager"
     LEADS = "leads"
@@ -375,5 +378,32 @@ def has_any_role(*roles: Role) -> CheckDependency[CheckContext]:
             return True
 
         raise MissingAnyRole(list(roles))
+
+    return check(predicate)
+
+
+def has_sudo() -> CheckDependency[CheckContext]:
+    async def predicate(ctx: CheckContext) -> bool:
+        return await ctx.request.app.sudo.is_active(ctx.session.identity.id)
+
+    return check(predicate)
+
+
+### Requirement checks
+
+
+def require_2fa() -> CheckDependency[CheckContext]:
+    # I'm aware sonarcloud is complaining about this but figure this out later
+    async def predicate(ctx: CheckContext) -> bool:
+
+        if ctx.session.authenticator_assurance_level != "aal2":
+            raise ElevationError
+
+        age = datetime.datetime.now(datetime.UTC) - ctx.session.authenticated_at
+
+        if age > datetime.timedelta(minutes=15):
+            raise ElevationError
+
+        return True
 
     return check(predicate)

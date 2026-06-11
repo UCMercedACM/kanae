@@ -1,7 +1,7 @@
 import datetime
 import logging
 import uuid
-from typing import Any, TypedDict, Unpack, cast
+from typing import Any, Literal, TypedDict, Unpack, cast
 
 import aiohttp
 import orjson
@@ -58,6 +58,7 @@ class KanaeSession(BaseModel, frozen=True):
     active: bool
     expires_at: datetime.datetime
     authenticated_at: datetime.datetime
+    authenticator_assurance_level: Literal["aal1", "aal2"]
     issued_at: datetime.datetime
     identity: KratosIdentity
 
@@ -467,7 +468,16 @@ class OryClient:
             response.release()
             return
 
-        await response.release()
+        response.release()
+
+        if response.status not in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+            status.HTTP_204_NO_CONTENT,
+        ):
+            msg = "Rejected revoke request"
+            raise BadGatewayError(msg)
+
         await self._invalidate_resource(namespace, resource)
 
     async def grant(
@@ -542,4 +552,13 @@ class OryClient:
             return
 
         response.release()
+
+        if response.status not in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+            status.HTTP_204_NO_CONTENT,
+        ):
+            msg = "Rejected grant request"
+            raise BadGatewayError(msg)
+
         await self._invalidate_resource(namespace, resource)

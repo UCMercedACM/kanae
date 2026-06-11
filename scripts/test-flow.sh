@@ -364,6 +364,47 @@ JOIN_EVENT_MSG=$(jq -r '.message // empty' <<<"$JOIN_EVENT_RESP")
 	|| fail "event join failed: $JOIN_EVENT_RESP"
 ok "joined event — message: $JOIN_EVENT_MSG"
 
+# ── sudo: break-glass gating (password session = aal1) ────────────────────────
+# The smoke identity authenticated with a password only (aal1), so the positive
+# elevate path (which demands a fresh aal2) cannot be exercised here — we cover
+# the gating: role enforcement, the aal2 step-up requirement, and revoke.
+step "sudo: grant Role:admin#member for break-glass tests"
+
+curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{
+    "namespace":  "Role",
+    "object":     "admin",
+    "relation":   "member",
+    "subject_id": "'"$IDENTITY_ID"'"
+  }' >/dev/null
+docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
+ok "admin tuple written, cache flushed"
+
+step "sudo: GET /sudo as admin -> 200 inactive"
+SUDO_STATUS=$(curl -s -b "$COOKIES" "$KANAE/sudo")
+[[ "$(jq -r '.active' <<<"$SUDO_STATUS")" == "false" ]] \
+	|| fail "expected inactive sudo, got: $SUDO_STATUS"
+ok "sudo reports inactive"
+
+step "sudo: POST /sudo/elevate without session -> 401"
+assert_http 401 POST "$KANAE/sudo/elevate" -H "$H_CONTENT_TYPE" -d '{"reason":"smoke"}'
+
+step "sudo: POST /sudo/elevate on aal1 session -> 403 + step-up header"
+ELEVATE_HDRS=$(curl -s -D - -o /dev/null -b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" -X POST "$KANAE/sudo/elevate" -d '{"reason":"smoke"}')
+grep -qiE '^HTTP/.* 403' <<<"$ELEVATE_HDRS" \
+	|| fail "expected 403 on aal1 elevate"
+grep -qi 'x-elevation-flow:' <<<"$ELEVATE_HDRS" \
+	|| fail "missing X-Elevation-Flow header on aal1 elevate"
+ok "aal1 elevate denied with step-up header (aal2 required)"
+
+step "sudo: DELETE /sudo/revoke as admin -> 200 (idempotent no-op)"
+assert_http 200 DELETE "$KANAE/sudo/revoke" -b "$COOKIES"
+ok "sudo revoke idempotent"
+
+warn "sudo: positive elevate path needs a fresh AAL2 (TOTP) session — not covered by password-only smoke flow"
+
 # ── 14. logout invalidates session (best-effort) ──────────────────────────────
 # Best-effort: a failure here means the session cookie is missing or already
 # expired, which is purely a kratos/curl-cookie-jar concern and tells us

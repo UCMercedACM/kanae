@@ -149,3 +149,12 @@ CREATE TABLE IF NOT EXISTS project_media (
 );
 
 CREATE INDEX IF NOT EXISTS project_media_project_idx ON project_media (project_id, position);
+
+CREATE TABLE IF NOT EXISTS sudo_grants (
+    member_id  UUID PRIMARY KEY REFERENCES members (id) ON DELETE CASCADE,
+    granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    reason     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS sudo_grants_expiry_idx ON sudo_grants (expires_at);

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import http
 import itertools
 import logging
@@ -764,6 +765,52 @@ class StorageClient:
         return f"{self.base_thumbnail_url}/{self._build_thumbnail_key(media_hash)}"
 
 
+### Sudo operations
+
+
+class SudoClient:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self.pool = pool
+        self.ttl = datetime.timedelta(minutes=10)
+
+    async def grant(self, member_id: str, *, reason: str) -> datetime.datetime:
+        query = """
+        INSERT INTO sudo_grants (member_id, expires_at, reason)
+        VALUES ($1, now() + $2, $3)
+        ON CONFLICT (member_id)
+        DO UPDATE SET
+            granted_at = now(),
+            expires_at = now() + $2,
+            reason = EXCLUDED.reason
+        RETURNING expires_at;
+        """
+
+        return await self.pool.fetchval(query, member_id, self.ttl, reason)
+
+    async def revoke(self, member_id: str) -> None:
+        query = """
+        DELETE FROM sudo_grants
+        WHERE member_id = $1;
+        """
+        await self.pool.execute(query, member_id)
+
+    async def get_expiry(self, member_id: str) -> Optional[datetime.datetime]:
+        query = """
+        SELECT expires_at FROM sudo_grants
+        WHERE member_id = $1 AND expires_at > now();
+        """
+        return await self.pool.fetchval(query, member_id)
+
+    async def is_active(self, member_id: str) -> bool:
+        query = """
+            SELECT EXISTS (
+                SELECT 1 FROM sudo_grants
+                WHERE member_id = $1 AND expires_at > now()
+            );
+        """
+        return await self.pool.fetchval(query, member_id)
+
+
 ### Prometheus instrumentator
 
 
@@ -1155,6 +1202,7 @@ class Kanae(FastAPI):
 
     limiter: KanaeLimiter
     ory: OryClient
+    sudo: SudoClient
 
     def __init__(
         self,
@@ -1278,6 +1326,7 @@ class Kanae(FastAPI):
             app.storage = StorageClient(
                 self.config.storage, client=s3_client, glide=app.glide
             )
+            self.sudo = SudoClient(app.pool)
             app.limiter.attach(app.glide)
 
             yield

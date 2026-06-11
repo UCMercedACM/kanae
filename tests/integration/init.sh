@@ -6,7 +6,7 @@
 #   3) Kratos webhook tokens derived from the master key.
 #   4) docker compose -f docker/docker-compose.test.yml up -d --wait.
 #   5) Garage cluster init (layout/key/buckets/CORS/lifecycle).
-#   6) Ory bootstrap — admin/manager/leads/member identities via the Kratos
+#   6) Ory bootstrap — root/admin/manager/leads/member identities via the Kratos
 #      admin REST API, matching `members` rows, Keto role tuples, and the
 #      identity UUIDs appended to tests/hurl/vars.env for the Hurl scenarios.
 
@@ -164,13 +164,14 @@ _garage_pid=$!
 	source "$ENV_FILE"
 
 	declare -A ROLE_TO_EMAIL_VAR=(
+		[root]=ROOT_EMAIL
 		[admin]=ADMIN_EMAIL
 		[manager]=MANAGER_EMAIL
 		[leads]=LEADS_EMAIL
 		[member]=MEMBER_EMAIL
 	)
 	declare -A IDS=()
-	ROLE_ORDER=(admin manager leads member)
+	ROLE_ORDER=(root admin manager leads member)
 
 	create_or_lookup_identity() {
 		local role="$1" email="$2" body resp code
@@ -234,8 +235,8 @@ _garage_pid=$!
 		       email = EXCLUDED.email;" >/dev/null
 	done
 
-	log "writing Keto Role:* tuples for admin / manager / leads"
-	for role in admin manager leads; do
+	log "writing Keto Role:* tuples for root / admin / manager / leads"
+	for role in root admin manager leads; do
 		id="${IDS[$role]}"
 		body=$(jq -n --arg ns Role --arg obj "$role" --arg rel member --arg subj "$id" '
 		{ namespace: $ns, object: $obj, relation: $rel, subject_id: $subj }')
@@ -250,6 +251,7 @@ _garage_pid=$!
 	log "writing secrets (password + identity UUIDs) to $HURL_SECRETS_FILE"
 	{
 		printf 'PASSWORD=%s\n' "$PASSWORD"
+		printf 'ROOT_ID=%s\n' "${IDS[root]}"
 		printf 'ADMIN_ID=%s\n' "${IDS[admin]}"
 		printf 'MANAGER_ID=%s\n' "${IDS[manager]}"
 		printf 'LEADS_ID=%s\n' "${IDS[leads]}"

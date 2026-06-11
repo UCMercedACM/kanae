@@ -184,6 +184,8 @@ class FakeOryClient:
         *roles: Role,
         identity_id: Optional[str] = None,
         email: str = "test@test.local",
+        aal: Literal["aal1", "aal2"] = "aal1",
+        authenticated_at: Optional[datetime.datetime] = None,
     ) -> str:
         identity_id = identity_id or str(uuid.uuid4())
         now = datetime.datetime.now(datetime.UTC)
@@ -191,7 +193,8 @@ class FakeOryClient:
             id=uuid.uuid4(),
             active=True,
             expires_at=now + datetime.timedelta(days=1),
-            authenticated_at=now,
+            authenticated_at=authenticated_at or now,
+            authenticator_assurance_level=aal,
             issued_at=now,
             identity=KratosIdentity(
                 id=identity_id,
