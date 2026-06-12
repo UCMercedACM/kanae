@@ -6,7 +6,7 @@ from fastapi import Depends
 from pydantic import BaseModel, Field
 
 from utils.auth import use_session
-from utils.checks import Role, has_role, require_2fa
+from utils.checks import Role, has_2fa, has_role
 from utils.ory import KanaeSession
 from utils.request import RouteRequest
 from utils.responses import (
@@ -87,7 +87,7 @@ class SudoRequest(BaseModel, frozen=True):
 
 @router.post(
     "/sudo/elevate",
-    dependencies=[has_role(Role.ADMIN), require_2fa()],
+    dependencies=[has_role(Role.ADMIN), has_2fa()],
     responses={200: {"model": Sudo}, 403: {"model": ForbiddenResponse}},
     include_in_schema=False,
 )
