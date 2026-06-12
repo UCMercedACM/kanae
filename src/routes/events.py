@@ -15,7 +15,13 @@ from pydantic import BaseModel, Field, model_validator
 from core import store_thumbnail
 from utils.auth import use_session
 from utils.checks import Event, Role, has_any_role, has_permissions
-from utils.errors import ConflictError, ForbiddenError, NotFoundError
+from utils.errors import (
+    BadGatewayError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServiceUnavailableError,
+)
 from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
@@ -353,6 +359,21 @@ async def create_events(
                 "$".join(encoded_hash.split("$")[-2:]),
                 base62.encodebytes(encoded_hash.split("$")[-1].encode("utf-8")),
             )
+
+            event_id = str(rows["id"])
+            await request.app.ory.grant(
+                "Event", event_id, "owners", subject_id=session.identity.id
+            )
+            await request.app.ory.grant(
+                "Event",
+                event_id,
+                "editors",
+                subject_set={
+                    "namespace": "Role",
+                    "object": "leads",
+                    "relation": "member",
+                },
+            )
         except asyncpg.UniqueViolationError:
             await tr.rollback()
             msg = "Requested project already exists"
@@ -361,6 +382,10 @@ async def create_events(
             await tr.rollback()
             msg = "Creator member does not exist"
             raise NotFoundError(msg)
+        except (BadGatewayError, ServiceUnavailableError):
+            await tr.rollback()
+            msg = "Failed to record event ownership in the authorization service"
+            raise BadGatewayError(msg)
         else:
             await tr.commit()
             return Events(**dict(rows))

@@ -195,7 +195,7 @@ async def test_edit_event_returns_404_when_missing(
 ) -> None:
     identity_id = fake_ory.login_as()
     missing_id = uuid.uuid4()
-    fake_ory.grant("Event", str(missing_id), "edit", identity_id)
+    await fake_ory.grant("Event", str(missing_id), "edit", identity_id)
 
     response = await client.client.put(
         f"/events/{missing_id}",
@@ -211,7 +211,7 @@ async def test_edit_event_persists_changes(
     member_uuid = uuid.UUID(identity_id)
     await _insert_member(kanae.pool, member_id=member_uuid)
     event_id = await _insert_event(kanae.pool, name="old", creator_id=member_uuid)
-    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
 
     response = await client.client.put(
         f"/events/{event_id}",
@@ -233,7 +233,7 @@ async def test_edit_event_with_datetime_payload_updates_time_fields(
     event_id = await _insert_event(
         kanae.pool, name="time-update", creator_id=member_uuid
     )
-    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
 
     new_start = datetime.datetime(2030, 5, 1, 12, 0, tzinfo=datetime.UTC)
     new_end = new_start + datetime.timedelta(hours=2)
@@ -281,7 +281,7 @@ async def test_delete_event_returns_404_when_missing(
 ) -> None:
     identity_id = fake_ory.login_as()
     missing_id = uuid.uuid4()
-    fake_ory.grant("Event", str(missing_id), "own", identity_id)
+    await fake_ory.grant("Event", str(missing_id), "own", identity_id)
 
     response = await client.client.delete(f"/events/{missing_id}")
     assert response.status_code == 404
@@ -294,7 +294,7 @@ async def test_delete_event_removes_row(
     member_uuid = uuid.UUID(identity_id)
     await _insert_member(kanae.pool, member_id=member_uuid)
     event_id = await _insert_event(kanae.pool, name="doomed", creator_id=member_uuid)
-    fake_ory.grant("Event", str(event_id), "own", identity_id)
+    await fake_ory.grant("Event", str(event_id), "own", identity_id)
 
     response = await client.client.delete(f"/events/{event_id}")
     assert response.status_code == 200
@@ -620,7 +620,7 @@ async def test_set_event_thumbnail_rejects_non_image(
 ) -> None:
     identity_id = fake_ory.login_as()
     event_id = uuid.uuid4()
-    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
     response = await client.client.post(
         f"/events/{event_id}/thumbnail",
         json={"hash": _VALID_HASH, "content_type": "video/mp4"},
@@ -633,7 +633,7 @@ async def test_set_event_thumbnail_rejects_bad_hash(
 ) -> None:
     identity_id = fake_ory.login_as()
     event_id = uuid.uuid4()
-    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
     response = await client.client.post(
         f"/events/{event_id}/thumbnail",
         json={"hash": "not-a-valid-hash", "content_type": "image/png"},
@@ -666,7 +666,7 @@ async def test_remove_event_thumbnail_returns_404_when_missing(
 ) -> None:
     identity_id = fake_ory.login_as()
     missing = uuid.uuid4()
-    fake_ory.grant("Event", str(missing), "edit", identity_id)
+    await fake_ory.grant("Event", str(missing), "edit", identity_id)
 
     response = await client.client.delete(f"/events/{missing}/thumbnail")
     assert response.status_code == 404
@@ -681,7 +681,7 @@ async def test_remove_event_thumbnail_succeeds_when_unset(
     event_id = await _insert_event(
         kanae.pool, name="clear-thumb", creator_id=member_uuid
     )
-    fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
 
     response = await client.client.delete(f"/events/{event_id}/thumbnail")
     assert response.status_code == 200

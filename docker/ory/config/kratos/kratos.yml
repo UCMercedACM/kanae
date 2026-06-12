@@ -128,6 +128,18 @@ selfservice:
         min_password_length: 12
         identifier_similarity_check_enabled: true
 
+    # Second factor (AAL2). TOTP is the primary step-up authenticator used by
+    # the sudo/break-glass flow: ElevationError redirects to
+    # /self-service/login/browser?aal=aal2&refresh=true, which Kratos can only
+    # satisfy once a TOTP credential exists and this method is enabled.
+    totp:
+      enabled: true
+      config:
+        issuer: Kanae
+
+    lookup_secret:
+      enabled: true
+
 # Placeholders only. Kratos doesn't expand `${VAR}` inside YAML, so the real
 # values must come from env-path overrides set in docker-compose:
 #   SECRETS_COOKIE: <hex from `openssl rand -hex 64`>

@@ -17,7 +17,13 @@ from core import (
 )
 from utils.auth import use_session
 from utils.checks import Project, Role, check_any, has_permissions, has_role
-from utils.errors import BadGatewayError, BadRequestError, ConflictError, NotFoundError
+from utils.errors import (
+    BadGatewayError,
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+)
 from utils.ory import KanaeSession
 from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
@@ -271,7 +277,11 @@ class CreateProject(BaseModel, frozen=True):
 @router.post(
     "/projects/create",
     dependencies=[has_role(Role.MANAGER)],
-    responses={200: {"model": Projects}, 422: {"model": HTTPExceptionResponse}},
+    responses={
+        200: {"model": Projects},
+        422: {"model": HTTPExceptionResponse},
+        502: {"model": HTTPExceptionResponse},
+    },
 )
 @router.limiter.limit("5/minute")
 async def create_project(
@@ -294,38 +304,53 @@ async def create_project(
 
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
+        await tr.start()
 
-        project_rows = await connection.fetchrow(
-            query,
-            *req.model_dump(exclude={"tags"}).values(),
-            session.identity.id,
-        )
+        try:
+            project_rows = await connection.fetchrow(
+                query,
+                *req.model_dump(exclude={"tags"}).values(),
+                session.identity.id,
+            )
 
-        if req.tags:
-            subquery = """
-            INSERT INTO project_tags (project_id, tag_id)
-            VALUES ($1, (SELECT id FROM tags WHERE title = $2));
-            """
+            if req.tags:
+                subquery = """
+                INSERT INTO project_tags (project_id, tag_id)
+                VALUES ($1, (SELECT id FROM tags WHERE title = $2));
+                """
 
-            await tr.start()
-
-            try:
-                await request.app.pool.fetchmany(
+                await connection.fetchmany(
                     subquery, [(project_rows["id"], tags.lower()) for tags in req.tags]
                 )
-            except asyncpg.NotNullViolationError:
-                await tr.rollback()
 
-                # Remove the newly created entry, somewhat like a rollback
-                await connection.execute(
-                    "DELETE FROM projects WHERE id = $1;", project_rows["id"]
-                )
-                raise HTTPException(
-                    detail="The tag(s) specified is invalid. Please check the current tags available.",
-                    status_code=422,
-                )
-            else:
-                await tr.commit()
+            project_id = str(project_rows["id"])
+            await request.app.ory.grant(
+                "Project", project_id, "owners", subject_id=session.identity.id
+            )
+            await request.app.ory.grant(
+                "Project",
+                project_id,
+                "editors",
+                subject_set={
+                    "namespace": "Role",
+                    "object": "manager",
+                    "relation": "member",
+                },
+            )
+        except asyncpg.NotNullViolationError:
+            await tr.rollback()
+
+            raise HTTPException(
+                detail="The tag(s) specified is invalid. Please check the current tags available.",
+                status_code=422,
+            )
+        except (BadGatewayError, ServiceUnavailableError):
+            await tr.rollback()
+
+            msg = "Failed to record project ownership in the authorization service"
+            raise BadGatewayError(msg)
+        else:
+            await tr.commit()
 
         return Projects(**dict(project_rows), tags=req.tags)
 

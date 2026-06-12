@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import http
 import itertools
 import logging
@@ -764,6 +765,91 @@ class StorageClient:
         return f"{self.base_thumbnail_url}/{self._build_thumbnail_key(media_hash)}"
 
 
+### Sudo operations
+
+
+class SudoClient:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self.pool = pool
+        self.ttl = datetime.timedelta(minutes=10)
+
+    async def grant(self, member_id: str, *, reason: str) -> datetime.datetime:
+        """Elevate a member to sudo for the configured TTL, recording the grant.
+
+        Args:
+            member_id (str): Kratos identity UUID of the member being elevated.
+            reason (str): Operator-supplied justification for breaking the
+                glass. Recorded on both the live grant and the audit row.
+
+        Returns:
+            datetime.datetime: The UTC instant at which the elevation expires
+            (`now()` plus the client's `ttl`).
+        """
+        query = """
+        WITH upserted AS (
+            INSERT INTO sudo_grants (member_id, expires_at, reason)
+            VALUES ($1, now() + $2, $3)
+            ON CONFLICT (member_id) DO UPDATE
+                SET granted_at = now(),
+                    expires_at = now() + $2,
+                    reason     = EXCLUDED.reason
+            RETURNING granted_at, expires_at
+        ), logged AS (
+            INSERT INTO sudo_audit (member_id, reason, granted_at, expires_at)
+            SELECT $1, $3, granted_at, expires_at FROM upserted
+        )
+        SELECT expires_at FROM upserted;
+        """
+        return await self.pool.fetchval(query, member_id, self.ttl, reason)
+
+    async def revoke(self, member_id: str) -> None:
+        """Revoke a member's sudo elevation immediately.
+
+        Args:
+            member_id (str): Kratos identity UUID whose active grant should be
+                cleared.
+        """
+        query = """
+        DELETE FROM sudo_grants
+        WHERE member_id = $1;
+        """
+        await self.pool.execute(query, member_id)
+
+    async def get_expiry(self, member_id: str) -> Optional[datetime.datetime]:
+        """Return when a member's *active* sudo grant expires, if any.
+
+        Args:
+            member_id (str): Kratos identity UUID to look up.
+
+        Returns:
+            Optional[datetime.datetime]: The grant's UTC expiry instant, or
+            `None` when the member has no grant or it has already expired
+            (`expires_at > now()` filters out stale rows).
+        """
+        query = """
+        SELECT expires_at FROM sudo_grants
+        WHERE member_id = $1 AND expires_at > now();
+        """
+        return await self.pool.fetchval(query, member_id)
+
+    async def is_active(self, member_id: str) -> bool:
+        """Check whether a member currently holds an unexpired sudo grant.
+
+        Args:
+            member_id (str): Kratos identity UUID to check.
+
+        Returns:
+            bool: `True` if an unexpired grant exists, `False` otherwise.
+        """
+        query = """
+            SELECT EXISTS (
+                SELECT 1 FROM sudo_grants
+                WHERE member_id = $1 AND expires_at > now()
+            );
+        """
+        return await self.pool.fetchval(query, member_id)
+
+
 ### Prometheus instrumentator
 
 
@@ -1155,6 +1241,7 @@ class Kanae(FastAPI):
 
     limiter: KanaeLimiter
     ory: OryClient
+    sudo: SudoClient
 
     def __init__(
         self,
@@ -1278,6 +1365,7 @@ class Kanae(FastAPI):
             app.storage = StorageClient(
                 self.config.storage, client=s3_client, glide=app.glide
             )
+            self.sudo = SudoClient(app.pool)
             app.limiter.attach(app.glide)
 
             yield

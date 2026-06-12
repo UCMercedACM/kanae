@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
+from yarl import URL
 
 from .responses import HTTP_404_DETAIL
 
@@ -171,3 +172,16 @@ class MissingPermissions(CheckFailure):
             return f"{seq[0]} {final} {seq[1]}"
 
         return delimiter.join(seq[:-1]) + f" {final} {seq[-1]}"
+
+
+### Sudo errors
+
+
+class ElevationError(ForbiddenError):
+    flow = URL.build(
+        path="/self-service/login/browser", query={"aal": "aal2", "refresh": "true"}
+    )
+
+    def __init__(self, detail: str = "2fa re-authentication required") -> None:
+        super().__init__(detail)
+        self.headers = {"X-Elevation-Flow": str(self.flow)}

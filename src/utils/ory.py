@@ -1,7 +1,7 @@
 import datetime
 import logging
 import uuid
-from typing import Any, TypedDict, Unpack, cast
+from typing import Any, Literal, TypedDict, Unpack, cast
 
 import aiohttp
 import orjson
@@ -58,6 +58,7 @@ class KanaeSession(BaseModel, frozen=True):
     active: bool
     expires_at: datetime.datetime
     authenticated_at: datetime.datetime
+    authenticator_assurance_level: Literal["aal1", "aal2"]
     issued_at: datetime.datetime
     identity: KratosIdentity
 
@@ -167,7 +168,12 @@ class OryClient:
     async def _request(
         self, method: str, url: URL, **kwargs: Unpack[_RequestOptions]
     ) -> aiohttp.ClientResponse:
-        response = await self.session.request(method, url, **kwargs)
+        try:
+            response = await self.session.request(method, url, **kwargs)
+        except (aiohttp.ClientError, TimeoutError):
+            # Just in case we fail to reach keto/kratos
+            msg = "Failed to reach the Ory service"
+            raise BadGatewayError(msg)
 
         if response.status == status.HTTP_502_BAD_GATEWAY:
             raise BadGatewayError
@@ -467,7 +473,16 @@ class OryClient:
             response.release()
             return
 
-        await response.release()
+        response.release()
+
+        if response.status not in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+            status.HTTP_204_NO_CONTENT,
+        ):
+            msg = "Rejected revoke request"
+            raise BadGatewayError(msg)
+
         await self._invalidate_resource(namespace, resource)
 
     async def grant(
@@ -536,10 +551,15 @@ class OryClient:
             json=payload,
         )
 
-        if response.status == status.HTTP_400_BAD_REQUEST:
-            self._logger.warning("Failed to grant for some reason")
-            response.release()
-            return
-
         response.release()
+
+        # 400 requests are handled in this section, so we don't need to shallow it
+        if response.status not in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+            status.HTTP_204_NO_CONTENT,
+        ):
+            msg = "Rejected grant request"
+            raise BadGatewayError(msg)
+
         await self._invalidate_resource(namespace, resource)

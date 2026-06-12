@@ -1,3 +1,4 @@
+import datetime
 from collections.abc import Awaitable, Callable, Iterable
 from enum import StrEnum
 from typing import Annotated, Literal, NamedTuple, Protocol
@@ -14,10 +15,16 @@ from utils.request import RouteRequest
 from .errors import (
     CheckAnyFailure,
     CheckFailure,
+    ElevationError,
     MissingAnyRole,
     MissingPermissions,
     MissingRole,
 )
+
+### Module-level constants
+
+_2FA_AGE = datetime.timedelta(minutes=15)
+
 
 ### Types
 
@@ -33,6 +40,7 @@ class Check[ContextT](Protocol):
 
 
 class Role(StrEnum):
+    ROOT = "root"
     ADMIN = "admin"
     MANAGER = "manager"
     LEADS = "leads"
@@ -375,5 +383,70 @@ def has_any_role(*roles: Role) -> CheckDependency[CheckContext]:
             return True
 
         raise MissingAnyRole(list(roles))
+
+    return check(predicate)
+
+
+def has_sudo() -> CheckDependency[CheckContext]:
+    """Check that the caller currently holds an active sudo grant.
+
+    Typically composed with a role check via `check_any` so that either the
+    sealed root identity or a freshly-elevated admin may proceed.
+
+    Returns:
+        CheckDependency: A `CheckDependency` that passes while the caller holds an
+        unexpired sudo grant, and otherwise fails with a generic `ForbiddenError`.
+
+    Example:
+        Gate a sudo operation behind either root or active sudo::
+
+            @router.delete(
+                "/members/{member_id}",
+                dependencies=[check_any(has_role(Role.ROOT), has_sudo())],
+            )
+            async def delete_member(...): ...
+    """
+
+    async def predicate(ctx: CheckContext) -> bool:
+        return await ctx.request.app.sudo.is_active(ctx.session.identity.id)
+
+    return check(predicate)
+
+
+def has_2fa() -> CheckDependency[CheckContext]:
+    """Check that the caller has a recently re-authenticated AAL2/2FA session.
+
+    Single-session 2FA age is 15 minutes, which prevents any forms of hijacking
+
+    Returns:
+        CheckDependency: A `CheckDependency` that passes for a fresh AAL2 session.
+
+    Raises:
+        ElevationError: The session is not `aal2`, or its last authentication is
+            older than `_2FA_AGE`. Carries the `X-Elevation-Flow` header
+            pointing the client at the AAL2 refresh flow.
+
+    Example:
+        Require a fresh second factor before elevating to sudo::
+
+            @router.post(
+                "/sudo/elevate",
+                dependencies=[has_role(Role.ADMIN), has_2fa()],
+            )
+            async def elevate_sudo(...): ...
+    """
+
+    # I'm aware sonarcloud is complaining about this but figure this out later
+    async def predicate(ctx: CheckContext) -> bool:
+
+        if ctx.session.authenticator_assurance_level != "aal2":
+            raise ElevationError
+
+        age = datetime.datetime.now(datetime.UTC) - ctx.session.authenticated_at
+
+        if age > _2FA_AGE:
+            raise ElevationError
+
+        return True
 
     return check(predicate)
