@@ -217,16 +217,19 @@ class FakeOryClient:
         self.session = None
         self.client.cookies.delete("ory_kratos_session")
 
-    def grant(
+    async def grant(
         self,
         namespace: str,
         resource: str,
         relation: str,
-        subject_id: str,
+        subject_id: Optional[str] = None,
+        *,
+        subject_set: Optional[dict[str, str]] = None,
     ) -> None:
-        self.permissions.add(
-            _PermissionKey(namespace, str(resource), relation, str(subject_id))
-        )
+        if subject_id is not None:
+            self.permissions.add(
+                _PermissionKey(namespace, str(resource), relation, str(subject_id))
+            )
 
 
 class KanaeTestClient:

@@ -260,3 +260,87 @@ async def test_elevate_enforces_5_per_minute(
 
         blocked = await client.client.post("/sudo/elevate", json={"reason": "blocked"})
         assert blocked.status_code == 429
+
+
+# ──────────────────────────────────────────────────────────────────
+# Audit trail — grant appends an immutable sudo_audit row
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_grant_writes_audit_row(client: KanaeTestClient, kanae: Kanae) -> None:
+    member_id = str(uuid.uuid4())
+    await _seed_member(kanae, member_id)
+    await kanae.sudo.grant(member_id, reason="incident-99")
+
+    row = await kanae.pool.fetchrow(
+        "SELECT reason, granted_at, expires_at FROM sudo_audit WHERE member_id = $1",
+        member_id,
+    )
+    assert row is not None
+    assert row["reason"] == "incident-99"
+    assert row["expires_at"] > row["granted_at"]
+
+
+async def test_reelevate_appends_audit_keeps_one_live_grant(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    member_id = str(uuid.uuid4())
+    await _seed_member(kanae, member_id)
+    await kanae.sudo.grant(member_id, reason="first")
+    await kanae.sudo.grant(member_id, reason="second")
+
+    grant_rows = await kanae.pool.fetch(
+        "SELECT reason FROM sudo_grants WHERE member_id = $1", member_id
+    )
+    assert len(grant_rows) == 1
+    assert grant_rows[0]["reason"] == "second"
+
+    reasons = [
+        r["reason"]
+        for r in await kanae.pool.fetch(
+            "SELECT reason FROM sudo_audit WHERE member_id = $1 ORDER BY id", member_id
+        )
+    ]
+    assert reasons == ["first", "second"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# GET /sudo/audit — root-only elevation history
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_audit_requires_session(client: KanaeTestClient) -> None:
+    assert (await client.client.get("/sudo/audit")).status_code == 401
+
+
+async def test_audit_rejects_non_root(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.ADMIN, aal="aal2")
+    assert (await client.client.get("/sudo/audit")).status_code == 403
+
+
+async def test_audit_empty_for_root(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    response = await client.client.get("/sudo/audit")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_audit_lists_history_for_root(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    member_id = str(uuid.uuid4())
+    await _seed_member(kanae, member_id)
+    await kanae.sudo.grant(member_id, reason="first")
+    await kanae.sudo.grant(member_id, reason="second")
+
+    fake_ory.login_as(Role.ROOT)
+    response = await client.client.get("/sudo/audit")
+    assert response.status_code == 200
+
+    mine = [row for row in response.json() if row["member_id"] == member_id]
+    assert len(mine) == 2
+    assert {row["reason"] for row in mine} == {"first", "second"}

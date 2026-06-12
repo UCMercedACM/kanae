@@ -151,10 +151,21 @@ CREATE TABLE IF NOT EXISTS project_media (
 CREATE INDEX IF NOT EXISTS project_media_project_idx ON project_media (project_id, position);
 
 CREATE TABLE IF NOT EXISTS sudo_grants (
-    member_id  UUID PRIMARY KEY REFERENCES members (id) ON DELETE CASCADE,
+    member_id UUID PRIMARY KEY REFERENCES members (id) ON DELETE CASCADE,
     granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    reason     TEXT NOT NULL
+    reason TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS sudo_grants_expiry_idx ON sudo_grants (expires_at);
+
+CREATE TABLE IF NOT EXISTS sudo_audit (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    member_id UUID NOT NULL REFERENCES members(id),
+    reason TEXT NOT NULL,
+    granted_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS sudo_audit_member_idx ON sudo_audit (member_id, granted_at DESC);
+CREATE INDEX IF NOT EXISTS sudo_audit_granted_idx ON sudo_audit (granted_at DESC);

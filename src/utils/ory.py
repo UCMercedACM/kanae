@@ -168,7 +168,12 @@ class OryClient:
     async def _request(
         self, method: str, url: URL, **kwargs: Unpack[_RequestOptions]
     ) -> aiohttp.ClientResponse:
-        response = await self.session.request(method, url, **kwargs)
+        try:
+            response = await self.session.request(method, url, **kwargs)
+        except (aiohttp.ClientError, TimeoutError):
+            # Just in case we fail to reach keto/kratos
+            msg = "Failed to reach the Ory service"
+            raise BadGatewayError(msg)
 
         if response.status == status.HTTP_502_BAD_GATEWAY:
             raise BadGatewayError
@@ -546,13 +551,9 @@ class OryClient:
             json=payload,
         )
 
-        if response.status == status.HTTP_400_BAD_REQUEST:
-            self._logger.warning("Failed to grant for some reason")
-            response.release()
-            return
-
         response.release()
 
+        # 400 requests are handled in this section, so we don't need to shallow it
         if response.status not in (
             status.HTTP_200_OK,
             status.HTTP_201_CREATED,

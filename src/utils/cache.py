@@ -212,8 +212,13 @@ class cached_method(cached):
     async def get_from_cache(self, key: str) -> object:
         try:
             return await self._active_cache.get(key)
-        except (GlideError, TimeoutError, ValidationError):
-            self._log.exception("Couldn't retrieve %s, unexpected error", key)
+        except (GlideError, TimeoutError) as error:
+            self._log.warning("Cache get degraded for %s: %s", key, error)
+        except ValidationError:
+            self._log.exception(
+                "Couldn't retrieve %s, unexpected error due to cache deserialization failing",
+                key,
+            )
         return None
 
     async def set_in_cache(self, key: str, value: object) -> None:

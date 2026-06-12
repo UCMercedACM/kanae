@@ -63,6 +63,24 @@ async def get_active_sudo_grants(
     return [ActiveSudo(**dict(row)) for row in rows]
 
 
+@router.get(
+    "/sudo/audit",
+    dependencies=[has_role(Role.ROOT)],
+    include_in_schema=False,
+)
+async def get_sudo_audits(
+    request: RouteRequest, session: Annotated[KanaeSession, Depends(use_session)]
+) -> list[ActiveSudo]:
+    """Obtains most recent sudo requests"""
+    query = """
+    SELECT member_id, granted_at, expires_at, reason
+    FROM sudo_audit
+    ORDER BY granted_at DESC;
+    """
+    rows = await request.app.pool.fetch(query)
+    return [ActiveSudo(**dict(row)) for row in rows]
+
+
 class SudoRequest(BaseModel, frozen=True):
     reason: Annotated[str, Field(min_length=1, max_length=200, pattern=_NO_NULL_REGEX)]
 

@@ -775,16 +775,20 @@ class SudoClient:
 
     async def grant(self, member_id: str, *, reason: str) -> datetime.datetime:
         query = """
-        INSERT INTO sudo_grants (member_id, expires_at, reason)
-        VALUES ($1, now() + $2, $3)
-        ON CONFLICT (member_id)
-        DO UPDATE SET
-            granted_at = now(),
-            expires_at = now() + $2,
-            reason = EXCLUDED.reason
-        RETURNING expires_at;
+        WITH upserted AS (
+            INSERT INTO sudo_grants (member_id, expires_at, reason)
+            VALUES ($1, now() + $2, $3)
+            ON CONFLICT (member_id) DO UPDATE
+                SET granted_at = now(),
+                    expires_at = now() + $2,
+                    reason     = EXCLUDED.reason
+            RETURNING granted_at, expires_at
+        ), logged AS (
+            INSERT INTO sudo_audit (member_id, reason, granted_at, expires_at)
+            SELECT $1, $3, granted_at, expires_at FROM upserted
+        )
+        SELECT expires_at FROM upserted;
         """
-
         return await self.pool.fetchval(query, member_id, self.ttl, reason)
 
     async def revoke(self, member_id: str) -> None:

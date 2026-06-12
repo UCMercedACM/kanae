@@ -243,7 +243,7 @@ async def test_edit_project_returns_404_when_missing(
 ) -> None:
     identity_id = fake_ory.login_as()
     missing = uuid.uuid4()
-    fake_ory.grant("Project", str(missing), "edit", identity_id)
+    await fake_ory.grant("Project", str(missing), "edit", identity_id)
     response = await client.client.put(
         f"/projects/{missing}",
         json={"name": "x", "description": "y", "link": "https://x.test"},
@@ -256,7 +256,7 @@ async def test_edit_project_persists_changes(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = await _insert_project(kanae.pool, name="old-name")
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.put(
         f"/projects/{project_id}",
@@ -296,7 +296,7 @@ async def test_delete_project_returns_404_when_missing(
 ) -> None:
     identity_id = fake_ory.login_as()
     missing = uuid.uuid4()
-    fake_ory.grant("Project", str(missing), "own", identity_id)
+    await fake_ory.grant("Project", str(missing), "own", identity_id)
     response = await client.client.delete(f"/projects/{missing}")
     assert response.status_code == 404
 
@@ -306,7 +306,7 @@ async def test_delete_project_removes_row(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = await _insert_project(kanae.pool, name="doomed")
-    fake_ory.grant("Project", str(project_id), "own", identity_id)
+    await fake_ory.grant("Project", str(project_id), "own", identity_id)
 
     response = await client.client.delete(f"/projects/{project_id}")
     assert response.status_code == 200
@@ -539,7 +539,7 @@ async def test_modify_member_rejects_without_manager_role(
 ) -> None:
     identity_id = fake_ory.login_as()
     target_project = uuid.uuid4()
-    fake_ory.grant("Project", str(target_project), "own", identity_id)
+    await fake_ory.grant("Project", str(target_project), "own", identity_id)
     response = await client.client.put(
         f"/projects/{target_project}/member/modify",
         json={"id": str(uuid.uuid4()), "role": "lead"},
@@ -553,7 +553,7 @@ async def test_modify_member_promotes_existing_membership(
     identity_id = fake_ory.login_as(Role.MANAGER)
     member_to_promote = uuid.uuid4()
     project_id = await _insert_project(kanae.pool, name="promotable")
-    fake_ory.grant("Project", str(project_id), "own", identity_id)
+    await fake_ory.grant("Project", str(project_id), "own", identity_id)
 
     await _insert_member(kanae.pool, member_id=member_to_promote)
     await _link_project_member(
@@ -582,7 +582,7 @@ async def test_modify_member_rejects_invalid_role_value(
 ) -> None:
     identity_id = fake_ory.login_as(Role.MANAGER)
     project_id = await _insert_project(kanae.pool, name="role-validator")
-    fake_ory.grant("Project", str(project_id), "own", identity_id)
+    await fake_ory.grant("Project", str(project_id), "own", identity_id)
 
     response = await client.client.put(
         f"/projects/{project_id}/member/modify",
@@ -622,7 +622,7 @@ async def test_media_upload_rejects_unknown_content_type(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = uuid.uuid4()
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.post(
         f"/projects/{project_id}/media/upload",
@@ -640,7 +640,7 @@ async def test_media_upload_rejects_zero_size(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = uuid.uuid4()
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.post(
         f"/projects/{project_id}/media/upload",
@@ -654,7 +654,7 @@ async def test_media_upload_rejects_oversized_image(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = uuid.uuid4()
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     too_big = 32 * 1024 * 1024 + 1  # 32 MB image cap + 1 byte
     response = await client.client.post(
@@ -669,7 +669,7 @@ async def test_media_upload_rejects_bad_hash(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = uuid.uuid4()
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.post(
         f"/projects/{project_id}/media/upload",
@@ -694,7 +694,7 @@ async def test_media_commit_rejects_partial_multipart_args(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = uuid.uuid4()
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.post(
         f"/projects/{project_id}/media/commit",
@@ -726,7 +726,7 @@ async def test_set_thumbnail_rejects_non_image(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = uuid.uuid4()
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
     response = await client.client.post(
         f"/projects/{project_id}/thumbnail",
         json={"hash": _VALID_HASH, "content_type": "video/mp4"},
@@ -739,7 +739,7 @@ async def test_remove_thumbnail_returns_404_when_missing(
 ) -> None:
     identity_id = fake_ory.login_as()
     missing = uuid.uuid4()
-    fake_ory.grant("Project", str(missing), "edit", identity_id)
+    await fake_ory.grant("Project", str(missing), "edit", identity_id)
 
     response = await client.client.delete(f"/projects/{missing}/thumbnail")
     assert response.status_code == 404
@@ -768,7 +768,7 @@ async def test_list_project_media_returns_empty_when_unlinked(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = await _insert_project(kanae.pool, name="no-media")
-    fake_ory.grant("Project", str(project_id), "view", identity_id)
+    await fake_ory.grant("Project", str(project_id), "view", identity_id)
 
     response = await client.client.get(f"/projects/{project_id}/media")
     assert response.status_code == 200
@@ -804,7 +804,7 @@ async def test_reorder_media_returns_404_when_hashes_do_not_belong(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = await _insert_project(kanae.pool, name="reorderable")
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.put(
         f"/projects/{project_id}/media/positions",
@@ -818,7 +818,7 @@ async def test_reorder_media_rejects_invalid_hash_format(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = uuid.uuid4()
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.put(
         f"/projects/{project_id}/media/positions",
@@ -854,7 +854,7 @@ async def test_remove_project_media_returns_404_when_unlinked(
 ) -> None:
     identity_id = fake_ory.login_as()
     project_id = await _insert_project(kanae.pool, name="empty-media")
-    fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
 
     response = await client.client.delete(f"/projects/{project_id}/media/{_VALID_HASH}")
     assert response.status_code == 404

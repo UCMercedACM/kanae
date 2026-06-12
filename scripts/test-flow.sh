@@ -219,20 +219,8 @@ PROJECT_ID=$(jq -r '.id // empty' <<<"$CREATE_RESP")
 	|| fail "project create failed: $CREATE_RESP"
 ok "project id: $PROJECT_ID"
 
-# ── 7. resource permission via Project:owners ─────────────────────────────────
-step "7. grant Project:<id>#owners and edit"
-
-# The handler doesn't write owner tuples yet (TODO followup) — write manually.
-curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "$H_CONTENT_TYPE" \
-	-d '{
-    "namespace":  "Project",
-    "object":     "'"$PROJECT_ID"'",
-    "relation":   "owners",
-    "subject_id": "'"$IDENTITY_ID"'"
-  }' >/dev/null
-docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
-ok "owner tuple written, cache flushed"
+# ── 7. resource permission via auto-granted Project:owners ────────────────────
+step "7. edit created project — handler auto-granted Project:<id>#owners"
 
 EDIT_RESP=$(curl -s -X PUT "$KANAE/projects/$PROJECT_ID" \
 	-b "$COOKIES" \
@@ -329,20 +317,8 @@ EVENT_ID=$(jq -r '.id // empty' <<<"$CREATE_EVENT_RESP")
 	|| fail "event create failed: $CREATE_EVENT_RESP"
 ok "event id: $EVENT_ID"
 
-# ── 12. resource permission via Event:owners ──────────────────────────────────
-step "12. grant Event:<id>#owners and edit"
-
-# The handler doesn't write owner tuples yet (TODO followup) — write manually.
-curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
-	-H "$H_CONTENT_TYPE" \
-	-d '{
-    "namespace":  "Event",
-    "object":     "'"$EVENT_ID"'",
-    "relation":   "owners",
-    "subject_id": "'"$IDENTITY_ID"'"
-  }' >/dev/null
-docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
-ok "owner tuple written, cache flushed"
+# ── 12. resource permission via auto-granted Event:owners ─────────────────────
+step "12. edit created event — handler auto-granted Event:<id>#owners"
 
 EDIT_EVENT_RESP=$(curl -s -X PUT "$KANAE/events/$EVENT_ID" \
 	-b "$COOKIES" \
