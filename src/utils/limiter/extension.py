@@ -144,14 +144,15 @@ class LimitItem:
         Returns:
             str: Requested scope
         """
-        # flack.request.endpoint is the name of the function for the endpoint
-        if self.__scope is None:
+        # flask.request.endpoint is the name of the function for the endpoint
+        scope = self.__scope
+        if scope is None:
             return ""
-        return (
-            self.__scope(request.endpoint)  # noqa: F821  # ty: ignore[unresolved-reference,call-top-callable]
-            if callable(self.__scope)
-            else self.__scope
-        )
+        if isinstance(scope, str):
+            return scope
+        # `request` is a flask-style global this vendored limiter never binds;
+        # the callable-scope branch is vestigial, hence the suppression.
+        return scope(request.endpoint)  # noqa: F821  # ty: ignore[unresolved-reference]
 
     def is_exempt(self, request: Optional[Request] = None) -> bool:
         """Checks whether the limit is exempt or not
@@ -197,9 +198,12 @@ class LimitGroup:
         self.request = None
 
     def __iter__(self) -> Iterator[LimitItem]:
-        if callable(self.__limit_provider):
+        provider = self.__limit_provider
+        if isinstance(provider, str):
+            limit_raw = provider
+        else:
             if (
-                "key" in inspect.signature(self.__limit_provider).parameters
+                "key" in inspect.signature(provider).parameters
                 and "request" not in inspect.signature(self.key_function).parameters
             ):
                 msg = f"Limit provider function {getattr(self.key_function, '__name__', repr(self.key_function))} needs a `request` argument"
@@ -209,10 +213,7 @@ class LimitGroup:
                 msg = "`request` object can't be None"
                 raise ValueError(msg)
 
-            limit_raw = self.__limit_provider(self.key_function(self.request))  # ty: ignore[call-top-callable]
-
-        else:
-            limit_raw = self.__limit_provider
+            limit_raw = provider(self.key_function(self.request))
 
         limit_items: list[RateLimitItem] = parse_many(limit_raw)
         for limit in limit_items:
@@ -432,7 +433,10 @@ class KanaeLimiter:
                 if not limit_for_header or lim.limit < limit_for_header[0]:
                     limit_for_header = (lim.limit, args)
 
-                cost = lim.cost(request) if callable(lim.cost) else lim.cost  # ty: ignore[call-top-callable]
+                cost_value = lim.cost
+                cost = (
+                    cost_value if isinstance(cost_value, int) else cost_value(request)
+                )
 
                 # Redis can't decode this if it's not cast into an int for some reason
                 if not await self.limiter.hit(lim.limit, *args, cost=int(cost)):
