@@ -22,7 +22,7 @@ _NO_NULL_REGEX = r"^[^\x00]+$"
 
 class Sudo(BaseModel, frozen=True):
     active: bool
-    expires_at: Optional[datetime.datetime]
+    expires_at: Optional[datetime.datetime] = None
 
 
 class ActiveSudo(BaseModel, frozen=True):
