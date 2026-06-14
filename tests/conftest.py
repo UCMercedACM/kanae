@@ -157,13 +157,25 @@ class _FakeCacheableWhoami:
 
 
 class FakeOryClient:
-    __slots__ = ("client", "permissions", "revoked_sessions", "session", "whoami")
+    __slots__ = (
+        "client",
+        "deleted_identities",
+        "permissions",
+        "purged_subjects",
+        "revoked_all_sessions",
+        "revoked_sessions",
+        "session",
+        "whoami",
+    )
 
     def __init__(self, client: httpx.AsyncClient) -> None:
         self.client = client
         self.session: Optional[KanaeSession] = None
         self.permissions: set[_PermissionKey] = set()
         self.revoked_sessions: list[str] = []
+        self.revoked_all_sessions: list[str] = []
+        self.purged_subjects: list[str] = []
+        self.deleted_identities: list[str] = []
         self.whoami: _FakeCacheableWhoami = _FakeCacheableWhoami(self)
 
     async def check_permission(
@@ -230,6 +242,32 @@ class FakeOryClient:
             self.permissions.add(
                 _PermissionKey(namespace, str(resource), relation, str(subject_id))
             )
+
+    async def revoke(
+        self,
+        namespace: str,
+        resource: str,
+        relation: str,
+        subject_id: Optional[str] = None,
+        *,
+        subject_set: Optional[dict[str, str]] = None,
+    ) -> None:
+        if subject_id is not None:
+            self.permissions.discard(
+                _PermissionKey(namespace, str(resource), relation, str(subject_id))
+            )
+
+    async def revoke_all_sessions(self, identity_id: str) -> None:
+        self.revoked_all_sessions.append(identity_id)
+
+    async def purge(self, subject_id: str) -> None:
+        self.purged_subjects.append(subject_id)
+        self.permissions = {
+            key for key in self.permissions if key.subject_id != str(subject_id)
+        }
+
+    async def delete_identity(self, identity_id: str) -> None:
+        self.deleted_identities.append(identity_id)
 
 
 class KanaeTestClient:

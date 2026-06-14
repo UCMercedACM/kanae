@@ -3,7 +3,7 @@ from typing import Annotated, Optional
 from fastapi import Path, Query
 from pydantic import BaseModel, Field
 
-from utils.checks import Role, has_role
+from utils.checks import Role, check_any, has_role, has_sudo
 from utils.errors import (
     NotFoundError,
 )
@@ -81,7 +81,7 @@ class ModifiedTag(BaseModel):
 
 @router.put(
     "/tags/{tag_id}",
-    dependencies=[has_role(Role.ADMIN)],
+    dependencies=[check_any(has_role(Role.ROOT), has_sudo())],
     responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("5/minute")
@@ -107,7 +107,7 @@ async def edit_tag(
 
 @router.delete(
     "/tags/{tag_id}",
-    dependencies=[has_role(Role.ADMIN)],
+    dependencies=[check_any(has_role(Role.ROOT), has_sudo())],
     responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("5/minute")
@@ -149,7 +149,7 @@ async def create_tags(
 
 @router.post(
     "/tags/bulk-create",
-    dependencies=[has_role(Role.ADMIN)],
+    dependencies=[check_any(has_role(Role.ROOT), has_sudo())],
     responses={200: {"model": list[Tags]}},
 )
 @router.limiter.limit("1/minute")

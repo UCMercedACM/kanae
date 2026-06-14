@@ -132,7 +132,7 @@ async def test_create_tag_rejects_wrong_type(
 
 
 # ──────────────────────────────────────────────────────────────────
-# PUT /tags/{tag_id}  — admin only, 5/minute
+# PUT /tags/{tag_id}  — root/sudo-gated, 5/minute
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -156,7 +156,7 @@ async def test_edit_tag_rejects_non_admin(
 async def test_edit_tag_returns_404_when_missing(
     client: KanaeTestClient, fake_ory: FakeOryClient
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     response = await client.client.put(
         "/tags/999999", json={"title": "x", "description": "y"}
     )
@@ -166,7 +166,7 @@ async def test_edit_tag_returns_404_when_missing(
 async def test_edit_tag_persists_changes(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     tag_id: int = await kanae.pool.fetchval(
         "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
         "old-title",
@@ -188,13 +188,13 @@ async def test_edit_tag_persists_changes(
 async def test_edit_tag_rejects_invalid_payload(
     client: KanaeTestClient, fake_ory: FakeOryClient
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     response = await client.client.put("/tags/1", json={"title": "only-title"})
     assert response.status_code == 422
 
 
 # ──────────────────────────────────────────────────────────────────
-# DELETE /tags/{tag_id}  — admin only, 5/minute
+# DELETE /tags/{tag_id}  — root/sudo-gated, 5/minute
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -214,7 +214,7 @@ async def test_delete_tag_rejects_non_admin(
 async def test_delete_tag_returns_404_when_missing(
     client: KanaeTestClient, fake_ory: FakeOryClient
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     response = await client.client.delete("/tags/999999")
     assert response.status_code == 404
 
@@ -222,7 +222,7 @@ async def test_delete_tag_returns_404_when_missing(
 async def test_delete_tag_removes_row(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     tag_id: int = await kanae.pool.fetchval(
         "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
         "trash",
@@ -238,7 +238,7 @@ async def test_delete_tag_removes_row(
 
 
 # ──────────────────────────────────────────────────────────────────
-# POST /tags/bulk-create  — admin only, 1/minute
+# POST /tags/bulk-create  — root/sudo-gated, 1/minute
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -264,7 +264,7 @@ async def test_bulk_create_rejects_non_admin(
 async def test_bulk_create_inserts_multiple_rows(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     payload = [
         {"title": "alpha", "description": "first"},
         {"title": "beta", "description": "second"},
@@ -281,7 +281,7 @@ async def test_bulk_create_inserts_multiple_rows(
 async def test_bulk_create_rejects_non_list_payload(
     client: KanaeTestClient, fake_ory: FakeOryClient
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     response = await client.client.post(
         "/tags/bulk-create",
         json={"title": "a", "description": "1"},
@@ -316,7 +316,7 @@ async def test_create_tag_enforces_5_per_minute(
 async def test_bulk_create_enforces_1_per_minute(
     client: KanaeTestClient, fake_ory: FakeOryClient
 ) -> None:
-    fake_ory.login_as(Role.ADMIN)
+    fake_ory.login_as(Role.ROOT)
     with hiro.Timeline().freeze():
         first = await client.client.post(
             "/tags/bulk-create",

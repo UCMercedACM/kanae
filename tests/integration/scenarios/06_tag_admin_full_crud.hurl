@@ -1,4 +1,5 @@
-# Full CRUD walk over /tags as ADMIN with every response shape and
+# Full CRUD walk over /tags as ROOT (the superuser fixture: tag create is
+# admin-gated, edit/delete are root/sudo-gated) with every response shape and
 # round-trip pinned. Exercises the role check, asyncpg upsert, the
 # returning-* row → Pydantic round-trip, the 404 + custom-detail
 # branch on edit-after-delete, and the no-implicit-sort order on
@@ -14,10 +15,10 @@ csrf: jsonpath "$.ui.nodes[?(@.attributes.name == 'csrf_token')].attributes.valu
 POST {{KRATOS_URL}}/self-service/login?flow={{flow_id}}
 Content-Type: application/json
 Accept: application/json
-{ "method": "password", "identifier": "{{ADMIN_EMAIL}}", "password": "{{PASSWORD}}", "csrf_token": "{{csrf}}" }
+{ "method": "password", "identifier": "{{ROOT_EMAIL}}", "password": "{{PASSWORD}}", "csrf_token": "{{csrf}}" }
 HTTP 200
 [Asserts]
-jsonpath "$.session.identity.id" == "{{ADMIN_ID}}"
+jsonpath "$.session.identity.id" == "{{ROOT_ID}}"
 
 # Create — verify the returned row's shape exactly matches the request.
 POST {{KANAE_URL}}/tags/create

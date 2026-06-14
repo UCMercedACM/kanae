@@ -11,6 +11,8 @@ from blake3 import blake3
 from conftest import FakeOryClient, KanaeTestClient
 
 from core import Kanae
+from routes.members import ModifyRoleAction
+from utils.checks import Role
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -443,7 +445,7 @@ async def test_logout_revokes_session(
 
     response = await client.client.post("/members/logout")
     assert response.status_code == 200
-    assert response.json() == {"message": "okie dokie"}
+    assert response.json() == {"message": "ok"}
 
     assert fake_ory.revoked_sessions == [str(session_id)]
 
@@ -660,4 +662,239 @@ async def test_logout_enforces_3_per_minute(
             assert response.status_code == 200
 
         blocked = await client.client.post("/members/logout")
+        assert blocked.status_code == 429
+
+
+# ──────────────────────────────────────────────────────────────────
+# PUT /members/{member_id}/role — sudo-gated global role management
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_modify_role_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.put(
+        f"/members/{uuid.uuid4()}/role",
+        json={"role": "manager", "action": ModifyRoleAction.GRANT.value},
+    )
+    assert response.status_code == 401
+
+
+async def test_modify_role_rejects_unprivileged(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()  # authenticated, but neither root nor sudo-elevated
+    response = await client.client.put(
+        f"/members/{uuid.uuid4()}/role",
+        json={"role": "manager", "action": ModifyRoleAction.GRANT.value},
+    )
+    assert response.status_code == 403
+
+
+async def test_modify_role_grant_succeeds_for_root(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+
+    response = await client.client.put(
+        f"/members/{target}/role",
+        json={"role": "manager", "action": ModifyRoleAction.GRANT.value},
+    )
+    assert response.status_code == 200
+    assert await fake_ory.check_permission("Role", "manager", "member", str(target))
+
+
+async def test_modify_role_revoke_succeeds_for_root(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    await fake_ory.grant("Role", "leads", "member", subject_id=str(target))
+
+    response = await client.client.put(
+        f"/members/{target}/role",
+        json={"role": "leads", "action": ModifyRoleAction.REVOKE.value},
+    )
+    assert response.status_code == 200
+    assert not await fake_ory.check_permission("Role", "leads", "member", str(target))
+
+
+async def test_modify_role_grant_succeeds_via_sudo(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    admin_id = fake_ory.login_as(Role.ADMIN, aal="aal2")
+    await _insert_member(kanae.pool, member_id=uuid.UUID(admin_id))
+    await kanae.sudo.grant(admin_id, reason="manage roles")
+
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target, email="target@test.local")
+
+    response = await client.client.put(
+        f"/members/{target}/role",
+        json={"role": "admin", "action": ModifyRoleAction.GRANT.value},
+    )
+    assert response.status_code == 200
+    assert await fake_ory.check_permission("Role", "admin", "member", str(target))
+
+
+async def test_modify_role_404_when_member_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    response = await client.client.put(
+        f"/members/{uuid.uuid4()}/role",
+        json={"role": "manager", "action": ModifyRoleAction.GRANT.value},
+    )
+    assert response.status_code == 404
+
+
+async def test_modify_role_refuses_self(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as(Role.ROOT)
+    response = await client.client.put(
+        f"/members/{identity_id}/role",
+        json={"role": "manager", "action": ModifyRoleAction.GRANT.value},
+    )
+    assert response.status_code == 409
+
+
+async def test_modify_role_rejects_unassignable_role(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    response = await client.client.put(
+        f"/members/{target}/role",
+        json={"role": "root", "action": ModifyRoleAction.GRANT.value},
+    )
+    assert response.status_code == 422
+
+
+# ──────────────────────────────────────────────────────────────────
+# DELETE /members/me — self-service account deletion (auth-only)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_delete_me_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.delete("/members/me")
+    assert response.status_code == 401
+
+
+async def test_delete_me_tears_down_and_removes_row(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+
+    response = await client.client.delete("/members/me")
+    assert response.status_code == 200
+
+    remaining = await kanae.pool.fetchval(
+        "SELECT 1 FROM members WHERE id = $1", uuid.UUID(identity_id)
+    )
+    assert remaining is None
+    assert fake_ory.revoked_all_sessions == [identity_id]
+    assert fake_ory.purged_subjects == [identity_id]
+    assert fake_ory.deleted_identities == [identity_id]
+
+
+# ──────────────────────────────────────────────────────────────────
+# DELETE /members/{member_id} — sudo-gated administrative hard delete
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_delete_member_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.delete(f"/members/{uuid.uuid4()}")
+    assert response.status_code == 401
+
+
+async def test_delete_member_rejects_unprivileged(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.delete(f"/members/{uuid.uuid4()}")
+    assert response.status_code == 403
+
+
+async def test_delete_member_succeeds_for_root(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+
+    response = await client.client.delete(f"/members/{target}")
+    assert response.status_code == 200
+
+    remaining = await kanae.pool.fetchval("SELECT 1 FROM members WHERE id = $1", target)
+    assert remaining is None
+    assert fake_ory.revoked_all_sessions == [str(target)]
+    assert fake_ory.purged_subjects == [str(target)]
+    assert fake_ory.deleted_identities == [str(target)]
+
+
+async def test_delete_member_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    response = await client.client.delete(f"/members/{uuid.uuid4()}")
+    assert response.status_code == 404
+
+
+async def test_delete_member_refuses_self(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as(Role.ROOT)
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+
+    response = await client.client.delete(f"/members/{identity_id}")
+    assert response.status_code == 409
+
+    # the self-guard runs before any teardown
+    assert fake_ory.purged_subjects == []
+    still_here = await kanae.pool.fetchval(
+        "SELECT 1 FROM members WHERE id = $1", uuid.UUID(identity_id)
+    )
+    assert still_here == 1
+
+
+# ──────────────────────────────────────────────────────────────────
+# Rate limits — role write 5/min, member delete 1/min
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_modify_role_enforces_5_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    body = {"role": "manager", "action": ModifyRoleAction.GRANT.value}
+
+    with hiro.Timeline().freeze():
+        for _ in range(5):
+            response = await client.client.put(f"/members/{target}/role", json=body)
+            assert response.status_code == 200
+
+        blocked = await client.client.put(f"/members/{target}/role", json=body)
+        assert blocked.status_code == 429
+
+
+async def test_delete_member_enforces_1_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+
+    with hiro.Timeline().freeze():
+        first = await client.client.delete(f"/members/{target}")
+        assert first.status_code == 200
+
+        # the limiter buckets per-URL, so the second hit must reuse the same path
+        # to land in the same bucket; it is blocked before the handler runs.
+        blocked = await client.client.delete(f"/members/{target}")
         assert blocked.status_code == 429

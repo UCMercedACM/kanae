@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS events (
     end_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
     location TEXT,
     type event_type DEFAULT 'misc',
-    creator_id UUID REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    creator_id UUID REFERENCES members (id) ON DELETE SET NULL ON UPDATE NO ACTION,
     timezone TEXT DEFAULT 'UTC',
     thumbnail_hash TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
@@ -161,7 +161,7 @@ CREATE INDEX IF NOT EXISTS sudo_grants_expiry_idx ON sudo_grants (expires_at);
 
 CREATE TABLE IF NOT EXISTS sudo_audit (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    member_id UUID NOT NULL REFERENCES members(id),
+    member_id UUID REFERENCES members(id) ON DELETE SET NULL,
     reason TEXT NOT NULL,
     granted_at TIMESTAMP WITH TIME ZONE NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL
