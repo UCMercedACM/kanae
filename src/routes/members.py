@@ -1,6 +1,7 @@
 import datetime
 import secrets
 import uuid
+from enum import StrEnum
 from typing import Annotated, Optional
 
 import asyncpg
@@ -10,13 +11,17 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from utils.auth import use_session
-from utils.errors import (
-    NotFoundError,
-    UnauthorizedError,
-)
-from utils.ory import KanaeSession
+from utils.checks import Role, check_any, has_role, has_sudo
+from utils.errors import ConflictError, NotFoundError, UnauthorizedError
+from utils.ory import KanaeSession, OryClient
 from utils.request import RouteRequest
-from utils.responses import NotFoundResponse, SuccessResponse, UnauthorizedResponse
+from utils.responses import (
+    ConflictResponse,
+    DeleteResponse,
+    NotFoundResponse,
+    SuccessResponse,
+    UnauthorizedResponse,
+)
 from utils.router import KanaeRouter
 
 from .events import Events, FullEvents
@@ -87,6 +92,15 @@ async def get_member_info(
     if not rows:
         raise NotFoundError
     return ClientMember(**(dict(rows)))
+
+
+async def purge_member(member_id: uuid.UUID, *, ory: OryClient) -> None:
+    # Ory Kratos and Keto won't take the raw UUID type but only a string
+    normalized_member_id = str(member_id)
+
+    await ory.revoke_all_sessions(normalized_member_id)
+    await ory.purge(normalized_member_id)
+    await ory.delete_identity(normalized_member_id)
 
 
 @router.get(
@@ -214,7 +228,105 @@ async def logout_member(
     if cookie:
         await request.app.ory.whoami.cache_invalidate(cookie)
 
-    return SuccessResponse(message="okie dokie")
+    return SuccessResponse(message="ok")
+
+
+class AssignableRole(StrEnum):
+    ADMIN = "admin"
+    MANAGER = "manager"
+    LEADS = "leads"
+
+
+class ModifyRoleAction(StrEnum):
+    GRANT = "grant"
+    REVOKE = "revoke"
+
+
+class ModifyRoleRequest(BaseModel, frozen=True):
+    role: AssignableRole
+    action: ModifyRoleAction
+
+
+@router.put(
+    "/members/{member_id}/role",
+    dependencies=[check_any(has_role(Role.ROOT), has_sudo())],
+    responses={
+        200: {"model": SuccessResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
+    },
+)
+@router.limiter.limit("5/minute")
+async def modify_member_role(
+    request: RouteRequest,
+    member_id: uuid.UUID,
+    req: ModifyRoleRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> SuccessResponse:
+    """Modify the role of a given member"""
+    if str(member_id) == session.identity.id:
+        msg = "Literally refusing to modify your own roles... You can't"
+        raise ConflictError(msg)
+
+    query = "SELECT 1 FROM members WHERE id = $1;"
+    if not await request.app.pool.fetchval(query, member_id):
+        raise NotFoundError
+
+    subject_id = str(member_id)
+    if req.action == ModifyRoleAction.GRANT:
+        await request.app.ory.grant("Role", req.role, "member", subject_id=subject_id)
+    else:
+        await request.app.ory.revoke("Role", req.role, "member", subject_id=subject_id)
+
+    return SuccessResponse(message="ok")
+
+
+@router.delete(
+    "/members/me",
+    responses={200: {"model": DeleteResponse}},
+)
+@router.limiter.limit("1/minute")
+async def delete_logged_account(
+    request: RouteRequest, session: Annotated[KanaeSession, Depends(use_session)]
+) -> DeleteResponse:
+    """Permanently delete the member associated the currently logged session"""
+    member_id = uuid.UUID(session.identity.id)
+
+    query = "DELETE FROM members WHERE id = $1;"
+    await purge_member(member_id, ory=request.app.ory)
+    await request.app.pool.execute(query, member_id)
+
+    return DeleteResponse(message="okie dokie")
+
+
+@router.delete(
+    "/members/{member_id}",
+    dependencies=[check_any(has_role(Role.ROOT), has_sudo())],
+    responses={
+        200: {"model": DeleteResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
+    },
+)
+@router.limiter.limit("1/minute")
+async def delete_member(
+    request: RouteRequest,
+    member_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> DeleteResponse:
+    """Permanently deletes an given member"""
+    if str(member_id) == session.identity.id:
+        msg = "Use DELETE /members/me to delete your own account"
+        raise ConflictError(msg)
+
+    query = "DELETE FROM members WHERE id = $1 RETURNING id;"
+
+    await purge_member(member_id, ory=request.app.ory)
+    response = await request.app.pool.fetchval(query, member_id)
+    if not response:
+        raise NotFoundError
+
+    return DeleteResponse(message="okie dokie")
 
 
 class _IdentityTraits(BaseModel, frozen=True, extra="forbid"):

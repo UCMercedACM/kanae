@@ -18,7 +18,7 @@ csrf: jsonpath "$.ui.nodes[?(@.attributes.name == 'csrf_token')].attributes.valu
 POST {{KRATOS_URL}}/self-service/login?flow={{flow_id}}
 Content-Type: application/json
 Accept: application/json
-{ "method": "password", "identifier": "{{ADMIN_EMAIL}}", "password": "{{PASSWORD}}", "csrf_token": "{{csrf}}" }
+{ "method": "password", "identifier": "{{ROOT_EMAIL}}", "password": "{{PASSWORD}}", "csrf_token": "{{csrf}}" }
 HTTP 200
 
 # Body NUL in tag title (\u0000 is valid JSON; decodes to a literal

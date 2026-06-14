@@ -248,6 +248,15 @@ _garage_pid=$!
 			>/dev/null
 	done
 
+	root_admin=$(jq -n --arg ns Role --arg obj admin --arg rel member --arg subj "${IDS[root]}" '
+		{ namespace: $ns, object: $obj, relation: $rel, subject_id: $subj }')
+	curl -fsS \
+		-H 'Accept: application/json' \
+		-H 'Content-Type: application/json' \
+		-X PUT "$KETO_WRITE_URL/admin/relation-tuples" \
+		-d "$root_admin" \
+		>/dev/null
+
 	log "writing secrets (password + identity UUIDs) to $HURL_SECRETS_FILE"
 	{
 		printf 'PASSWORD=%s\n' "$PASSWORD"

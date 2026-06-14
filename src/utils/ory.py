@@ -107,6 +107,11 @@ class OryClient:
             `glide.client`.
     """
 
+    _KRATOS_ADMIN_IDENTITIES = "/admin/identities/{id}"
+    _KETO_WRITE_RELATION = "/admin/relation-tuples"
+
+    _KETO_NAMESPACES = ("Role", "Project", "Event")
+
     def __init__(
         self, config: OryConfig, *, session: aiohttp.ClientSession, glide: GlideManager
     ) -> None:
@@ -276,7 +281,7 @@ class OryClient:
             404 (no such identity).
         """
         response = await self._request(
-            "GET", self.kratos_admin("/admin/identities/{id}", id=identity_id)
+            "GET", self.kratos_admin(self._KRATOS_ADMIN_IDENTITIES, id=identity_id)
         )
 
         if response.status == status.HTTP_404_NOT_FOUND:
@@ -342,7 +347,7 @@ class OryClient:
         payload = {"schema_id": "person", "traits": traits}
         response = await self._request(
             "PUT",
-            self.kratos_admin("/admin/identities/{id}", id=identity_id),
+            self.kratos_admin(self._KRATOS_ADMIN_IDENTITIES, id=identity_id),
             json=payload,
         )
 
@@ -357,6 +362,35 @@ class OryClient:
         identity = KratosIdentity.model_validate(data)
         await self.get_identity.cache_invalidate(identity_id)
         return identity
+
+    async def delete_identity(self, identity_id: str) -> None:
+        """Delete a Kratos identity and bust its cached entry.
+
+        Idempotent — a 404 from Kratos (identity already gone) is treated as
+        success, so repeated deletes of the same id do not raise. On
+        completion, calls :meth:`get_identity.cache_invalidate` so a stale
+        identity is not served from the cache after removal.
+
+        Args:
+            identity_id: Kratos identity UUID to delete.
+
+        Raises:
+            BadGatewayError: Kratos returned a status other than 204
+                (deleted) or 404 (already absent).
+        """
+        response = await self._request(
+            "DELETE", self.kratos_admin(self._KRATOS_ADMIN_IDENTITIES, id=identity_id)
+        )
+        response.release()
+
+        if response.status not in (
+            status.HTTP_204_NO_CONTENT,
+            status.HTTP_404_NOT_FOUND,
+        ):
+            msg = "Rejected identity delete request"
+            raise BadGatewayError(msg)
+
+        await self.get_identity.cache_invalidate(identity_id)
 
     ### Permission management via Keto
 
@@ -465,7 +499,7 @@ class OryClient:
             subject_set,
         )
         response = await self._request(
-            "DELETE", self.keto_write("/admin/relation-tuples").with_query(params)
+            "DELETE", self.keto_write(self._KETO_WRITE_RELATION).with_query(params)
         )
 
         if response.status == status.HTTP_400_BAD_REQUEST:
@@ -547,7 +581,7 @@ class OryClient:
         )
         response = await self._request(
             "PUT",
-            self.keto_write("/admin/relation-tuples"),
+            self.keto_write(self._KETO_WRITE_RELATION),
             json=payload,
         )
 
@@ -563,3 +597,44 @@ class OryClient:
             raise BadGatewayError(msg)
 
         await self._invalidate_resource(namespace, resource)
+
+    async def purge(self, subject_id: str) -> None:
+        """Delete every Keto relation tuple where `subject_id` is the subject.
+
+        Keto's delete endpoint rejects a subject-only query, so this issues one
+        scoped delete per OPL namespace (each filtered by `subject_id`),
+        removing the subject's roles and every owner/editor grant. Idempotent:
+        Keto returns 204 per namespace whether or not any tuple matched.
+
+        Note:
+            Unlike :meth:`revoke`, this performs **no** check-cache
+            invalidation. The only cached :meth:`check_permission` results it
+            could affect are keyed to this subject, which is expected to be
+            torn down entirely (sessions revoked, identity deleted) alongside
+            this call — so those entries are never read again and expire on
+            their own TTL.
+
+        Args:
+            subject_id: Identity UUID whose relation tuples should all be
+                removed.
+
+        Raises:
+            BadGatewayError: Keto returned a status other than 200 or 204 for
+                any namespace.
+        """
+        for namespace in self._KETO_NAMESPACES:
+            response = await self._request(
+                "DELETE",
+                self.keto_write(self._KETO_WRITE_RELATION).with_query(
+                    {"namespace": namespace, "subject_id": subject_id}
+                ),
+            )
+
+            response.release()
+
+            if response.status not in (
+                status.HTTP_200_OK,
+                status.HTTP_204_NO_CONTENT,
+            ):
+                msg = "Rejected subject purge request"
+                raise BadGatewayError(msg)

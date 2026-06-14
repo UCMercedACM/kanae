@@ -381,7 +381,105 @@ ok "sudo revoke idempotent"
 
 warn "sudo: positive elevate path needs a fresh AAL2 (TOTP) session — not covered by password-only smoke flow"
 
-# ── 14. logout invalidates session (best-effort) ──────────────────────────────
+# ── 14. member management — sudo-gated role write + hard delete ────────────────
+# The smoke identity is aal1 (password only) so it cannot self-elevate to sudo.
+# Promote it to Role:root via the keto side-channel (same mechanism as the role
+# grants above) so it satisfies check_any(has_role(ROOT), has_sudo()), then drive
+# the real Keto/Kratos teardown against throwaway victims.
+step "14. member management (role write + hard delete)"
+
+register_victim() {
+	# register_victim <cookie-jar> <email>; sets REGISTERED_ID on success.
+	local jar="$1" email="$2" flow csrf resp row
+	flow=$(curl -sc "$jar" -b "$jar" -H "$H_ACCEPT" \
+		"$KRATOS_PUBLIC/self-service/registration/browser" | jq -r .id)
+	csrf=$(curl -sc "$jar" -b "$jar" -H "$H_ACCEPT" \
+		"$KRATOS_PUBLIC/self-service/registration/flows?id=$flow" \
+		| jq -r '.ui.nodes[] | select(.attributes.name=="csrf_token") | .attributes.value')
+	resp=$(curl -sc "$jar" -b "$jar" -H "$H_CONTENT_TYPE" -H "$H_ACCEPT" \
+		-X POST "$KRATOS_PUBLIC/self-service/registration?flow=$flow" \
+		-d '{"method":"password","csrf_token":"'"$csrf"'","password":"'"$PASSWORD"'","traits":{"email":"'"$email"'","name":"Victim"}}')
+	REGISTERED_ID=$(jq -r '.identity.id // empty' <<<"$resp")
+	[[ -n "$REGISTERED_ID" ]] \
+		|| fail "victim registration failed: $(jq -c '.ui.messages // .' <<<"$resp")"
+	# the registration webhook syncs the members row; allow a brief retry window.
+	row=""
+	for _ in 1 2 3 4 5; do
+		row=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tA \
+			-c "SELECT 1 FROM members WHERE id = '$REGISTERED_ID';" 2>/dev/null || true)
+		[[ -n "$row" ]] && break
+		sleep 1
+	done
+	[[ -n "$row" ]] || fail "victim members row never appeared for $email"
+}
+
+# unauthenticated → 401 on both gated routes
+assert_http 401 PUT "$KANAE/members/$IDENTITY_ID/role" \
+	-H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+assert_http 401 DELETE "$KANAE/members/$IDENTITY_ID"
+
+# smoke identity is admin (not root, not sudo) → 403 on the gated route
+assert_http 403 PUT "$KANAE/members/$IDENTITY_ID/role" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+
+# promote smoke identity to root so it passes the member-management gate
+curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{"namespace":"Role","object":"root","relation":"member","subject_id":"'"$IDENTITY_ID"'"}' >/dev/null
+docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
+ok "root tuple written, cache flushed"
+
+# self-guard: cannot modify or delete your own account via the admin route
+assert_http 409 PUT "$KANAE/members/$IDENTITY_ID/role" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+assert_http 409 DELETE "$KANAE/members/$IDENTITY_ID" -b "$COOKIES"
+
+# authorized but no such member → 404
+assert_http 404 DELETE "$KANAE/members/00000000-0000-0000-0000-000000000000" -b "$COOKIES"
+
+# victim jars (separate cookie jars from the smoke session)
+VICTIM_JAR="$(mktemp -t kanae-victim-cookies.XXXXXX)"
+SELF_JAR="$(mktemp -t kanae-self-cookies.XXXXXX)"
+trap 'rm -f "$COOKIES" "$VICTIM_JAR" "$SELF_JAR"' EXIT
+
+# ── victim 1: admin hard delete ───────────────────────────────────────────────
+register_victim "$VICTIM_JAR" "victim-$(date +%s)-$$@ucmerced.edu"
+VICTIM_ID="$REGISTERED_ID"
+ok "victim id: $VICTIM_ID"
+
+# root grants leads → 200, and the real Keto tuple resolves
+assert_http 200 PUT "$KANAE/members/$VICTIM_ID/role" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+ALLOWED=$(curl -s "$KETO_READ/relation-tuples/check?namespace=Role&object=leads&relation=member&subject_id=$VICTIM_ID" | jq -r '.allowed')
+[[ "$ALLOWED" == "true" ]] || fail "expected leads tuple for victim, got allowed=$ALLOWED"
+ok "victim granted leads (keto confirms)"
+
+# root hard-deletes the victim → 200
+assert_http 200 DELETE "$KANAE/members/$VICTIM_ID" -b "$COOKIES"
+
+GONE=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tA \
+	-c "SELECT 1 FROM members WHERE id = '$VICTIM_ID';" 2>/dev/null || true)
+[[ -z "$GONE" ]] || fail "victim members row still present after delete"
+ok "victim members row removed"
+
+# the real teardown removed the Kratos identity and swept the Keto tuples
+assert_http 404 GET "$KRATOS_ADMIN/admin/identities/$VICTIM_ID"
+ALLOWED_AFTER=$(curl -s "$KETO_READ/relation-tuples/check?namespace=Role&object=leads&relation=member&subject_id=$VICTIM_ID" | jq -r '.allowed')
+[[ "$ALLOWED_AFTER" == "false" ]] || fail "victim keto tuple survived purge (allowed=$ALLOWED_AFTER)"
+ok "kratos identity + keto tuples purged"
+
+# ── victim 2: self-service deletion via DELETE /members/me ─────────────────────
+register_victim "$SELF_JAR" "selfdel-$(date +%s)-$$@ucmerced.edu"
+SELF_ID="$REGISTERED_ID"
+ok "self-delete victim id: $SELF_ID"
+
+assert_http 200 DELETE "$KANAE/members/me" -b "$SELF_JAR"
+SELF_GONE=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tA \
+	-c "SELECT 1 FROM members WHERE id = '$SELF_ID';" 2>/dev/null || true)
+[[ -z "$SELF_GONE" ]] || fail "self-delete members row still present"
+ok "self-service deletion removed members row"
+
+# ── 15. logout invalidates session (best-effort) ──────────────────────────────
 # Best-effort: a failure here means the session cookie is missing or already
 # expired, which is purely a kratos/curl-cookie-jar concern and tells us
 # nothing new about Kanae's behavior. The preceding 13 steps already cover
