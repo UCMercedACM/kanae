@@ -25,6 +25,7 @@ CONFIG_FILE="config.yml"
 CONFIG_DIST="config.dist.yml"
 HURL_VARS="tests/integration/vars.env"
 HURL_SECRETS_FILE="tests/integration/secrets.env"
+ACCEPT_JSON="Accept: application/json"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
@@ -188,7 +189,7 @@ _garage_pid=$!
 		}')
 
 		resp=$(curl -sS -w '\n%{http_code}' \
-			-H 'Accept: application/json' \
+			-H "$ACCEPT_JSON" \
 			-H 'Content-Type: application/json' \
 			-X POST "$KRATOS_ADMIN_URL/admin/identities" \
 			-d "$body")
@@ -200,7 +201,7 @@ _garage_pid=$!
 				jq -r '.id' <<<"$body"
 				;;
 			409)
-				curl -fsS -H 'Accept: application/json' \
+				curl -fsS -H "$ACCEPT_JSON" \
 					"$KRATOS_ADMIN_URL/admin/identities?credentials_identifier=$email" \
 					| jq -r '.[0].id'
 				;;
@@ -241,7 +242,7 @@ _garage_pid=$!
 		body=$(jq -n --arg ns Role --arg obj "$role" --arg rel member --arg subj "$id" '
 		{ namespace: $ns, object: $obj, relation: $rel, subject_id: $subj }')
 		curl -fsS \
-			-H 'Accept: application/json' \
+			-H "$ACCEPT_JSON" \
 			-H 'Content-Type: application/json' \
 			-X PUT "$KETO_WRITE_URL/admin/relation-tuples" \
 			-d "$body" \
@@ -251,7 +252,7 @@ _garage_pid=$!
 	root_admin=$(jq -n --arg ns Role --arg obj admin --arg rel member --arg subj "${IDS[root]}" '
 		{ namespace: $ns, object: $obj, relation: $rel, subject_id: $subj }')
 	curl -fsS \
-		-H 'Accept: application/json' \
+		-H "$ACCEPT_JSON" \
 		-H 'Content-Type: application/json' \
 		-X PUT "$KETO_WRITE_URL/admin/relation-tuples" \
 		-d "$root_admin" \

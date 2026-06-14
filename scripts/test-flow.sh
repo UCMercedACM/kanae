@@ -388,6 +388,9 @@ warn "sudo: positive elevate path needs a fresh AAL2 (TOTP) session — not cove
 # the real Keto/Kratos teardown against throwaway victims.
 step "14. member management (role write + hard delete)"
 
+# Reused role-grant body for the member-management probes.
+LEADS_GRANT_BODY='{"role":"leads","action":"grant"}'
+
 register_victim() {
 	# register_victim <cookie-jar> <email>; sets REGISTERED_ID on success.
 	local jar="$1" email="$2" flow csrf resp row
@@ -415,12 +418,12 @@ register_victim() {
 
 # unauthenticated → 401 on both gated routes
 assert_http 401 PUT "$KANAE/members/$IDENTITY_ID/role" \
-	-H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+	-H "$H_CONTENT_TYPE" -d "$LEADS_GRANT_BODY"
 assert_http 401 DELETE "$KANAE/members/$IDENTITY_ID"
 
 # smoke identity is admin (not root, not sudo) → 403 on the gated route
 assert_http 403 PUT "$KANAE/members/$IDENTITY_ID/role" \
-	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d "$LEADS_GRANT_BODY"
 
 # promote smoke identity to root so it passes the member-management gate
 curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
@@ -431,7 +434,7 @@ ok "root tuple written, cache flushed"
 
 # self-guard: cannot modify or delete your own account via the admin route
 assert_http 409 PUT "$KANAE/members/$IDENTITY_ID/role" \
-	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d "$LEADS_GRANT_BODY"
 assert_http 409 DELETE "$KANAE/members/$IDENTITY_ID" -b "$COOKIES"
 
 # authorized but no such member → 404
@@ -449,7 +452,7 @@ ok "victim id: $VICTIM_ID"
 
 # root grants leads → 200, and the real Keto tuple resolves
 assert_http 200 PUT "$KANAE/members/$VICTIM_ID/role" \
-	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"role":"leads","action":"grant"}'
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d "$LEADS_GRANT_BODY"
 ALLOWED=$(curl -s "$KETO_READ/relation-tuples/check?namespace=Role&object=leads&relation=member&subject_id=$VICTIM_ID" | jq -r '.allowed')
 [[ "$ALLOWED" == "true" ]] || fail "expected leads tuple for victim, got allowed=$ALLOWED"
 ok "victim granted leads (keto confirms)"
