@@ -2,7 +2,7 @@ import asyncio
 import datetime
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, NamedTuple, Optional, Self, TypedDict, Unpack, cast
@@ -187,6 +187,15 @@ class FakeOryClient:
     ) -> bool:
         key = _PermissionKey(namespace, str(resource), relation, str(subject_id))
         return key in self.permissions
+
+    async def list_roles(self, subject_id: str) -> AsyncIterator[str]:
+        for key in self.permissions:
+            if (
+                key.namespace == "Role"
+                and key.relation == "member"
+                and key.subject_id == str(subject_id)
+            ):
+                yield key.resource
 
     async def revoke_session(self, session_id: str) -> None:
         self.revoked_sessions.append(session_id)

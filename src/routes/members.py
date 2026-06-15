@@ -2,18 +2,24 @@ import datetime
 import secrets
 import uuid
 from enum import StrEnum
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 import asyncpg
 from blake3 import blake3
-from fastapi import Depends, Header, status
+from fastapi import Depends, Header, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from utils.auth import use_session
 from utils.checks import Role, check_any, has_role, has_sudo
-from utils.errors import ConflictError, NotFoundError, UnauthorizedError
+from utils.errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+)
 from utils.ory import KanaeSession, OryClient
+from utils.pages import KanaePages, KanaeParams, paginate
 from utils.request import RouteRequest
 from utils.responses import (
     ConflictResponse,
@@ -34,6 +40,8 @@ _REGISTRATION_CONTEXT = b"kratos.registration.v1"
 # This is not a token lol
 _INVALID_WEBHOOK_TOKEN_MESSAGE = "Invalid webhook token detected"  # noqa: S105
 
+_NO_NULL_REGEX = r"^[^\x00]+$"
+
 router = KanaeRouter(tags=["Members"])
 
 
@@ -42,7 +50,7 @@ def _verify_webhook_token(token: str, *, master_key: str, context: bytes) -> boo
     return secrets.compare_digest(token, expected_token)
 
 
-class ClientMember(BaseModel, frozen=True):
+class Member(BaseModel, frozen=True):
     id: uuid.UUID
     name: str
     created_at: datetime.datetime
@@ -50,9 +58,7 @@ class ClientMember(BaseModel, frozen=True):
     events: list[Events]
 
 
-async def get_member_info(
-    member_id: str | uuid.UUID, *, pool: asyncpg.Pool
-) -> ClientMember:
+async def get_member_info(member_id: str | uuid.UUID, *, pool: asyncpg.Pool) -> Member:
     query = """
     SELECT
         members.id,
@@ -91,7 +97,8 @@ async def get_member_info(
     rows = await pool.fetchrow(query, member_id)
     if not rows:
         raise NotFoundError
-    return ClientMember(**(dict(rows)))
+
+    return Member(**(dict(rows)))
 
 
 async def purge_member(member_id: uuid.UUID, *, ory: OryClient) -> None:
@@ -103,6 +110,61 @@ async def purge_member(member_id: uuid.UUID, *, ory: OryClient) -> None:
     await ory.delete_identity(normalized_member_id)
 
 
+class SimpleMember(BaseModel, frozen=True):
+    id: uuid.UUID
+    name: str
+    display_name: Optional[str] = None
+    email: str
+    created_at: datetime.datetime
+
+
+class ClientSession(BaseModel, frozen=True):
+    aal: Literal["aal1", "aal2"]
+    active: bool
+    authenticated_at: datetime.datetime
+    issued_at: datetime.datetime
+    expires_at: datetime.datetime
+
+
+class ClientMember(BaseModel, frozen=True):
+    id: uuid.UUID
+    name: str
+    email: str
+    display_name: Optional[str] = None
+    created_at: datetime.datetime
+    projects: list[Projects]
+    events: list[Events]
+    roles: list[Role]
+    session: ClientSession
+
+
+@router.get("/members", dependencies=[has_role(Role.ADMIN)])
+async def list_members(
+    request: RouteRequest,
+    query: Annotated[Optional[str], Query(min_length=3, pattern=_NO_NULL_REGEX)] = None,
+    *,
+    params: Annotated[KanaeParams, Depends()],
+) -> KanaePages[SimpleMember]:
+    """Search the member directory by name or email. Restricted to admins."""
+    args: list[str] = []
+    member_query = """
+    SELECT id, name, display_name, email, created_at
+    FROM members
+    ORDER BY created_at DESC
+    """
+
+    if query:
+        member_query = """
+        SELECT id, name, display_name, email, created_at
+        FROM members
+        WHERE name % $1 OR email ILIKE '%' || $1 || '%'
+        ORDER BY similarity(name, $1) DESC NULLS LAST
+        """
+        args.append(query)
+
+    return await paginate(request.app.pool, member_query, *args, params=params)  # ty: ignore[invalid-return-type]
+
+
 @router.get(
     "/members/me",
     responses={200: {"model": ClientMember}, 404: {"model": NotFoundResponse}},
@@ -112,16 +174,32 @@ async def get_logged_member(
     request: RouteRequest,
     session: Annotated[KanaeSession, Depends(use_session)],
 ) -> ClientMember:
-    """Obtain details pertaining to the currently authenticated user"""
-    return await get_member_info(session.identity.id, pool=request.app.pool)
+    """Obtain details pertaining to the currently authenticated user."""
+    member = await get_member_info(session.identity.id, pool=request.app.pool)
+
+    return ClientMember(
+        **member.model_dump(),
+        email=session.identity.email,
+        display_name=session.identity.traits.get("display_name"),
+        roles=[
+            Role(role) async for role in request.app.ory.list_roles(session.identity.id)
+        ],
+        session=ClientSession(
+            aal=session.authenticator_assurance_level,
+            active=session.active,
+            authenticated_at=session.authenticated_at,
+            issued_at=session.issued_at,
+            expires_at=session.expires_at,
+        ),
+    )
 
 
 @router.get(
     "/members/{member_id}",
-    responses={200: {"model": ClientMember}, 404: {"model": NotFoundResponse}},
+    responses={200: {"model": Member}, 404: {"model": NotFoundResponse}},
 )
 @router.limiter.limit("10/minute")
-async def get_member(request: RouteRequest, member_id: uuid.UUID) -> ClientMember:
+async def get_member(request: RouteRequest, member_id: uuid.UUID) -> Member:
     """Obtain details pertaining to the specified user"""
     return await get_member_info(member_id, pool=request.app.pool)
 
@@ -229,6 +307,36 @@ async def logout_member(
         await request.app.ory.whoami.cache_invalidate(cookie)
 
     return SuccessResponse(message="ok")
+
+
+class MemberRoles(BaseModel, frozen=True):
+    roles: list[Role]
+
+
+@router.get(
+    "/members/{member_id}/roles",
+    responses={200: {"model": MemberRoles}, 404: {"model": NotFoundResponse}},
+)
+@router.limiter.limit("10/minute")
+async def get_member_roles(
+    request: RouteRequest,
+    member_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> MemberRoles:
+    """List a member's global roles."""
+    requester_id = session.identity.id
+    if str(member_id) != requester_id and not await request.app.ory.check_permission(
+        "Role", Role.ADMIN, "member", requester_id
+    ):
+        msg = "Only an admin may read another member's roles"
+        raise ForbiddenError(msg)
+
+    query = "SELECT 1 FROM members WHERE id = $1;"
+    if not await request.app.pool.fetchval(query, member_id):
+        raise NotFoundError
+
+    roles = [Role(role) async for role in request.app.ory.list_roles(str(member_id))]
+    return MemberRoles(roles=roles)
 
 
 class AssignableRole(StrEnum):

@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS members (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
+CREATE INDEX IF NOT EXISTS members_name_trgm_idx ON members USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS members_email_trgm_idx ON members USING gin (email gin_trgm_ops);
+
 -- This table basically covers workshops and events all at once
 CREATE TABLE IF NOT EXISTS events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
