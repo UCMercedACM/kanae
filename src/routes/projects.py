@@ -146,6 +146,12 @@ async def list_projects(
         projects.id, projects.name, projects.description, projects.link,
         jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', project_members.role)) AS members,
         projects.type, projects.active,
+        (
+            SELECT array_agg(tags.title ORDER BY tags.title)
+            FROM project_tags
+            JOIN tags ON tags.id = project_tags.tag_id
+            WHERE project_tags.project_id = projects.id
+        ) AS tags,
         CASE WHEN projects.thumbnail_hash IS NOT NULL THEN
             jsonb_build_object(
                 'hash', projects.thumbnail_hash,
@@ -173,6 +179,12 @@ async def get_project(request: RouteRequest, project_id: uuid.UUID) -> FullProje
         projects.id, projects.name, projects.description, projects.link,
         jsonb_agg(jsonb_build_object('id', members.id, 'name', members.name, 'role', project_members.role)) AS members,
         projects.type, projects.active,
+        (
+            SELECT array_agg(tags.title ORDER BY tags.title)
+            FROM project_tags
+            JOIN tags ON tags.id = project_tags.tag_id
+            WHERE project_tags.project_id = projects.id
+        ) AS tags,
         CASE WHEN projects.thumbnail_hash IS NOT NULL THEN
             jsonb_build_object(
                 'hash', projects.thumbnail_hash,
@@ -228,6 +240,131 @@ async def edit_project(
     if not rows:
         raise NotFoundError(detail="Resource cannot be updated")
     return Projects(**dict(rows))
+
+
+class ArchiveProject(BaseModel, frozen=True):
+    active: bool
+
+
+@router.put(
+    "/projects/{project_id}/archive",
+    dependencies=[has_permissions(Project.own)],
+    responses={200: {"model": Projects}, 404: {"model": NotFoundResponse}},
+)
+@router.limiter.limit("3/minute")
+async def archive_project(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: ArchiveProject,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> Projects:
+    """Archives or restores a project by toggling its active flag"""
+    query = """
+    UPDATE projects
+    SET active = $2
+    WHERE id = $1
+    RETURNING *;
+    """
+    rows = await request.app.pool.fetchrow(query, project_id, req.active)
+    if not rows:
+        raise NotFoundError
+    return Projects(**dict(rows))
+
+
+class ProjectTagsResponse(BaseModel, frozen=True):
+    tags: list[str]
+
+
+class ModifyProjectTags(BaseModel, frozen=True):
+    tags: list[Annotated[str, Field(pattern=_NO_NULL_REGEX)]]
+
+
+@router.put(
+    "/projects/{project_id}/tags",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": ProjectTagsResponse},
+        404: {"model": NotFoundResponse},
+        422: {"model": HTTPExceptionResponse},
+    },
+)
+@router.limiter.limit("5/minute")
+async def edit_project_tags(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: ModifyProjectTags,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> ProjectTagsResponse:
+    """Replaces a project's entire tag set with the supplied one. Also allows for partial edits"""
+    query = """
+    WITH check_project AS (
+        SELECT 1 FROM projects
+        WHERE id = $1 FOR UPDATE
+    ), delete_project_tags AS (
+        DELETE FROM project_tags
+        WHERE project_id = $1
+    )
+    SELECT EXISTS (SELECT 1 FROM check_project) AS exists;
+    """
+
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
+        try:
+            exists = await connection.fetchval(
+                query,
+                project_id,
+            )
+            if not exists:
+                await tr.rollback()
+                raise NotFoundError
+
+            if req.tags:
+                subquery = """
+                INSERT INTO project_tags (project_id, tag_id)
+                VALUES ($1, (SELECT id FROM tags WHERE title = $2))
+                ON CONFLICT DO NOTHING;
+                """
+                await connection.executemany(
+                    subquery, [(project_id, tag.lower()) for tag in req.tags]
+                )
+        except asyncpg.NotNullViolationError:
+            await tr.rollback()
+            raise HTTPException(
+                detail="The tag(s) specified is invalid. Please check the current tags available.",
+                status_code=422,
+            )
+        else:
+            await tr.commit()
+
+        return ProjectTagsResponse(tags=[tag.lower() for tag in req.tags])
+
+
+@router.delete(
+    "/projects/{project_id}/tags",
+    dependencies=[has_permissions(Project.edit)],
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
+)
+@router.limiter.limit("5/minute")
+async def clear_project_tags(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+) -> DeleteResponse:
+    """Removes all tags from a project"""
+    query = """
+    WITH check_project AS (
+        SELECT 1 FROM projects
+        WHERE id = $1
+    ), delete_project_tags AS (
+        DELETE FROM project_tags
+        WHERE project_id = $1
+    )
+    SELECT EXISTS (SELECT 1 FROM check_project) AS exists;
+    """
+    exists = await request.app.pool.fetchval(query, project_id)
+    if not exists:
+        raise NotFoundError
+    return DeleteResponse()
 
 
 @router.delete(
