@@ -90,6 +90,45 @@ async def _link_project_member(
     )
 
 
+async def _insert_tag(
+    pool: asyncpg.Pool,
+    *,
+    title: str,
+    description: str = "desc",
+) -> int:
+    return await pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        title,
+        description,
+    )
+
+
+async def _link_project_tag(
+    pool: asyncpg.Pool,
+    *,
+    project_id: uuid.UUID,
+    tag_id: int,
+) -> None:
+    await pool.execute(
+        "INSERT INTO project_tags (project_id, tag_id) VALUES ($1, $2)",
+        project_id,
+        tag_id,
+    )
+
+
+async def _project_tag_titles(pool: asyncpg.Pool, project_id: uuid.UUID) -> set[str]:
+    rows = await pool.fetch(
+        """
+        SELECT tags.title
+        FROM project_tags
+        JOIN tags ON tags.id = project_tags.tag_id
+        WHERE project_tags.project_id = $1
+        """,
+        project_id,
+    )
+    return {row["title"] for row in rows}
+
+
 def _create_payload(
     *,
     name: str = "New Project",
@@ -315,6 +354,281 @@ async def test_delete_project_removes_row(
         "SELECT count(*) FROM projects WHERE id = $1", project_id
     )
     assert remaining == 0
+
+
+# ──────────────────────────────────────────────────────────────────
+# Archive project, requires Project.own, 3 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_archive_project_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.put(
+        f"/projects/{uuid.uuid4()}/archive", json={"active": False}
+    )
+    assert response.status_code == 401
+
+
+async def test_archive_project_rejects_without_own_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.put(
+        f"/projects/{uuid.uuid4()}/archive", json={"active": False}
+    )
+    assert response.status_code == 403
+
+
+async def test_archive_project_returns_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    missing = uuid.uuid4()
+    await fake_ory.grant("Project", str(missing), "own", identity_id)
+    response = await client.client.put(
+        f"/projects/{missing}/archive", json={"active": False}
+    )
+    assert response.status_code == 404
+
+
+async def test_archive_project_toggles_active_flag(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="toggle-me", active=True)
+    await fake_ory.grant("Project", str(project_id), "own", identity_id)
+
+    archived = await client.client.put(
+        f"/projects/{project_id}/archive", json={"active": False}
+    )
+    assert archived.status_code == 200
+    assert archived.json()["active"] is False
+    assert (
+        await kanae.pool.fetchval(
+            "SELECT active FROM projects WHERE id = $1", project_id
+        )
+        is False
+    )
+
+    restored = await client.client.put(
+        f"/projects/{project_id}/archive", json={"active": True}
+    )
+    assert restored.status_code == 200
+    assert restored.json()["active"] is True
+
+
+async def test_archive_project_rejects_invalid_payload(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = uuid.uuid4()
+    await fake_ory.grant("Project", str(project_id), "own", identity_id)
+    response = await client.client.put(
+        f"/projects/{project_id}/archive", json={"active": "not-a-bool"}
+    )
+    assert response.status_code == 422
+
+
+# ──────────────────────────────────────────────────────────────────
+# Tag surfacing on reads
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_get_project_surfaces_tags(client: KanaeTestClient, kanae: Kanae) -> None:
+    member_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=member_id)
+    project_id = await _insert_project(kanae.pool, name="with-tags")
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=member_id, role="lead"
+    )
+    for title in ("rust", "python"):
+        tag_id = await _insert_tag(kanae.pool, title=title)
+        await _link_project_tag(kanae.pool, project_id=project_id, tag_id=tag_id)
+
+    response = await client.client.get(f"/projects/{project_id}")
+    assert response.status_code == 200
+    # array_agg(... ORDER BY tags.title) → alphabetical
+    assert response.json()["tags"] == ["python", "rust"]
+
+
+async def test_get_project_without_tags_returns_null(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    member_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=member_id)
+    project_id = await _insert_project(kanae.pool, name="untagged")
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=member_id, role="lead"
+    )
+    response = await client.client.get(f"/projects/{project_id}")
+    assert response.status_code == 200
+    assert response.json()["tags"] is None
+
+
+async def test_list_projects_surfaces_tags(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    member_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=member_id)
+    project_id = await _insert_project(kanae.pool, name="listed-tags")
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=member_id, role="lead"
+    )
+    tag_id = await _insert_tag(kanae.pool, title="golang")
+    await _link_project_tag(kanae.pool, project_id=project_id, tag_id=tag_id)
+
+    response = await client.client.get("/projects")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    row = next(r for r in body["data"] if r["name"] == "listed-tags")
+    assert row["tags"] == ["golang"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# Overwrite project tags, requires Project.edit, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_overwrite_tags_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.put(
+        f"/projects/{uuid.uuid4()}/tags", json={"tags": ["python"]}
+    )
+    assert response.status_code == 401
+
+
+async def test_overwrite_tags_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.put(
+        f"/projects/{uuid.uuid4()}/tags", json={"tags": ["python"]}
+    )
+    assert response.status_code == 403
+
+
+async def test_overwrite_tags_returns_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    missing = uuid.uuid4()
+    await fake_ory.grant("Project", str(missing), "edit", identity_id)
+    response = await client.client.put(f"/projects/{missing}/tags", json={"tags": []})
+    assert response.status_code == 404
+
+
+async def test_overwrite_tags_replaces_existing_set(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="tagged")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+
+    old_tag = await _insert_tag(kanae.pool, title="old")
+    await _link_project_tag(kanae.pool, project_id=project_id, tag_id=old_tag)
+    await _insert_tag(kanae.pool, title="python")
+    await _insert_tag(kanae.pool, title="rust")
+
+    response = await client.client.put(
+        f"/projects/{project_id}/tags", json={"tags": ["python", "rust"]}
+    )
+    assert response.status_code == 200
+    assert sorted(response.json()["tags"]) == ["python", "rust"]
+    assert await _project_tag_titles(kanae.pool, project_id) == {"python", "rust"}
+
+
+async def test_overwrite_tags_empty_list_clears_all(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="to-empty")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    tag_id = await _insert_tag(kanae.pool, title="solo")
+    await _link_project_tag(kanae.pool, project_id=project_id, tag_id=tag_id)
+
+    response = await client.client.put(
+        f"/projects/{project_id}/tags", json={"tags": []}
+    )
+    assert response.status_code == 200
+    assert response.json()["tags"] == []
+    assert await _project_tag_titles(kanae.pool, project_id) == set()
+
+
+async def test_overwrite_tags_partial_removal_keeps_survivors(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="partial")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+
+    for title in ("ai", "swe", "cyber"):
+        tag_id = await _insert_tag(kanae.pool, title=title)
+        await _link_project_tag(kanae.pool, project_id=project_id, tag_id=tag_id)
+
+    # Drop "cyber" by sending only the survivors.
+    response = await client.client.put(
+        f"/projects/{project_id}/tags", json={"tags": ["ai", "swe"]}
+    )
+    assert response.status_code == 200
+    assert await _project_tag_titles(kanae.pool, project_id) == {"ai", "swe"}
+
+
+async def test_overwrite_tags_unknown_tag_rolls_back(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="rollback")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    keep = await _insert_tag(kanae.pool, title="keep")
+    await _link_project_tag(kanae.pool, project_id=project_id, tag_id=keep)
+
+    response = await client.client.put(
+        f"/projects/{project_id}/tags", json={"tags": ["nonexistent"]}
+    )
+    assert response.status_code == 422
+    # Transaction rolled back — the pre-existing tag (and its clearing) survives.
+    assert await _project_tag_titles(kanae.pool, project_id) == {"keep"}
+
+
+# ──────────────────────────────────────────────────────────────────
+# Clear project tags, requires Project.edit, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_clear_tags_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.delete(f"/projects/{uuid.uuid4()}/tags")
+    assert response.status_code == 401
+
+
+async def test_clear_tags_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.delete(f"/projects/{uuid.uuid4()}/tags")
+    assert response.status_code == 403
+
+
+async def test_clear_tags_returns_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    missing = uuid.uuid4()
+    await fake_ory.grant("Project", str(missing), "edit", identity_id)
+    response = await client.client.delete(f"/projects/{missing}/tags")
+    assert response.status_code == 404
+
+
+async def test_clear_tags_removes_all(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="clearable")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    for title in ("a", "b"):
+        tag_id = await _insert_tag(kanae.pool, title=title)
+        await _link_project_tag(kanae.pool, project_id=project_id, tag_id=tag_id)
+
+    response = await client.client.delete(f"/projects/{project_id}/tags")
+    assert response.status_code == 200
+    assert await _project_tag_titles(kanae.pool, project_id) == set()
 
 
 # ──────────────────────────────────────────────────────────────────

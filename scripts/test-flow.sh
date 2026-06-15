@@ -418,6 +418,71 @@ jq -e "$ROLES_FILTER | index(\"admin\")" <<<"$SELF_ROLES_ADMIN" >/dev/null \
 	|| fail "GET /members/<self>/roles missing admin: $SELF_ROLES_ADMIN"
 ok "GET /members/<self>/roles -> $(jq -c "$ROLES_FILTER" <<<"$SELF_ROLES_ADMIN")"
 
+# ── project tag editing + archive (Project.edit / Project.own) ─────────────────
+# PROJECT_ID was created in step 6, so the smoke identity auto-holds the owners
+# tuple → both Project.edit and Project.own resolve. It's admin now too, so it
+# can mint the tags to attach. Exercises overwrite (partial removal rides on it),
+# read surfacing, clear, and the archive toggle.
+step "project tags: create → overwrite → partial-remove → unknown(422) → clear"
+
+for t in smoke-tag-a smoke-tag-b smoke-tag-c; do
+	curl -sf -X POST "$KANAE/tags/create" \
+		-b "$COOKIES" -H "$H_CONTENT_TYPE" \
+		-d '{"title":"'"$t"'","description":"smoke"}' >/dev/null \
+		|| fail "tag create failed for $t"
+done
+ok "created smoke tags"
+
+# overwrite: attach all three (response echoes the applied set)
+OVERWRITE_RESP=$(curl -s -X PUT "$KANAE/projects/$PROJECT_ID/tags" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" \
+	-d '{"tags":["smoke-tag-a","smoke-tag-b","smoke-tag-c"]}')
+[[ "$(jq -r '.tags | length' <<<"$OVERWRITE_RESP")" == "3" ]] \
+	|| fail "expected 3 tags after overwrite, got: $OVERWRITE_RESP"
+ok "overwrote project tags -> $(jq -c '.tags' <<<"$OVERWRITE_RESP")"
+
+# read surfacing: GET reflects the set, alphabetically sorted
+GET_TAGS=$(curl -sb "$COOKIES" "$KANAE/projects/$PROJECT_ID" | jq -c '.tags')
+[[ "$GET_TAGS" == '["smoke-tag-a","smoke-tag-b","smoke-tag-c"]' ]] \
+	|| fail "GET project tags mismatch: $GET_TAGS"
+ok "GET /projects/<id> surfaces tags: $GET_TAGS"
+
+# partial removal rides on overwrite: resend survivors, dropping smoke-tag-c
+curl -sf -X PUT "$KANAE/projects/$PROJECT_ID/tags" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" \
+	-d '{"tags":["smoke-tag-a","smoke-tag-b"]}' >/dev/null \
+	|| fail "partial overwrite failed"
+AFTER_PARTIAL=$(curl -sb "$COOKIES" "$KANAE/projects/$PROJECT_ID" | jq -c '.tags')
+[[ "$AFTER_PARTIAL" == '["smoke-tag-a","smoke-tag-b"]' ]] \
+	|| fail "expected smoke-tag-c dropped, got: $AFTER_PARTIAL"
+ok "partial removal kept survivors: $AFTER_PARTIAL"
+
+# unknown tag → 422, prior set untouched (tx rollback)
+assert_http 422 PUT "$KANAE/projects/$PROJECT_ID/tags" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"tags":["does-not-exist"]}'
+
+# clear all → GET shows null
+assert_http 200 DELETE "$KANAE/projects/$PROJECT_ID/tags" -b "$COOKIES"
+CLEARED=$(curl -sb "$COOKIES" "$KANAE/projects/$PROJECT_ID" | jq -c '.tags')
+[[ "$CLEARED" == "null" ]] \
+	|| fail "expected null tags after clear, got: $CLEARED"
+ok "cleared project tags (tags=null)"
+
+step "project archive: toggle active flag (Project.own)"
+ARCHIVED=$(curl -s -X PUT "$KANAE/projects/$PROJECT_ID/archive" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"active":false}')
+[[ "$(jq -r '.active' <<<"$ARCHIVED")" == "false" ]] \
+	|| fail "expected active=false after archive, got: $ARCHIVED"
+# the ?active=false list filter now surfaces it
+curl -sb "$COOKIES" "$KANAE/projects?active=false" \
+	| jq -e --arg id "$PROJECT_ID" '.data[] | select(.id == $id)' >/dev/null \
+	|| fail "archived project missing from ?active=false listing"
+RESTORED=$(curl -s -X PUT "$KANAE/projects/$PROJECT_ID/archive" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"active":true}')
+[[ "$(jq -r '.active' <<<"$RESTORED")" == "true" ]] \
+	|| fail "expected active=true after restore, got: $RESTORED"
+ok "archive toggle inactive→active verified"
+
 step "sudo: GET /sudo as admin -> 200 inactive"
 SUDO_STATUS=$(curl -s -b "$COOKIES" "$KANAE/sudo")
 [[ "$(jq -r '.active' <<<"$SUDO_STATUS")" == "false" ]] \

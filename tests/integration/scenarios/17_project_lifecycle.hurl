@@ -1,8 +1,12 @@
-# Full project lifecycle as MANAGER: create → list-find → edit (needs
-# Project.edit) → re-edit-no-op verifies idempotency → archive via
-# `active: false` → delete (needs Project.own) → 404 on re-fetch.
-# Exercises both Keto grant paths plus list_projects's pg_trgm filter
-# and the `active` filter.
+# Full project lifecycle as MANAGER: create → list-find → grant
+# Project.edit + Project.own → edit → tag overwrite/partial-remove/clear
+# (needs Project.edit) → archive toggle via `active` (needs Project.own)
+# → delete (needs Project.own) → 404 on re-fetch.
+# Exercises both Keto grant paths plus list_projects's pg_trgm filter,
+# the `active` filter, the tag-editing routes, and tag surfacing on reads.
+# Tag steps reuse the persistent tags bulk-created in scenario 08
+# (scenario09-alpha/beta/gamma); their buckets (tags 5/min, archive
+# 3/min) are distinct from edit_project's 3/min.
 
 GET {{KRATOS_URL}}/self-service/login/browser
 Accept: application/json
@@ -76,6 +80,78 @@ HTTP 200
 [Asserts]
 jsonpath "$.name" == "scenario18-renamed"
 jsonpath "$.description" == "edited"
+# Freshly-created project has no tags yet.
+jsonpath "$.tags" == null
+
+# Overwrite the tag set (Project.edit) with the tags bulk-created in
+# scenario 08. Response echoes the applied set.
+PUT {{KANAE_URL}}/projects/{{project_id}}/tags
+Content-Type: application/json
+{ "tags": ["scenario09-alpha", "scenario09-beta", "scenario09-gamma"] }
+HTTP 200
+[Asserts]
+jsonpath "$.tags" count == 3
+
+# GET surfaces them, alphabetically (array_agg ORDER BY title).
+GET {{KANAE_URL}}/projects/{{project_id}}
+HTTP 200
+[Asserts]
+jsonpath "$.tags" count == 3
+jsonpath "$.tags" contains "scenario09-gamma"
+
+# Partial removal rides on the overwrite: resend only the survivors.
+PUT {{KANAE_URL}}/projects/{{project_id}}/tags
+Content-Type: application/json
+{ "tags": ["scenario09-alpha", "scenario09-beta"] }
+HTTP 200
+
+GET {{KANAE_URL}}/projects/{{project_id}}
+HTTP 200
+[Asserts]
+jsonpath "$.tags" count == 2
+jsonpath "$.tags" contains "scenario09-alpha"
+jsonpath "$.tags" contains "scenario09-beta"
+
+# Unknown tag → 422, and the prior set is left intact (tx rollback).
+PUT {{KANAE_URL}}/projects/{{project_id}}/tags
+Content-Type: application/json
+{ "tags": ["this-tag-does-not-exist"] }
+HTTP 422
+
+GET {{KANAE_URL}}/projects/{{project_id}}
+HTTP 200
+[Asserts]
+jsonpath "$.tags" count == 2
+
+# Clear all tags (Project.edit) → GET shows null again.
+DELETE {{KANAE_URL}}/projects/{{project_id}}/tags
+HTTP 200
+
+GET {{KANAE_URL}}/projects/{{project_id}}
+HTTP 200
+[Asserts]
+jsonpath "$.tags" == null
+
+# Archive toggle (Project.own): flip inactive, confirm the
+# `?active=false` list filter surfaces it, then restore.
+PUT {{KANAE_URL}}/projects/{{project_id}}/archive
+Content-Type: application/json
+{ "active": false }
+HTTP 200
+[Asserts]
+jsonpath "$.active" == false
+
+GET {{KANAE_URL}}/projects?active=false
+HTTP 200
+[Asserts]
+body contains "{{project_id}}"
+
+PUT {{KANAE_URL}}/projects/{{project_id}}/archive
+Content-Type: application/json
+{ "active": true }
+HTTP 200
+[Asserts]
+jsonpath "$.active" == true
 
 # DELETE.
 DELETE {{KANAE_URL}}/projects/{{project_id}}
