@@ -221,6 +221,12 @@ async def test_get_member_by_id_returns_member(
     body: dict[str, Any] = response.json()
     assert body["id"] == str(member_id)
     assert body["name"] == "By-id member"
+    assert set(body) == {"id", "name", "created_at", "projects", "events"}
+    # the public `Member` shape never leaks the private fields that only
+    # `ClientMember` (GET /members/me) exposes
+    assert "email" not in body
+    assert "roles" not in body
+    assert "session" not in body
 
 
 async def test_get_member_by_id_rejects_non_uuid(client: KanaeTestClient) -> None:
@@ -898,3 +904,210 @@ async def test_delete_member_enforces_1_per_minute(
         # to land in the same bucket; it is blocked before the handler runs.
         blocked = await client.client.delete(f"/members/{target}")
         assert blocked.status_code == 429
+
+
+# ──────────────────────────────────────────────────────────────────
+# GET /members/me — roles, own private traits, and embedded session
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_me_includes_roles_and_private_traits(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as(Role.ADMIN, email="me@test.local")
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id), name="Self")
+
+    response = await client.client.get("/members/me")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert body["email"] == "me@test.local"
+    # login_as seeds display_name from the email
+    assert body["display_name"] == "me@test.local"
+    assert body["roles"] == [Role.ADMIN.value]
+
+
+async def test_me_roles_empty_when_none_granted(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+
+    response = await client.client.get("/members/me")
+    assert response.status_code == 200
+    assert response.json()["roles"] == []
+
+
+async def test_me_embeds_session_view(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as(aal="aal2")
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+
+    response = await client.client.get("/members/me")
+    assert response.status_code == 200
+    session: dict[str, Any] = response.json()["session"]
+    assert session["aal"] == "aal2"
+    assert session["active"] is True
+    assert session["authenticated_at"] is not None
+    assert session["issued_at"] is not None
+    assert session["expires_at"] is not None
+
+
+# ──────────────────────────────────────────────────────────────────
+# GET /members — admin member directory (search + pagination)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_list_members_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.get("/members")
+    assert response.status_code == 401
+
+
+async def test_list_members_rejects_unprivileged(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()  # authenticated, but not an admin
+    response = await client.client.get("/members")
+    assert response.status_code == 403
+
+
+async def test_list_members_returns_all_for_admin(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Ada", email="ada@test.local"
+    )
+    await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Grace", email="grace@test.local"
+    )
+
+    response = await client.client.get("/members")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert body["total"] == 2
+    assert {row["name"] for row in body["data"]} == {"Ada", "Grace"}
+
+
+async def test_list_members_rejects_short_query(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    response = await client.client.get("/members?query=ab")
+    assert response.status_code == 422
+
+
+async def test_list_members_name_trigram_search(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Zachary", email="z@test.local"
+    )
+    await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Quinlan", email="q@test.local"
+    )
+
+    response = await client.client.get("/members", params={"query": "Zachary"})
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert {row["name"] for row in body["data"]} == {"Zachary"}
+
+
+async def test_list_members_email_substring_search(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Bob", email="findme@test.local"
+    )
+    await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Carol", email="elsewhere@test.local"
+    )
+
+    # the query shares no trigrams with either name, so only the email match lands
+    response = await client.client.get("/members", params={"query": "findme"})
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert {row["email"] for row in body["data"]} == {"findme@test.local"}
+
+
+async def test_list_members_pagination(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    for index in range(3):
+        await _insert_member(
+            kanae.pool,
+            member_id=uuid.uuid4(),
+            name=f"member-{index}",
+            email=f"m{index}@test.local",
+        )
+
+    response = await client.client.get("/members?page=1&size=2")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert body["total"] == 3
+    assert len(body["data"]) == 2
+
+
+# ──────────────────────────────────────────────────────────────────
+# GET /members/{member_id}/roles — role read (self or admin)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_member_roles_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.get(f"/members/{uuid.uuid4()}/roles")
+    assert response.status_code == 401
+
+
+async def test_member_roles_self_reads_own(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+    await fake_ory.grant("Role", "leads", "member", subject_id=identity_id)
+
+    response = await client.client.get(f"/members/{identity_id}/roles")
+    assert response.status_code == 200
+    assert response.json() == {"roles": ["leads"]}
+
+
+async def test_member_roles_admin_reads_other(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    await fake_ory.grant("Role", "manager", "member", subject_id=str(target))
+
+    response = await client.client.get(f"/members/{target}/roles")
+    assert response.status_code == 200
+    assert response.json() == {"roles": ["manager"]}
+
+
+async def test_member_roles_rejects_unprivileged_other(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()  # authenticated, not an admin, not the target
+    response = await client.client.get(f"/members/{uuid.uuid4()}/roles")
+    assert response.status_code == 403
+
+
+async def test_member_roles_404_when_member_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    response = await client.client.get(f"/members/{uuid.uuid4()}/roles")
+    assert response.status_code == 404
+
+
+async def test_member_roles_empty_when_none_granted(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+
+    response = await client.client.get(f"/members/{identity_id}/roles")
+    assert response.status_code == 200
+    assert response.json() == {"roles": []}

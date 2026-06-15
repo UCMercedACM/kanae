@@ -54,7 +54,9 @@ jsonpath "$.session.identity.state" == "active"
 jsonpath "$.session.identity.traits.email" == "{{ADMIN_EMAIL}}"
 jsonpath "$.session.identity.traits.name" == "admin"
 
-# 3) Cookie now in jar; Kanae forwards it to /sessions/whoami.
+# 3) Cookie now in jar; Kanae forwards it to /sessions/whoami. /members/me is
+#    the enriched ClientMember: the public member shape plus the caller's own
+#    email/display_name, global Keto roles, and a trimmed session view.
 GET {{KANAE_URL}}/members/me
 HTTP 200
 [Asserts]
@@ -62,9 +64,18 @@ header "content-type" startsWith "application/json"
 jsonpath "$.id" == "{{ADMIN_ID}}"
 jsonpath "$.id" isUuid
 jsonpath "$.name" == "admin"
+jsonpath "$.email" == "{{ADMIN_EMAIL}}"
+jsonpath "$.display_name" == "admin"
 jsonpath "$.created_at" isIsoDate
 jsonpath "$.projects" isCollection
 jsonpath "$.events" isCollection
+jsonpath "$.roles" isCollection
+jsonpath "$.roles" contains "admin"
+jsonpath "$.session.aal" == "aal1"
+jsonpath "$.session.active" == true
+jsonpath "$.session.authenticated_at" isIsoDate
+jsonpath "$.session.issued_at" isIsoDate
+jsonpath "$.session.expires_at" isIsoDate
 
 # 4) Cache check — same cookie, second call should be served from the
 #    Valkey-backed whoami cache (no Kratos hop). Cap duration loosely.

@@ -1,6 +1,7 @@
 import datetime
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any, Literal, TypedDict, Unpack, cast
 
 import aiohttp
@@ -111,6 +112,7 @@ class OryClient:
     _KETO_WRITE_RELATION = "/admin/relation-tuples"
 
     _KETO_NAMESPACES = ("Role", "Project", "Event")
+    _KETO_PAGE_SIZE = 100
 
     def __init__(
         self, config: OryConfig, *, session: aiohttp.ClientSession, glide: GlideManager
@@ -432,6 +434,55 @@ class OryClient:
 
         data = await response.json(loads=orjson.loads)
         return data["allowed"]
+
+    async def list_roles(self, subject_id: str) -> AsyncIterator[str]:
+        """Yield every global role granted to `subject_id`, one at a time.
+
+        Streams the `Role` namespace from Keto for `member`-relation tuples whose
+        subject is `subject_id`, yielding each tuple's object — the role name
+        (e.g. `"admin"`). The read counterpart to :meth:`grant` and
+        :meth:`revoke` on the `Role` namespace.
+
+        Pagination is followed transparently: each page is drained before the
+        next is fetched, and the walk stops on the first short page (fewer than
+        `page_size` tuples), falling back to an empty `next_page_token` only for
+        an exactly-full final page. A caller that stops early never pays for
+        pages it does not read. Deliberately uncached so a read taken straight
+        after a grant/revoke reflects the new state.
+
+        Args:
+            subject_id: Identity UUID whose roles should be listed.
+
+        Yields:
+            Each role name held by the subject.
+
+        Example:
+            Collect a member's roles into a list::
+
+                roles = [role async for role in ory.list_roles(member_id)]
+        """
+        params = {
+            "namespace": "Role",
+            "relation": "member",
+            "subject_id": subject_id,
+            "page_size": self._KETO_PAGE_SIZE,
+        }
+
+        while True:
+            response = await self._request(
+                "GET", self.keto_read("/relation-tuples").with_query(params)
+            )
+            data = await response.json(loads=orjson.loads)
+
+            relation_tuples = data["relation_tuples"]
+            for relation in relation_tuples:
+                yield relation["object"]
+
+            next_page_token = data.get("next_page_token")
+            if len(relation_tuples) < self._KETO_PAGE_SIZE or not next_page_token:
+                return
+
+            params["page_token"] = next_page_token
 
     async def revoke(
         self,

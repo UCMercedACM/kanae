@@ -172,6 +172,35 @@ ME_ID=$(jq -r '.id // empty' <<<"$ME")
 	|| fail "/members/me returned unexpected identity: $ME"
 ok "/members/me -> id=$ME_ID"
 
+# /members/me is the enriched ClientMember: own email + trimmed session view +
+# the global Keto roles (empty for a freshly-registered, role-less identity).
+ME_EMAIL=$(jq -r '.email // empty' <<<"$ME")
+[[ "$ME_EMAIL" == "$EMAIL" ]] \
+	|| fail "/members/me email mismatch: expected $EMAIL, got '$ME_EMAIL'"
+ME_AAL=$(jq -r '.session.aal // empty' <<<"$ME")
+[[ "$ME_AAL" == "aal1" ]] \
+	|| fail "/members/me session.aal expected aal1, got '$ME_AAL'"
+ME_ROLES=$(jq -c '.roles // empty' <<<"$ME")
+[[ "$ME_ROLES" == "[]" ]] \
+	|| fail "/members/me roles expected [] pre-grant, got '$ME_ROLES'"
+ok "/members/me enriched: email=$ME_EMAIL session.aal=$ME_AAL roles=$ME_ROLES"
+
+# ── 3b. member dashboard reads while role-less ────────────────────────────────
+step "3b. /members directory + /members/<id>/roles (role-less)"
+
+# both new reads reject an anonymous caller
+assert_http 401 GET "$KANAE/members"
+assert_http 401 GET "$KANAE/members/$IDENTITY_ID/roles"
+
+# the directory is admin-only — a role-less member is forbidden
+assert_http 403 GET "$KANAE/members" -b "$COOKIES"
+
+# but a member may read THEIR OWN roles without admin (self branch) → empty set
+SELF_ROLES=$(curl -sb "$COOKIES" "$KANAE/members/$IDENTITY_ID/roles")
+[[ "$(jq -c '.roles // empty' <<<"$SELF_ROLES")" == "[]" ]] \
+	|| fail "self roles expected [] pre-grant, got '$SELF_ROLES'"
+ok "GET /members/<self>/roles -> [] (self branch, no admin needed)"
+
 # ── 4. gated route should 403 ─────────────────────────────────────────────────
 step "4. POST /projects/create without role -> 403"
 
@@ -357,6 +386,34 @@ curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
 docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
 ok "admin tuple written, cache flushed"
 
+# ── member dashboard reads now that the identity carries roles ─────────────────
+# By now the identity holds manager (step 5), leads (step 10), and admin (above),
+# so /members/me must surface them and the admin-only directory must unlock.
+step "member reads reflect granted roles (manager + leads + admin)"
+
+ME_AFTER=$(curl -sb "$COOKIES" "$KANAE/members/me")
+for role in admin leads manager; do
+	jq -e --arg r "$role" '.roles | index($r)' <<<"$ME_AFTER" >/dev/null \
+		|| fail "/members/me roles missing $role: $(jq -c '.roles' <<<"$ME_AFTER")"
+done
+ok "/members/me roles -> $(jq -c '.roles' <<<"$ME_AFTER")"
+
+# admin can now list the directory; it includes this freshly-registered member
+DIR=$(curl -sb "$COOKIES" "$KANAE/members")
+jq -e --arg id "$IDENTITY_ID" '.data[] | select(.id == $id)' <<<"$DIR" >/dev/null \
+	|| fail "directory missing self ($IDENTITY_ID): $(jq -c '.total' <<<"$DIR")"
+ok "GET /members -> total=$(jq -r '.total' <<<"$DIR"), includes self"
+
+# name/email search (post-settings name is "Renamed User") + sub-trigram reject
+assert_http 200 GET "$KANAE/members?query=Renamed" -b "$COOKIES"
+assert_http 422 GET "$KANAE/members?query=ab" -b "$COOKIES"
+
+# self role read now reflects the admin grant
+SELF_ROLES_ADMIN=$(curl -sb "$COOKIES" "$KANAE/members/$IDENTITY_ID/roles")
+jq -e '.roles | index("admin")' <<<"$SELF_ROLES_ADMIN" >/dev/null \
+	|| fail "GET /members/<self>/roles missing admin: $SELF_ROLES_ADMIN"
+ok "GET /members/<self>/roles -> $(jq -c '.roles' <<<"$SELF_ROLES_ADMIN")"
+
 step "sudo: GET /sudo as admin -> 200 inactive"
 SUDO_STATUS=$(curl -s -b "$COOKIES" "$KANAE/sudo")
 [[ "$(jq -r '.active' <<<"$SUDO_STATUS")" == "false" ]] \
@@ -457,6 +514,15 @@ ALLOWED=$(curl -s "$KETO_READ/relation-tuples/check?namespace=Role&object=leads&
 [[ "$ALLOWED" == "true" ]] || fail "expected leads tuple for victim, got allowed=$ALLOWED"
 ok "victim granted leads (keto confirms)"
 
+# the same grant is visible through Kanae's role-read route (admin reads another)
+VICTIM_ROLES=$(curl -sb "$COOKIES" "$KANAE/members/$VICTIM_ID/roles")
+jq -e '.roles | index("leads")' <<<"$VICTIM_ROLES" >/dev/null \
+	|| fail "GET /members/<victim>/roles missing leads: $VICTIM_ROLES"
+ok "GET /members/<victim>/roles (admin) -> $(jq -c '.roles' <<<"$VICTIM_ROLES")"
+
+# a role read for a non-existent member still 404s (authorized, no members row)
+assert_http 404 GET "$KANAE/members/00000000-0000-0000-0000-000000000000/roles" -b "$COOKIES"
+
 # root hard-deletes the victim → 200
 assert_http 200 DELETE "$KANAE/members/$VICTIM_ID" -b "$COOKIES"
 
@@ -475,6 +541,10 @@ ok "kratos identity + keto tuples purged"
 register_victim "$SELF_JAR" "selfdel-$(date +%s)-$$@ucmerced.edu"
 SELF_ID="$REGISTERED_ID"
 ok "self-delete victim id: $SELF_ID"
+
+# role-less member: may read its OWN roles (200, empty) but not another's (403)
+assert_http 200 GET "$KANAE/members/$SELF_ID/roles" -b "$SELF_JAR"
+assert_http 403 GET "$KANAE/members/$IDENTITY_ID/roles" -b "$SELF_JAR"
 
 assert_http 200 DELETE "$KANAE/members/me" -b "$SELF_JAR"
 SELF_GONE=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tA \
