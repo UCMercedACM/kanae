@@ -59,6 +59,10 @@ RST=$'\033[0m'
 H_ACCEPT="Accept: application/json"
 H_CONTENT_TYPE="Content-Type: application/json"
 
+# jq path to the roles array in member/role responses — kept in one place so the
+# shape only has to change here if the payload ever moves.
+ROLES_FILTER=".roles"
+
 step() {
 	local msg="$1"
 	printf "\n${BLU}━━ %s ━━${RST}\n" "$msg"
@@ -180,7 +184,7 @@ ME_EMAIL=$(jq -r '.email // empty' <<<"$ME")
 ME_AAL=$(jq -r '.session.aal // empty' <<<"$ME")
 [[ "$ME_AAL" == "aal1" ]] \
 	|| fail "/members/me session.aal expected aal1, got '$ME_AAL'"
-ME_ROLES=$(jq -c '.roles // empty' <<<"$ME")
+ME_ROLES=$(jq -c "$ROLES_FILTER // empty" <<<"$ME")
 [[ "$ME_ROLES" == "[]" ]] \
 	|| fail "/members/me roles expected [] pre-grant, got '$ME_ROLES'"
 ok "/members/me enriched: email=$ME_EMAIL session.aal=$ME_AAL roles=$ME_ROLES"
@@ -197,7 +201,7 @@ assert_http 403 GET "$KANAE/members" -b "$COOKIES"
 
 # but a member may read THEIR OWN roles without admin (self branch) → empty set
 SELF_ROLES=$(curl -sb "$COOKIES" "$KANAE/members/$IDENTITY_ID/roles")
-[[ "$(jq -c '.roles // empty' <<<"$SELF_ROLES")" == "[]" ]] \
+[[ "$(jq -c "$ROLES_FILTER // empty" <<<"$SELF_ROLES")" == "[]" ]] \
 	|| fail "self roles expected [] pre-grant, got '$SELF_ROLES'"
 ok "GET /members/<self>/roles -> [] (self branch, no admin needed)"
 
@@ -393,10 +397,10 @@ step "member reads reflect granted roles (manager + leads + admin)"
 
 ME_AFTER=$(curl -sb "$COOKIES" "$KANAE/members/me")
 for role in admin leads manager; do
-	jq -e --arg r "$role" '.roles | index($r)' <<<"$ME_AFTER" >/dev/null \
-		|| fail "/members/me roles missing $role: $(jq -c '.roles' <<<"$ME_AFTER")"
+	jq -e --arg r "$role" "$ROLES_FILTER | index(\$r)" <<<"$ME_AFTER" >/dev/null \
+		|| fail "/members/me roles missing $role: $(jq -c "$ROLES_FILTER" <<<"$ME_AFTER")"
 done
-ok "/members/me roles -> $(jq -c '.roles' <<<"$ME_AFTER")"
+ok "/members/me roles -> $(jq -c "$ROLES_FILTER" <<<"$ME_AFTER")"
 
 # admin can now list the directory; it includes this freshly-registered member
 DIR=$(curl -sb "$COOKIES" "$KANAE/members")
@@ -410,9 +414,9 @@ assert_http 422 GET "$KANAE/members?query=ab" -b "$COOKIES"
 
 # self role read now reflects the admin grant
 SELF_ROLES_ADMIN=$(curl -sb "$COOKIES" "$KANAE/members/$IDENTITY_ID/roles")
-jq -e '.roles | index("admin")' <<<"$SELF_ROLES_ADMIN" >/dev/null \
+jq -e "$ROLES_FILTER | index(\"admin\")" <<<"$SELF_ROLES_ADMIN" >/dev/null \
 	|| fail "GET /members/<self>/roles missing admin: $SELF_ROLES_ADMIN"
-ok "GET /members/<self>/roles -> $(jq -c '.roles' <<<"$SELF_ROLES_ADMIN")"
+ok "GET /members/<self>/roles -> $(jq -c "$ROLES_FILTER" <<<"$SELF_ROLES_ADMIN")"
 
 step "sudo: GET /sudo as admin -> 200 inactive"
 SUDO_STATUS=$(curl -s -b "$COOKIES" "$KANAE/sudo")
@@ -516,9 +520,9 @@ ok "victim granted leads (keto confirms)"
 
 # the same grant is visible through Kanae's role-read route (admin reads another)
 VICTIM_ROLES=$(curl -sb "$COOKIES" "$KANAE/members/$VICTIM_ID/roles")
-jq -e '.roles | index("leads")' <<<"$VICTIM_ROLES" >/dev/null \
+jq -e "$ROLES_FILTER | index(\"leads\")" <<<"$VICTIM_ROLES" >/dev/null \
 	|| fail "GET /members/<victim>/roles missing leads: $VICTIM_ROLES"
-ok "GET /members/<victim>/roles (admin) -> $(jq -c '.roles' <<<"$VICTIM_ROLES")"
+ok "GET /members/<victim>/roles (admin) -> $(jq -c "$ROLES_FILTER" <<<"$VICTIM_ROLES")"
 
 # a role read for a non-existent member still 404s (authorized, no members row)
 assert_http 404 GET "$KANAE/members/00000000-0000-0000-0000-000000000000/roles" -b "$COOKIES"
