@@ -453,32 +453,35 @@ async def _insert_timed_event(
     )
 
 
+async def _seed_future_and_past_events(
+    pool: asyncpg.Pool, *, member_id: uuid.UUID
+) -> None:
+    now = datetime.datetime.now(datetime.UTC)
+    future_event = await _insert_timed_event(
+        pool,
+        name="future",
+        start_at=now + datetime.timedelta(days=1),
+        end_at=now + datetime.timedelta(days=2),
+        creator_id=member_id,
+    )
+    past_event = await _insert_timed_event(
+        pool,
+        name="past",
+        start_at=now - datetime.timedelta(days=2),
+        end_at=now - datetime.timedelta(days=1),
+        creator_id=member_id,
+    )
+    await _link_member_to_event(pool, member_id=member_id, event_id=future_event)
+    await _link_member_to_event(pool, member_id=member_id, event_id=past_event)
+
+
 async def test_me_events_upcoming_filter(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
     identity_id = fake_ory.login_as()
     member_uuid = uuid.UUID(identity_id)
     await _insert_member(kanae.pool, member_id=member_uuid)
-
-    now = datetime.datetime.now(datetime.UTC)
-    future_event = await _insert_timed_event(
-        kanae.pool,
-        name="future",
-        start_at=now + datetime.timedelta(days=1),
-        end_at=now + datetime.timedelta(days=2),
-        creator_id=member_uuid,
-    )
-    past_event = await _insert_timed_event(
-        kanae.pool,
-        name="past",
-        start_at=now - datetime.timedelta(days=2),
-        end_at=now - datetime.timedelta(days=1),
-        creator_id=member_uuid,
-    )
-    await _link_member_to_event(
-        kanae.pool, member_id=member_uuid, event_id=future_event
-    )
-    await _link_member_to_event(kanae.pool, member_id=member_uuid, event_id=past_event)
+    await _seed_future_and_past_events(kanae.pool, member_id=member_uuid)
 
     response = await client.client.get("/members/me/events?upcoming=true")
     assert response.status_code == 200
@@ -492,26 +495,7 @@ async def test_me_events_past_filter(
     identity_id = fake_ory.login_as()
     member_uuid = uuid.UUID(identity_id)
     await _insert_member(kanae.pool, member_id=member_uuid)
-
-    now = datetime.datetime.now(datetime.UTC)
-    future_event = await _insert_timed_event(
-        kanae.pool,
-        name="future",
-        start_at=now + datetime.timedelta(days=1),
-        end_at=now + datetime.timedelta(days=2),
-        creator_id=member_uuid,
-    )
-    past_event = await _insert_timed_event(
-        kanae.pool,
-        name="past",
-        start_at=now - datetime.timedelta(days=2),
-        end_at=now - datetime.timedelta(days=1),
-        creator_id=member_uuid,
-    )
-    await _link_member_to_event(
-        kanae.pool, member_id=member_uuid, event_id=future_event
-    )
-    await _link_member_to_event(kanae.pool, member_id=member_uuid, event_id=past_event)
+    await _seed_future_and_past_events(kanae.pool, member_id=member_uuid)
 
     response = await client.client.get("/members/me/events?past=true")
     assert response.status_code == 200
