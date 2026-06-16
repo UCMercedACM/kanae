@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from utils.auth import use_session
 from utils.checks import Role, check_any, has_role, has_sudo
 from utils.errors import (
+    BadRequestError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
@@ -247,12 +248,19 @@ async def get_logged_events(
     *,
     planned: Optional[bool] = None,
     attended: Optional[bool] = None,
+    upcoming: Optional[bool] = None,
+    past: Optional[bool] = None,
 ) -> list[FullEvents]:
     """Obtains events associated with the currently authenticated member.
 
-    Note that using both `planned` and `attended` queries would result in events that have been planned and attended
-    (i.e., both queries would be used to search for an AND query)
+    `planned`/`attended` filter on RSVP/attendance flags (AND-combined).
+    `upcoming`/`past` filter on time (`start_at`/`end_at` vs now) and are
+    mutually exclusive.
     """
+    if upcoming and past:
+        msg = "Cannot specify both upcoming and past."
+        raise BadRequestError(msg)
+
     constraint = ""
 
     if planned and attended:
@@ -265,12 +273,27 @@ async def get_logged_events(
     elif attended:
         constraint = "AND events_members.attended = true"
 
+    args: list = [session.identity.id, request.app.storage.base_thumbnail_url]
+    time_constraint = ""
+    if upcoming:
+        time_constraint = "AND events.start_at > $3"
+        args.append(datetime.datetime.now(datetime.UTC))
+    elif past:
+        time_constraint = "AND events.end_at < $3"
+        args.append(datetime.datetime.now(datetime.UTC))
+
     # ruff: noqa: S608
     # This error says "possible SQL injection", but the variables are not passed in to the query directly
     # Instead, they are used to check for the constraint query
     query = f"""
     SELECT
         events.id, events.name, events.description, events.start_at, events.end_at, events.location, events.type, events.timezone,
+        (
+            SELECT array_agg(tags.title ORDER BY tags.title)
+            FROM event_tags
+            JOIN tags ON tags.id = event_tags.tag_id
+            WHERE event_tags.event_id = events.id
+        ) AS tags,
         CASE WHEN events.thumbnail_hash IS NOT NULL THEN
             jsonb_build_object(
                 'hash', events.thumbnail_hash,
@@ -281,12 +304,10 @@ async def get_logged_events(
     FROM members
         INNER JOIN events_members ON members.id = events_members.member_id {constraint}
         INNER JOIN events ON events_members.event_id = events.id
-    WHERE members.id = $1
+    WHERE members.id = $1 {time_constraint}
     GROUP BY events.id;
     """
-    rows = await request.app.pool.fetch(
-        query, session.identity.id, request.app.storage.base_thumbnail_url
-    )
+    rows = await request.app.pool.fetch(query, *args)
     return [FullEvents(**dict(record)) for record in rows]
 
 

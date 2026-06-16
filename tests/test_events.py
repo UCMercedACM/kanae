@@ -92,6 +92,59 @@ def _valid_event_payload(
     }
 
 
+async def _insert_tag(
+    pool: asyncpg.Pool, *, title: str, description: str = "desc"
+) -> int:
+    return await pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        title,
+        description,
+    )
+
+
+async def _link_event_tag(
+    pool: asyncpg.Pool, *, event_id: uuid.UUID, tag_id: int
+) -> None:
+    await pool.execute(
+        "INSERT INTO event_tags (event_id, tag_id) VALUES ($1, $2)",
+        event_id,
+        tag_id,
+    )
+
+
+async def _link_event_member(
+    pool: asyncpg.Pool,
+    *,
+    event_id: uuid.UUID,
+    member_id: uuid.UUID | str,
+    planned: bool | None = None,
+    attended: bool = False,
+) -> None:
+    await pool.execute(
+        """
+        INSERT INTO events_members (event_id, member_id, planned, attended)
+        VALUES ($1, $2, $3, $4)
+        """,
+        event_id,
+        member_id,
+        planned,
+        attended,
+    )
+
+
+async def _event_tag_titles(pool: asyncpg.Pool, event_id: uuid.UUID) -> set[str]:
+    rows = await pool.fetch(
+        """
+        SELECT tags.title
+        FROM event_tags
+        JOIN tags ON tags.id = event_tags.tag_id
+        WHERE event_tags.event_id = $1
+        """,
+        event_id,
+    )
+    return {row["title"] for row in rows}
+
+
 # ──────────────────────────────────────────────────────────────────
 # Listing events, unauthenticated
 # ──────────────────────────────────────────────────────────────────
@@ -538,6 +591,140 @@ async def test_verify_attendance_marks_member_attended(
     assert row["attended"] is True
 
 
+async def _create_event_with_code(
+    client: KanaeTestClient,
+    kanae: Kanae,
+    *,
+    member_uuid: uuid.UUID,
+    name: str,
+    start_offset: datetime.timedelta,
+    end_offset: datetime.timedelta,
+) -> tuple[uuid.UUID, str]:
+    """Create an event through the real route and return (event_id, code[:8])."""
+    resp = await client.client.post(
+        "/events/create",
+        json=_valid_event_payload(
+            creator_id=member_uuid,
+            name=name,
+            start_offset=start_offset,
+            end_offset=end_offset,
+        ),
+    )
+    assert resp.status_code == 200
+    event_id = uuid.UUID(resp.json()["id"])
+    code: str = await kanae.pool.fetchval(
+        "SELECT attendance_code FROM event_attendance_codes WHERE event_id = $1",
+        event_id,
+    )
+    return event_id, code[:8]
+
+
+async def test_verify_attendance_within_pre_event_hour_succeeds(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    """Verification opens one hour BEFORE start — verifying then must succeed.
+
+    Regression guard for the old inverted window check, which rejected the
+    very pre-event hour it claimed to allow.
+    """
+    identity_id = fake_ory.login_as(Role.ADMIN)
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+
+    event_id, code = await _create_event_with_code(
+        client,
+        kanae,
+        member_uuid=member_uuid,
+        name="pre-event-hour",
+        start_offset=datetime.timedelta(minutes=30),  # starts in 30 min
+        end_offset=datetime.timedelta(hours=2),
+    )
+
+    response = await client.client.post(
+        f"/events/{event_id}/verify", json={"code": code}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"message": "Successfully verified attendance!"}
+
+
+async def test_verify_attendance_outside_window_returns_404(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as(Role.ADMIN)
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+
+    event_id, code = await _create_event_with_code(
+        client,
+        kanae,
+        member_uuid=member_uuid,
+        name="far-future",
+        start_offset=datetime.timedelta(days=2),  # window not open yet
+        end_offset=datetime.timedelta(days=2, hours=2),
+    )
+
+    response = await client.client.post(
+        f"/events/{event_id}/verify", json={"code": code}
+    )
+    assert response.status_code == 404
+
+
+async def test_verify_attendance_already_recorded_returns_409(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as(Role.ADMIN)
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+
+    event_id, code = await _create_event_with_code(
+        client,
+        kanae,
+        member_uuid=member_uuid,
+        name="double-verify",
+        start_offset=datetime.timedelta(minutes=-30),
+        end_offset=datetime.timedelta(hours=1),
+    )
+
+    first = await client.client.post(f"/events/{event_id}/verify", json={"code": code})
+    assert first.status_code == 200
+    second = await client.client.post(f"/events/{event_id}/verify", json={"code": code})
+    assert second.status_code == 409
+
+
+async def test_verify_attendance_wrong_event_returns_403(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    """A valid code submitted against a different event's URL fails the argon2
+    check, which the global VerificationError handler turns into a 403."""
+    identity_id = fake_ory.login_as(Role.ADMIN)
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+
+    event_a, code_a = await _create_event_with_code(
+        client,
+        kanae,
+        member_uuid=member_uuid,
+        name="event-a",
+        start_offset=datetime.timedelta(minutes=-30),
+        end_offset=datetime.timedelta(hours=1),
+    )
+    event_b, _ = await _create_event_with_code(
+        client,
+        kanae,
+        member_uuid=member_uuid,
+        name="event-b",
+        start_offset=datetime.timedelta(minutes=-30),
+        end_offset=datetime.timedelta(hours=1),
+    )
+    assert event_a != event_b
+
+    # event A's code, event B's URL → hash mismatch → 403.
+    response = await client.client.post(
+        f"/events/{event_b}/verify", json={"code": code_a}
+    )
+    assert response.status_code == 403
+
+
 # ──────────────────────────────────────────────────────────────────
 # Thumbnail object surfacing in reads (no S3 needed, seeded directly)
 # ──────────────────────────────────────────────────────────────────
@@ -718,3 +905,476 @@ async def test_join_event_enforces_5_per_minute(
 
         blocked = await client.client.post(f"/events/{event_id}/join")
         assert blocked.status_code == 429
+
+
+# ──────────────────────────────────────────────────────────────────
+# creator_id nullability (G17) — reads must tolerate a deleted creator
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_get_event_tolerates_null_creator(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    event_id = await _insert_event(kanae.pool, name="orphaned", creator_id=None)
+    response = await client.client.get(f"/events/{event_id}")
+    assert response.status_code == 200
+    assert response.json()["creator_id"] is None
+
+
+async def test_list_events_tolerates_null_creator(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    await _insert_event(kanae.pool, name="orphaned-listed", creator_id=None)
+    response = await client.client.get("/events")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    row = next(e for e in body["data"] if e["name"] == "orphaned-listed")
+    assert row["creator_id"] is None
+
+
+# ──────────────────────────────────────────────────────────────────
+# Tag surfacing on event reads (G6)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_get_event_surfaces_tags(client: KanaeTestClient, kanae: Kanae) -> None:
+    event_id = await _insert_event(kanae.pool, name="tagged-event")
+    for title in ("rust", "python"):
+        tag_id = await _insert_tag(kanae.pool, title=title)
+        await _link_event_tag(kanae.pool, event_id=event_id, tag_id=tag_id)
+
+    response = await client.client.get(f"/events/{event_id}")
+    assert response.status_code == 200
+    # array_agg(... ORDER BY tags.title) → alphabetical
+    assert response.json()["tags"] == ["python", "rust"]
+
+
+async def test_get_event_without_tags_returns_null(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    event_id = await _insert_event(kanae.pool, name="untagged-event")
+    response = await client.client.get(f"/events/{event_id}")
+    assert response.status_code == 200
+    assert response.json()["tags"] is None
+
+
+async def test_list_events_surfaces_tags(client: KanaeTestClient, kanae: Kanae) -> None:
+    event_id = await _insert_event(kanae.pool, name="listed-tags-event")
+    tag_id = await _insert_tag(kanae.pool, title="golang")
+    await _link_event_tag(kanae.pool, event_id=event_id, tag_id=tag_id)
+
+    response = await client.client.get("/events")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    row = next(e for e in body["data"] if e["name"] == "listed-tags-event")
+    assert row["tags"] == ["golang"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# Overwrite event tags, requires Event.edit, 5 per minute (G6)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_edit_event_tags_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.put(
+        f"/events/{uuid.uuid4()}/tags", json={"tags": ["python"]}
+    )
+    assert response.status_code == 401
+
+
+async def test_edit_event_tags_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.put(
+        f"/events/{uuid.uuid4()}/tags", json={"tags": ["python"]}
+    )
+    assert response.status_code == 403
+
+
+async def test_edit_event_tags_returns_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    missing = uuid.uuid4()
+    await fake_ory.grant("Event", str(missing), "edit", identity_id)
+    response = await client.client.put(f"/events/{missing}/tags", json={"tags": []})
+    assert response.status_code == 404
+
+
+async def test_edit_event_tags_replaces_existing_set(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="tag-edit")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    old_tag = await _insert_tag(kanae.pool, title="old")
+    await _link_event_tag(kanae.pool, event_id=event_id, tag_id=old_tag)
+    await _insert_tag(kanae.pool, title="python")
+    await _insert_tag(kanae.pool, title="rust")
+
+    response = await client.client.put(
+        f"/events/{event_id}/tags", json={"tags": ["python", "rust"]}
+    )
+    assert response.status_code == 200
+    assert sorted(response.json()["tags"]) == ["python", "rust"]
+    assert await _event_tag_titles(kanae.pool, event_id) == {"python", "rust"}
+
+
+async def test_edit_event_tags_empty_list_clears_all(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="tag-empty")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    tag_id = await _insert_tag(kanae.pool, title="solo")
+    await _link_event_tag(kanae.pool, event_id=event_id, tag_id=tag_id)
+
+    response = await client.client.put(f"/events/{event_id}/tags", json={"tags": []})
+    assert response.status_code == 200
+    assert response.json()["tags"] == []
+    assert await _event_tag_titles(kanae.pool, event_id) == set()
+
+
+async def test_edit_event_tags_partial_removal_keeps_survivors(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="tag-partial")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    for title in ("ai", "swe", "cyber"):
+        tag_id = await _insert_tag(kanae.pool, title=title)
+        await _link_event_tag(kanae.pool, event_id=event_id, tag_id=tag_id)
+
+    # Drop "cyber" by sending only the survivors.
+    response = await client.client.put(
+        f"/events/{event_id}/tags", json={"tags": ["ai", "swe"]}
+    )
+    assert response.status_code == 200
+    assert await _event_tag_titles(kanae.pool, event_id) == {"ai", "swe"}
+
+
+async def test_edit_event_tags_unknown_tag_rolls_back(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="tag-rollback")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    keep = await _insert_tag(kanae.pool, title="keep")
+    await _link_event_tag(kanae.pool, event_id=event_id, tag_id=keep)
+
+    response = await client.client.put(
+        f"/events/{event_id}/tags", json={"tags": ["nonexistent"]}
+    )
+    assert response.status_code == 422
+    # Transaction rolled back — the pre-existing tag (and its clearing) survives.
+    assert await _event_tag_titles(kanae.pool, event_id) == {"keep"}
+
+
+# ──────────────────────────────────────────────────────────────────
+# Clear event tags, requires Event.edit, 5 per minute (G6)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_clear_event_tags_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.delete(f"/events/{uuid.uuid4()}/tags")
+    assert response.status_code == 401
+
+
+async def test_clear_event_tags_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.delete(f"/events/{uuid.uuid4()}/tags")
+    assert response.status_code == 403
+
+
+async def test_clear_event_tags_returns_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    missing = uuid.uuid4()
+    await fake_ory.grant("Event", str(missing), "edit", identity_id)
+    response = await client.client.delete(f"/events/{missing}/tags")
+    assert response.status_code == 404
+
+
+async def test_clear_event_tags_removes_all(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="tag-clearable")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    for title in ("a", "b"):
+        tag_id = await _insert_tag(kanae.pool, title=title)
+        await _link_event_tag(kanae.pool, event_id=event_id, tag_id=tag_id)
+
+    response = await client.client.delete(f"/events/{event_id}/tags")
+    assert response.status_code == 200
+    assert await _event_tag_titles(kanae.pool, event_id) == set()
+
+
+# ──────────────────────────────────────────────────────────────────
+# Attendance roster, requires Event.edit (G5)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_list_attendance_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.get(f"/events/{uuid.uuid4()}/attendance")
+    assert response.status_code == 401
+
+
+async def test_list_attendance_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.get(f"/events/{uuid.uuid4()}/attendance")
+    assert response.status_code == 403
+
+
+async def test_list_attendance_returns_roster(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="roster")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    planner = await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Planner", email="p@test.local"
+    )
+    attendee = await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Attendee", email="a@test.local"
+    )
+    await _link_event_member(
+        kanae.pool, event_id=event_id, member_id=planner, planned=True, attended=False
+    )
+    await _link_event_member(
+        kanae.pool, event_id=event_id, member_id=attendee, planned=True, attended=True
+    )
+
+    response = await client.client.get(f"/events/{event_id}/attendance")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert body["total"] == 2
+    by_id = {row["id"]: row for row in body["data"]}
+    assert by_id[str(attendee)]["attended"] is True
+    assert by_id[str(planner)]["attended"] is False
+
+
+# ──────────────────────────────────────────────────────────────────
+# Attendance code read, requires Event.edit (G7)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_get_attendance_code_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.get(f"/events/{uuid.uuid4()}/attendance-code")
+    assert response.status_code == 401
+
+
+async def test_get_attendance_code_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.get(f"/events/{uuid.uuid4()}/attendance-code")
+    assert response.status_code == 403
+
+
+async def test_get_attendance_code_returns_404_when_absent(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="no-code")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.get(f"/events/{event_id}/attendance-code")
+    assert response.status_code == 404
+
+
+async def test_get_attendance_code_returns_first_eight(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="has-code")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await kanae.pool.execute(
+        "INSERT INTO event_attendance_codes (event_id, attendance_hash, attendance_code) "
+        "VALUES ($1, $2, $3)",
+        event_id,
+        "dummyhash",
+        "ABCD1234TRAILING",
+    )
+
+    response = await client.client.get(f"/events/{event_id}/attendance-code")
+    assert response.status_code == 200
+    # verify() matches on the first 8 chars, so that is what the organizer reads.
+    assert response.json()["code"] == "ABCD1234"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Remove attendance, requires Event.edit (G12)
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_remove_attendance_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.delete(
+        f"/events/{uuid.uuid4()}/attendance/{uuid.uuid4()}"
+    )
+    assert response.status_code == 401
+
+
+async def test_remove_attendance_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.delete(
+        f"/events/{uuid.uuid4()}/attendance/{uuid.uuid4()}"
+    )
+    assert response.status_code == 403
+
+
+async def test_remove_attendance_returns_404_when_no_row(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="no-attendance")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.delete(
+        f"/events/{event_id}/attendance/{uuid.uuid4()}"
+    )
+    assert response.status_code == 404
+
+
+async def test_remove_attendance_flips_attended_false(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="undo-checkin")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    member_id = await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Checked", email="c@test.local"
+    )
+    await _link_event_member(
+        kanae.pool, event_id=event_id, member_id=member_id, planned=True, attended=True
+    )
+
+    response = await client.client.delete(f"/events/{event_id}/attendance/{member_id}")
+    assert response.status_code == 200
+
+    row = await kanae.pool.fetchrow(
+        "SELECT planned, attended FROM events_members "
+        "WHERE event_id = $1 AND member_id = $2",
+        event_id,
+        member_id,
+    )
+    assert row is not None
+    assert row["attended"] is False
+    # RSVP is preserved — only the check-in is undone.
+    assert row["planned"] is True
+
+
+# ──────────────────────────────────────────────────────────────────
+# list_events date-range filters (before / after)
+# ──────────────────────────────────────────────────────────────────
+
+_PAST = datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC)
+_FUTURE = datetime.datetime(2099, 1, 1, tzinfo=datetime.UTC)
+_MID = datetime.datetime(2050, 1, 1, tzinfo=datetime.UTC)
+
+
+async def _seed_past_future_events(kanae: Kanae) -> None:
+    await _insert_event(
+        kanae.pool,
+        name="past-event",
+        start_at=_PAST,
+        end_at=_PAST + datetime.timedelta(hours=1),
+    )
+    await _insert_event(
+        kanae.pool,
+        name="future-event",
+        start_at=_FUTURE,
+        end_at=_FUTURE + datetime.timedelta(hours=1),
+    )
+
+
+async def test_list_events_after_filter(client: KanaeTestClient, kanae: Kanae) -> None:
+    await _seed_past_future_events(kanae)
+    response = await client.client.get("/events", params={"after": _MID.isoformat()})
+    assert response.status_code == 200
+    assert {e["name"] for e in response.json()["data"]} == {"future-event"}
+
+
+async def test_list_events_before_filter(client: KanaeTestClient, kanae: Kanae) -> None:
+    await _seed_past_future_events(kanae)
+    response = await client.client.get("/events", params={"before": _MID.isoformat()})
+    assert response.status_code == 200
+    assert {e["name"] for e in response.json()["data"]} == {"past-event"}
+
+
+async def test_list_events_range_filter(client: KanaeTestClient, kanae: Kanae) -> None:
+    await _seed_past_future_events(kanae)
+    response = await client.client.get(
+        "/events",
+        params={
+            "after": datetime.datetime(1999, 1, 1, tzinfo=datetime.UTC).isoformat(),
+            "before": datetime.datetime(2100, 1, 1, tzinfo=datetime.UTC).isoformat(),
+        },
+    )
+    assert response.status_code == 200
+    assert {e["name"] for e in response.json()["data"]} == {
+        "past-event",
+        "future-event",
+    }
+
+
+async def test_list_events_range_excludes_events_outside_window(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    await _seed_past_future_events(kanae)
+    # A window that brackets neither event.
+    response = await client.client.get(
+        "/events",
+        params={
+            "after": datetime.datetime(2040, 1, 1, tzinfo=datetime.UTC).isoformat(),
+            "before": datetime.datetime(2060, 1, 1, tzinfo=datetime.UTC).isoformat(),
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+
+
+async def test_list_events_no_date_filter_returns_all(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    await _seed_past_future_events(kanae)
+    response = await client.client.get("/events")
+    assert response.status_code == 200
+    assert {e["name"] for e in response.json()["data"]} == {
+        "past-event",
+        "future-event",
+    }
+
+
+async def test_list_events_name_combines_with_after(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    # Two events sharing a trigram-matchable prefix but different start dates;
+    # name search + after must return only the one inside the window.
+    await _insert_event(
+        kanae.pool,
+        name="workshop-old",
+        start_at=_PAST,
+        end_at=_PAST + datetime.timedelta(hours=1),
+    )
+    await _insert_event(
+        kanae.pool,
+        name="workshop-new",
+        start_at=_FUTURE,
+        end_at=_FUTURE + datetime.timedelta(hours=1),
+    )
+    response = await client.client.get(
+        "/events", params={"name": "workshop", "after": _MID.isoformat()}
+    )
+    assert response.status_code == 200
+    assert {e["name"] for e in response.json()["data"]} == {"workshop-new"}

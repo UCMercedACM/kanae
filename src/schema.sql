@@ -119,6 +119,13 @@ CREATE TABLE IF NOT EXISTS project_tags (
     PRIMARY KEY (project_id, tag_id)
 );
 
+-- Bridge table for Events <--> Tags
+CREATE TABLE IF NOT EXISTS event_tags (
+    event_id UUID REFERENCES events (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    tag_id INTEGER REFERENCES tags (id) ON DELETE NO ACTION ON UPDATE NO ACTION,
+    PRIMARY KEY (event_id, tag_id)
+);
+
 -- Bridge table for Projects <--> Members
 -- Many need to adjust the cascade for deletions later.
 CREATE TABLE IF NOT EXISTS project_members (
