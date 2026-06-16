@@ -9,7 +9,7 @@ from argon2 import Parameters
 from argon2.low_level import Type
 from dateutil import tz
 from dateutil.relativedelta import relativedelta
-from fastapi import Depends, Query
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from core import store_thumbnail
@@ -31,6 +31,7 @@ from utils.responses import (
     DeleteResponse,
     ErrorResponse,
     ForbiddenResponse,
+    HTTPExceptionResponse,
     JoinResponse,
     NotFoundResponse,
     SuccessResponse,
@@ -115,7 +116,7 @@ class Events(BaseModel, frozen=True):
         "misc",
     ]
     timezone: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
-    creator_id: uuid.UUID
+    creator_id: Optional[uuid.UUID] = None
 
 
 class FullEvents(BaseModel, frozen=True):
@@ -138,18 +139,22 @@ class FullEvents(BaseModel, frozen=True):
     ]
     timezone: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     thumbnail: Optional[EventThumbnail] = None
-    creator_id: uuid.UUID
+    tags: Optional[list[Annotated[str, Field(pattern=_NO_NULL_REGEX)]]] = None
+    creator_id: Optional[uuid.UUID] = None
 
 
 @router.get("/events")
 async def list_events(
     request: RouteRequest,
     name: Annotated[Optional[str], Query(min_length=3, pattern=_NO_NULL_REGEX)] = None,
+    before: Optional[datetime.datetime] = None,
+    after: Optional[datetime.datetime] = None,
     *,
     params: Annotated[KanaeParams, Depends()],
 ) -> KanaePages[FullEvents]:
     """Search a list of events"""
-    args: list = [request.app.storage.base_thumbnail_url]
+    args: list = [request.app.storage.base_thumbnail_url, before, after]
+
     query = """
     SELECT
         id, name, description, start_at, end_at, location, type, timezone,
@@ -159,8 +164,16 @@ async def list_events(
                 'url', $1 || '/thumbnails/' || thumbnail_hash || '.webp'
             )
         END AS thumbnail,
+        (
+            SELECT array_agg(tags.title ORDER BY tags.title)
+            FROM event_tags
+            JOIN tags ON tags.id = event_tags.tag_id
+            WHERE event_tags.event_id = events.id
+        ) AS tags,
         creator_id
     FROM events
+    WHERE (start_at <= $2 OR $2 IS NULL)
+      AND (start_at >= $3 OR $3 IS NULL)
     ORDER BY start_at DESC
     """
 
@@ -174,10 +187,18 @@ async def list_events(
                     'url', $1 || '/thumbnails/' || thumbnail_hash || '.webp'
                 )
             END AS thumbnail,
+            (
+                SELECT array_agg(tags.title ORDER BY tags.title)
+                FROM event_tags
+                JOIN tags ON tags.id = event_tags.tag_id
+                WHERE event_tags.event_id = events.id
+            ) AS tags,
             creator_id
         FROM events
-        WHERE name % $2
-        ORDER BY similarity(name, $2) DESC
+        WHERE (start_at <= $2 OR $2 IS NULL)
+          AND (start_at >= $3 OR $3 IS NULL)
+          AND name % $4
+        ORDER BY similarity(name, $4) DESC
         """
         args.append(name)
 
@@ -199,6 +220,12 @@ async def get_event(request: RouteRequest, event_id: uuid.UUID) -> FullEvents:
                 'url', $2 || '/thumbnails/' || thumbnail_hash || '.webp'
             )
         END AS thumbnail,
+        (
+            SELECT array_agg(tags.title ORDER BY tags.title)
+            FROM event_tags
+            JOIN tags ON tags.id = event_tags.tag_id
+            WHERE event_tags.event_id = events.id
+        ) AS tags,
         creator_id
     FROM events
     WHERE id = $1;
@@ -321,7 +348,7 @@ async def delete_event(
     dependencies=[has_any_role(Role.ADMIN, Role.LEADS)],
     responses={200: {"model": Events}, 409: {"model": ConflictResponse}},
 )
-@router.limiter.limit("15/minute")
+@router.limiter.limit("20/minute")
 async def create_events(
     request: RouteRequest,
     req: Events,
@@ -492,6 +519,99 @@ async def remove_event_thumbnail(
     return DeleteResponse()
 
 
+class EventTagsResponse(BaseModel, frozen=True):
+    tags: list[str]
+
+
+class ModifyEventTags(BaseModel, frozen=True):
+    tags: list[Annotated[str, Field(pattern=_NO_NULL_REGEX)]]
+
+
+@router.put(
+    "/events/{event_id}/tags",
+    dependencies=[has_permissions(Event.edit)],
+    responses={
+        200: {"model": EventTagsResponse},
+        404: {"model": NotFoundResponse},
+        422: {"model": HTTPExceptionResponse},
+    },
+)
+@router.limiter.limit("5/minute")
+async def edit_event_tags(
+    request: RouteRequest,
+    event_id: uuid.UUID,
+    req: ModifyEventTags,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> EventTagsResponse:
+    """Replaces an event's entire tag set with the supplied one. Also allows for partial edits"""
+    query = """
+    WITH check_event AS (
+        SELECT 1 FROM events
+        WHERE id = $1 FOR UPDATE
+    ), delete_event_tags AS (
+        DELETE FROM event_tags
+        WHERE event_id = $1
+    )
+    SELECT EXISTS (SELECT 1 FROM check_event) AS exists;
+    """
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
+        try:
+            exists = await connection.fetchval(query, event_id)
+            if not exists:
+                await tr.rollback()
+                raise NotFoundError
+
+            if req.tags:
+                subquery = """
+                INSERT INTO event_tags (event_id, tag_id)
+                VALUES ($1, (SELECT id FROM tags WHERE title = $2))
+                ON CONFLICT DO NOTHING;
+                """
+                await connection.executemany(
+                    subquery, [(event_id, tag.lower()) for tag in req.tags]
+                )
+        except asyncpg.NotNullViolationError:
+            await tr.rollback()
+            raise HTTPException(
+                detail="The tag(s) specified is invalid. Please check the current tags available.",
+                status_code=422,
+            )
+        else:
+            await tr.commit()
+
+        return EventTagsResponse(tags=[tag.lower() for tag in req.tags])
+
+
+@router.delete(
+    "/events/{event_id}/tags",
+    dependencies=[has_permissions(Event.edit)],
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
+)
+@router.limiter.limit("5/minute")
+async def clear_event_tags(
+    request: RouteRequest,
+    event_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> DeleteResponse:
+    """Removes all tags from an event"""
+    query = """
+    WITH check_event AS (
+        SELECT 1 FROM events
+        WHERE id = $1
+    ), delete_event_tags AS (
+        DELETE FROM event_tags
+        WHERE event_id = $1
+    )
+    SELECT EXISTS (SELECT 1 FROM check_event) AS exists;
+    """
+    exists = await request.app.pool.fetchval(query, event_id)
+    if not exists:
+        raise NotFoundError
+    return DeleteResponse()
+
+
 @router.post(
     "/events/{event_id}/join",
     responses={
@@ -588,9 +708,7 @@ async def verify_attendance(
     """
     record = await request.app.pool.fetchrow(query, req.code)
     if not record:
-        raise NotFoundError(
-            detail="Apparently there is no attendance hash... Hmmmm.... this should never happen"
-        )
+        raise NotFoundError(detail="Unknown or invalid attendance code.")
 
     full_hash = compile_params(request.app.ph._parameters) + record["attendance_hash"]
 
@@ -601,19 +719,116 @@ async def verify_attendance(
     # As of now, the buffer times for registering would be:
     # - between the start and end at times
     # - one our before the event
-    buffer = record["start_at"] + relativedelta(hours=-1)
-    if not (now >= record["start_at"] and now <= record["end_at"]) or (now <= buffer):
+    window_open = record["start_at"] + relativedelta(hours=-1)
+    if not (window_open <= now <= record["end_at"]):
         msg = "You must verify your hash either during the event or one hour beforehand. Please try again."
         raise NotFoundError(msg)
 
     # should raise a error directly, which would need to be handled.
     if request.app.ph.verify(full_hash, str(event_id)):
         verify_query = """
-        INSERT INTO events_members (event_id, member_id, attended)
-        VALUES ($1, $2, TRUE)
-        ON CONFLICT (event_id, member_id) DO UPDATE
-        SET attended = excluded.attended;
+        WITH check_prior AS (
+            SELECT attended FROM events_members
+            WHERE event_id = $1 AND member_id = $2
+        ), upsert AS (
+            INSERT INTO events_members (event_id, member_id, attended)
+            VALUES ($1, $2, TRUE)
+            ON CONFLICT (event_id, member_id) DO UPDATE
+            SET attended = EXCLUDED.attended
+        )
+        SELECT COALESCE((SELECT attended FROM check_prior), FALSE) AS already_attended;
         """
-        await request.app.pool.execute(verify_query, event_id, session.identity.id)
+        already_attended = await request.app.pool.fetchval(
+            verify_query, event_id, session.identity.id
+        )
+        if already_attended:
+            msg = "Attendance was already recorded"
+            raise ConflictError(msg)
 
     return SuccessResponse(message="Successfully verified attendance!")
+
+
+class AttendanceMember(BaseModel, frozen=True):
+    id: uuid.UUID
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    planned: Optional[bool] = None
+    attended: bool
+
+
+@router.get(
+    "/events/{event_id}/attendance",
+    dependencies=[has_permissions(Event.edit)],
+    responses={
+        200: {"model": KanaePages[AttendanceMember]},
+        403: {"model": ForbiddenResponse},
+    },
+)
+async def list_event_attendance(
+    request: RouteRequest,
+    event_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+    *,
+    params: Annotated[KanaeParams, Depends()],
+) -> KanaePages[AttendanceMember]:
+    """Roster of members who planned/attended an event. Organizer-gated."""
+    query = """
+    SELECT members.id, members.name, events_members.planned, events_members.attended
+    FROM events_members
+    JOIN members ON members.id = events_members.member_id
+    WHERE events_members.event_id = $1
+    ORDER BY members.name
+    """
+    return await paginate(request.app.pool, query, event_id, params=params)  # ty: ignore[invalid-return-type]
+
+
+class AttendanceCodeResponse(BaseModel, frozen=True):
+    code: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+
+
+@router.get(
+    "/events/{event_id}/attendance-code",
+    dependencies=[has_permissions(Event.edit)],
+    responses={
+        200: {"model": AttendanceCodeResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+@router.limiter.limit("30/minute")
+async def get_attendance_code(
+    request: RouteRequest,
+    event_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> AttendanceCodeResponse:
+    """Returns the event's attendance code so the organizer can render a QR."""
+    query = "SELECT attendance_code FROM event_attendance_codes WHERE event_id = $1;"
+    row = await request.app.pool.fetchrow(query, event_id)
+    if not row:
+        raise NotFoundError
+
+    # We only need to match the first 8 characters
+    return AttendanceCodeResponse(code=row["attendance_code"][:8])
+
+
+@router.delete(
+    "/events/{event_id}/attendance/{member_id}",
+    dependencies=[has_permissions(Event.edit)],
+    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
+)
+@router.limiter.limit("10/minute")
+async def remove_attendance(
+    request: RouteRequest,
+    event_id: uuid.UUID,
+    member_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> DeleteResponse:
+    """Clears a member's attended flag for an event (keeps their RSVP)."""
+    query = """
+    UPDATE events_members
+    SET attended = FALSE
+    WHERE event_id = $1 AND member_id = $2
+    RETURNING member_id;
+    """
+    row = await request.app.pool.fetchrow(query, event_id, member_id)
+    if not row:
+        raise NotFoundError
+    return DeleteResponse()
