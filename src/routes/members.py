@@ -234,7 +234,7 @@ async def get_logged_projects(
         WHERE members.id = $1
         GROUP BY projects.id;
         """
-        args.append(since)  # ty: ignore[invalid-argument-type]
+        args.append(since)
 
     rows = await request.app.pool.fetch(query, *args)
     return [Projects(**dict(record)) for record in rows]
