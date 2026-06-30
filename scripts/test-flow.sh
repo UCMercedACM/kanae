@@ -63,6 +63,10 @@ H_CONTENT_TYPE="Content-Type: application/json"
 # shape only has to change here if the payload ever moves.
 ROLES_FILTER=".roles"
 
+# jq filter for pulling the id out of a create/whoami response, falling back to
+# empty so the caller's `[[ -n ... ]]` guard catches a missing/failed body.
+ID_FILTER='.id // empty'
+
 step() {
 	local msg="$1"
 	printf "\n${BLU}━━ %s ━━${RST}\n" "$msg"
@@ -171,7 +175,7 @@ ok "members row: $ROW"
 step "3. /members/me via session cookie"
 
 ME=$(curl -sb "$COOKIES" "$KANAE/members/me")
-ME_ID=$(jq -r '.id // empty' <<<"$ME")
+ME_ID=$(jq -r "$ID_FILTER" <<<"$ME")
 [[ "$ME_ID" == "$IDENTITY_ID" ]] \
 	|| fail "/members/me returned unexpected identity: $ME"
 ok "/members/me -> id=$ME_ID"
@@ -247,7 +251,7 @@ CREATE_RESP=$(curl -s -X POST "$KANAE/projects/create" \
 	-b "$COOKIES" \
 	-H "$H_CONTENT_TYPE" \
 	-d "$PROJ_BODY")
-PROJECT_ID=$(jq -r '.id // empty' <<<"$CREATE_RESP")
+PROJECT_ID=$(jq -r "$ID_FILTER" <<<"$CREATE_RESP")
 [[ -n "$PROJECT_ID" ]] \
 	|| fail "project create failed: $CREATE_RESP"
 ok "project id: $PROJECT_ID"
@@ -345,7 +349,7 @@ CREATE_EVENT_RESP=$(curl -s -X POST "$KANAE/events/create" \
 	-b "$COOKIES" \
 	-H "$H_CONTENT_TYPE" \
 	-d "$EVENT_BODY")
-EVENT_ID=$(jq -r '.id // empty' <<<"$CREATE_EVENT_RESP")
+EVENT_ID=$(jq -r "$ID_FILTER" <<<"$CREATE_EVENT_RESP")
 [[ -n "$EVENT_ID" ]] \
 	|| fail "event create failed: $CREATE_EVENT_RESP"
 ok "event id: $EVENT_ID"
@@ -648,7 +652,7 @@ ok "invitee id: $INVITEE_ID"
 INVITE_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/invites" \
 	-b "$COOKIES" -H "$H_CONTENT_TYPE" \
 	-d '{"member_id":"'"$INVITEE_ID"'","message":"come build with us"}')
-INVITE_ID=$(jq -r '.id // empty' <<<"$INVITE_RESP")
+INVITE_ID=$(jq -r "$ID_FILTER" <<<"$INVITE_RESP")
 [[ -n "$INVITE_ID" ]] || fail "invite create failed: $INVITE_RESP"
 [[ "$(jq -r '.kind' <<<"$INVITE_RESP")" == "invite" ]] \
 	|| fail "expected kind=invite, got: $INVITE_RESP"
@@ -705,7 +709,7 @@ assert_http 409 POST "$KANAE/projects/$PROJECT_ID/join" -b "$INVITEE_JAR"
 # the member submits a request (kind=request; member_id = invited_by = self)
 REQ_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/requests" \
 	-b "$INVITEE_JAR" -H "$H_CONTENT_TYPE" -d '{"message":"please add me"}')
-REQUEST_ID=$(jq -r '.id // empty' <<<"$REQ_RESP")
+REQUEST_ID=$(jq -r "$ID_FILTER" <<<"$REQ_RESP")
 [[ -n "$REQUEST_ID" ]] || fail "request create failed: $REQ_RESP"
 [[ "$(jq -r '.kind' <<<"$REQ_RESP")" == "request" ]] \
 	|| fail "expected kind=request, got: $REQ_RESP"
