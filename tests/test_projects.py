@@ -1179,14 +1179,14 @@ async def test_remove_project_media_returns_404_when_unlinked(
 # ──────────────────────────────────────────────────────────────────
 
 
-async def test_create_project_enforces_5_per_minute(
+async def test_create_project_enforces_15_per_minute(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
     identity_id = fake_ory.login_as(Role.MANAGER)
     await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
 
     with hiro.Timeline().freeze():
-        for i in range(5):
+        for i in range(15):
             response = await client.client.post(
                 "/projects/create", json=_create_payload(name=f"rl-{i}")
             )
