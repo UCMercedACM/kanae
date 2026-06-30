@@ -20,6 +20,10 @@ CREATE TYPE project_role AS ENUM (
 
 CREATE TYPE media_type AS ENUM ('image', 'video');
 
+CREATE TYPE project_join_policy AS ENUM ('open', 'request', 'closed');
+CREATE TYPE invite_kind         AS ENUM ('invite', 'request');
+CREATE TYPE invite_status       AS ENUM ('pending', 'accepted', 'declined', 'revoked', 'expired');
+
 CREATE TABLE IF NOT EXISTS members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT,
@@ -89,9 +93,29 @@ CREATE TABLE IF NOT EXISTS projects (
     link TEXT,
     type project_type DEFAULT 'independent',
     active BOOL DEFAULT TRUE,
+    join_policy project_join_policy NOT NULL DEFAULT 'open',
     thumbnail_hash TEXT,
     founded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
+
+CREATE TABLE IF NOT EXISTS project_invites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    member_id UUID NOT NULL REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    invited_by UUID REFERENCES members (id) ON DELETE SET NULL ON UPDATE NO ACTION,
+    kind invite_kind NOT NULL,
+    status invite_status NOT NULL DEFAULT 'pending',
+    message TEXT,
+    responded_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS project_invites_pending ON project_invites (project_id, member_id) WHERE status = 'pending';
+
+-- Inbox (member's handshakes) and project-side (lead's pending list) lookups
+CREATE INDEX IF NOT EXISTS project_invites_member_idx ON project_invites (member_id, status);
+CREATE INDEX IF NOT EXISTS project_invites_project_idx ON project_invites (project_id, status);
 
 -- Backs the `projects.name % $1` similarity search in routes/projects.py
 CREATE INDEX IF NOT EXISTS projects_name_trgm_idx ON projects USING gin (name gin_trgm_ops);

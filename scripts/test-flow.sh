@@ -621,13 +621,126 @@ SELF_GONE=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tA \
 [[ -z "$SELF_GONE" ]] || fail "self-delete members row still present"
 ok "self-service deletion removed members row"
 
-# ── 15. logout invalidates session (best-effort) ──────────────────────────────
+# ── 15. project invites — lead-invite + member-request handshakes ──────────────
+# The two-party invite system layered over plain /join. The smoke identity is
+# the "lead": it owns PROJECT_ID (Project.edit via the owners chain) AND holds
+# Role.MANAGER, either of which satisfies the
+# check_any(has_role(MANAGER), has_permissions(Project.edit)) gate on the
+# invite / list / join-policy / request-approval routes. A fresh invitee
+# identity drives the member side from its own session.
+#
+#   Flow A — lead invites  → member accepts → joins → leaves
+#   Flow B — join_policy=request → member requests → lead approves → joins
+#
+# Note on member_id semantics: project_invites.member_id is always the
+# *target* (the one who would join) for both kinds, so the same row drives the
+# member's inbox whether the lead invited them or they requested.
+step "15. project invites (lead-invite + member-request flows)"
+
+# A dedicated invitee with its own logged-in session (registration mints one).
+INVITEE_JAR="$(mktemp -t kanae-invitee-cookies.XXXXXX)"
+trap 'rm -f "$COOKIES" "$VICTIM_JAR" "$SELF_JAR" "$INVITEE_JAR"' EXIT
+register_victim "$INVITEE_JAR" "invitee-$(date +%s)-$$@ucmerced.edu"
+INVITEE_ID="$REGISTERED_ID"
+ok "invitee id: $INVITEE_ID"
+
+# ── Flow A: lead invites the member (kind=invite) ─────────────────────────────
+INVITE_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/invites" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" \
+	-d '{"member_id":"'"$INVITEE_ID"'","message":"come build with us"}')
+INVITE_ID=$(jq -r '.id // empty' <<<"$INVITE_RESP")
+[[ -n "$INVITE_ID" ]] || fail "invite create failed: $INVITE_RESP"
+[[ "$(jq -r '.kind' <<<"$INVITE_RESP")" == "invite" ]] \
+	|| fail "expected kind=invite, got: $INVITE_RESP"
+[[ "$(jq -r '.status' <<<"$INVITE_RESP")" == "pending" ]] \
+	|| fail "expected status=pending, got: $INVITE_RESP"
+ok "lead invited member -> invite $INVITE_ID (kind=invite, pending)"
+
+# lead view lists the pending invite
+curl -sb "$COOKIES" "$KANAE/projects/$PROJECT_ID/invites?kind=invite&status=pending" \
+	| jq -e --arg id "$INVITE_ID" '.[] | select(.id == $id)' >/dev/null \
+	|| fail "lead listing missing invite $INVITE_ID"
+ok "GET /projects/<id>/invites surfaces the pending invite"
+
+# the invite lands in the member's inbox
+curl -sb "$INVITEE_JAR" "$KANAE/members/me/projects/invites?kind=invite" \
+	| jq -e --arg id "$INVITE_ID" '.[] | select(.id == $id and .status == "pending")' >/dev/null \
+	|| fail "invite $INVITE_ID not in invitee inbox"
+ok "invite shows in invitee /members/me/projects/invites inbox"
+
+# the symmetry rule: for kind=invite only the *target* may accept — the lead is
+# not the target, so even an owner/manager is forbidden here.
+assert_http 403 POST "$KANAE/projects/$PROJECT_ID/invites/$INVITE_ID/accept" -b "$COOKIES"
+
+# the target member accepts → joins
+ACCEPT_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/invites/$INVITE_ID/accept" \
+	-b "$INVITEE_JAR" -H "$H_CONTENT_TYPE")
+[[ "$(jq -r '.status' <<<"$ACCEPT_RESP")" == "accepted" ]] \
+	|| fail "accept failed: $ACCEPT_RESP"
+ok "invitee accepted -> status=accepted"
+
+# membership now reflects the join
+curl -sb "$COOKIES" "$KANAE/projects/$PROJECT_ID" \
+	| jq -e --arg id "$INVITEE_ID" '.members[] | select(.id == $id)' >/dev/null \
+	|| fail "invitee not in project members after accept"
+ok "invitee is now a project member"
+
+# the row is terminal: a second accept 409s
+assert_http 409 POST "$KANAE/projects/$PROJECT_ID/invites/$INVITE_ID/accept" -b "$INVITEE_JAR"
+
+# member leaves so the request flow starts from a clean (non-member) state
+assert_http 200 DELETE "$KANAE/projects/$PROJECT_ID/leave" -b "$INVITEE_JAR"
+ok "invitee left the project"
+
+# ── Flow B: member requests to join under join_policy=request ──────────────────
+POLICY_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/join-policy" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"join_policy":"request"}')
+[[ "$(jq -r '.join_policy' <<<"$POLICY_RESP")" == "request" ]] \
+	|| fail "join-policy set failed: $POLICY_RESP"
+ok "join_policy -> request"
+
+# a direct /join is refused now — the policy gate points at the request flow
+assert_http 409 POST "$KANAE/projects/$PROJECT_ID/join" -b "$INVITEE_JAR"
+
+# the member submits a request (kind=request; member_id = invited_by = self)
+REQ_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/requests" \
+	-b "$INVITEE_JAR" -H "$H_CONTENT_TYPE" -d '{"message":"please add me"}')
+REQUEST_ID=$(jq -r '.id // empty' <<<"$REQ_RESP")
+[[ -n "$REQUEST_ID" ]] || fail "request create failed: $REQ_RESP"
+[[ "$(jq -r '.kind' <<<"$REQ_RESP")" == "request" ]] \
+	|| fail "expected kind=request, got: $REQ_RESP"
+ok "member requested to join -> request $REQUEST_ID (kind=request, pending)"
+
+# lead sees the pending request in the project listing
+curl -sb "$COOKIES" "$KANAE/projects/$PROJECT_ID/invites?kind=request&status=pending" \
+	| jq -e --arg id "$REQUEST_ID" '.[] | select(.id == $id)' >/dev/null \
+	|| fail "lead listing missing request $REQUEST_ID"
+ok "GET /projects/<id>/invites?kind=request surfaces the pending request"
+
+# lead approves (request-side gate satisfied by Role.MANAGER) → member joins
+APPROVE_RESP=$(curl -s -X POST "$KANAE/projects/$PROJECT_ID/invites/$REQUEST_ID/accept" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE")
+[[ "$(jq -r '.status' <<<"$APPROVE_RESP")" == "accepted" ]] \
+	|| fail "request approve failed: $APPROVE_RESP"
+ok "lead approved the request -> status=accepted"
+
+curl -sb "$COOKIES" "$KANAE/projects/$PROJECT_ID" \
+	| jq -e --arg id "$INVITEE_ID" '.members[] | select(.id == $id)' >/dev/null \
+	|| fail "invitee not in members after request approval"
+ok "invitee joined via approved request"
+
+# restore the open policy so the project ends in its default state
+curl -sf -X POST "$KANAE/projects/$PROJECT_ID/join-policy" \
+	-b "$COOKIES" -H "$H_CONTENT_TYPE" -d '{"join_policy":"open"}' >/dev/null
+ok "join_policy restored -> open"
+
+# ── 16. logout invalidates session (best-effort) ──────────────────────────────
 # Best-effort: a failure here means the session cookie is missing or already
 # expired, which is purely a kratos/curl-cookie-jar concern and tells us
 # nothing new about Kanae's behavior. The preceding 13 steps already cover
 # every Kanae integration path (whoami, role check, permission check, webhook
 # sync). Soften this one to a warn so a flaky logout doesn't bury the rest.
-step "14. logout (best-effort)"
+step "16. logout (best-effort)"
 
 # Diagnostic: see what Kratos has issued by the time we hit logout. Useful when
 # debugging "no active session" - tells us whether the jar holds the latest
@@ -662,4 +775,5 @@ printf '\n%sall checks passed%s\n' "$GRN" "$RST"
 printf "  identity id: %s\n" "$IDENTITY_ID"
 printf "  project id:  %s\n" "$PROJECT_ID"
 printf "  event id:    %s\n" "$EVENT_ID"
+printf "  invitee id:  %s\n" "$INVITEE_ID"
 printf "  email:       %s\n" "$EMAIL"
