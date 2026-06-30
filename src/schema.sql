@@ -21,8 +21,15 @@ CREATE TYPE project_role AS ENUM (
 CREATE TYPE media_type AS ENUM ('image', 'video');
 
 CREATE TYPE project_join_policy AS ENUM ('open', 'request', 'closed');
-CREATE TYPE invite_kind         AS ENUM ('invite', 'request');
-CREATE TYPE invite_status       AS ENUM ('pending', 'accepted', 'declined', 'revoked', 'expired');
+CREATE TYPE invite_kind AS ENUM ('invite', 'request');
+
+CREATE TYPE invite_status AS ENUM (
+    'pending',
+    'accepted',
+    'declined',
+    'revoked',
+    'expired'
+);
 
 CREATE TABLE IF NOT EXISTS members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
