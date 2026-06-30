@@ -1214,3 +1214,184 @@ async def test_member_roles_empty_when_none_granted(
     response = await client.client.get(f"/members/{identity_id}/roles")
     assert response.status_code == 200
     assert response.json() == {"roles": []}
+
+
+# ──────────────────────────────────────────────────────────────────
+# GET /members/me/projects/invites — caller's handshake inbox, 10/min
+# ──────────────────────────────────────────────────────────────────
+
+
+async def _insert_invite(
+    pool: asyncpg.Pool,
+    *,
+    project_id: uuid.UUID,
+    member_id: uuid.UUID | str,
+    kind: str,
+    invited_by: uuid.UUID | str | None = None,
+    status: str = "pending",
+    expires_at: datetime.datetime | None = None,
+) -> uuid.UUID:
+    return await pool.fetchval(
+        """
+        INSERT INTO project_invites
+            (project_id, member_id, invited_by, kind, status, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+        """,
+        project_id,
+        member_id,
+        invited_by,
+        kind,
+        status,
+        expires_at,
+    )
+
+
+async def test_my_invites_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.get("/members/me/projects/invites")
+    assert response.status_code == 401
+
+
+async def test_my_invites_empty_when_none(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.get("/members/me/projects/invites")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_my_invites_returns_own_handshakes(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    # one pending handshake per (project, member), so use two projects to hold
+    # both an inbound invite and an outbound request at once
+    project_a = await _insert_project(kanae.pool, name="inbox-a")
+    project_b = await _insert_project(kanae.pool, name="inbox-b")
+    invite_in = await _insert_invite(
+        kanae.pool, project_id=project_a, member_id=member_uuid, kind="invite"
+    )
+    request_out = await _insert_invite(
+        kanae.pool,
+        project_id=project_b,
+        member_id=member_uuid,
+        invited_by=member_uuid,
+        kind="request",
+    )
+
+    response = await client.client.get("/members/me/projects/invites")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert {row["id"] for row in body} == {str(invite_in), str(request_out)}
+
+
+async def test_my_invites_excludes_other_members(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    other = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=other, email="other@test.local")
+    project_id = await _insert_project(kanae.pool, name="inbox-isolation")
+    await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=other, kind="invite"
+    )
+
+    response = await client.client.get("/members/me/projects/invites")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_my_invites_filters_by_status(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="inbox-status")
+    pending = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=member_uuid, kind="invite"
+    )
+    await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=member_uuid,
+        invited_by=member_uuid,
+        kind="request",
+        status="accepted",
+    )
+
+    response = await client.client.get(
+        "/members/me/projects/invites", params={"status": "pending"}
+    )
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(pending)]
+
+
+async def test_my_invites_filters_by_kind(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_a = await _insert_project(kanae.pool, name="inbox-kind-a")
+    project_b = await _insert_project(kanae.pool, name="inbox-kind-b")
+    await _insert_invite(
+        kanae.pool, project_id=project_a, member_id=member_uuid, kind="invite"
+    )
+    request_out = await _insert_invite(
+        kanae.pool,
+        project_id=project_b,
+        member_id=member_uuid,
+        invited_by=member_uuid,
+        kind="request",
+    )
+
+    response = await client.client.get(
+        "/members/me/projects/invites", params={"kind": "request"}
+    )
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(request_out)]
+
+
+async def test_my_invites_lazily_marks_expired(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="inbox-expire")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=member_uuid,
+        kind="invite",
+        expires_at=datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1),
+    )
+
+    response = await client.client.get("/members/me/projects/invites")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    row = next(r for r in body if r["id"] == str(invite_id))
+    assert row["status"] == "expired"
+
+
+async def test_my_invites_enforces_10_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+
+    with hiro.Timeline().freeze():
+        for _ in range(10):
+            response = await client.client.get("/members/me/projects/invites")
+            assert response.status_code == 200
+
+        blocked = await client.client.get("/members/me/projects/invites")
+        assert blocked.status_code == 429

@@ -1179,14 +1179,14 @@ async def test_remove_project_media_returns_404_when_unlinked(
 # ──────────────────────────────────────────────────────────────────
 
 
-async def test_create_project_enforces_5_per_minute(
+async def test_create_project_enforces_15_per_minute(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
     identity_id = fake_ory.login_as(Role.MANAGER)
     await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
 
     with hiro.Timeline().freeze():
-        for i in range(5):
+        for i in range(15):
             response = await client.client.post(
                 "/projects/create", json=_create_payload(name=f"rl-{i}")
             )
@@ -1209,3 +1209,1225 @@ async def test_bulk_join_enforces_1_per_minute(
 
     second = await client.client.post(f"/projects/{project_id}/bulk-join", json=[])
     assert second.status_code == 429
+
+
+# ══════════════════════════════════════════════════════════════════
+# Project invite system
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _set_join_policy(
+    pool: asyncpg.Pool, *, project_id: uuid.UUID, policy: str
+) -> None:
+    await pool.execute(
+        "UPDATE projects SET join_policy = $2 WHERE id = $1", project_id, policy
+    )
+
+
+async def _insert_invite(
+    pool: asyncpg.Pool,
+    *,
+    project_id: uuid.UUID,
+    member_id: uuid.UUID | str,
+    kind: str,
+    invited_by: uuid.UUID | str | None = None,
+    status: str = "pending",
+    message: str | None = None,
+    expires_at: datetime.datetime | None = None,
+) -> uuid.UUID:
+    return await pool.fetchval(
+        """
+        INSERT INTO project_invites
+            (project_id, member_id, invited_by, kind, status, message, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+        """,
+        project_id,
+        member_id,
+        invited_by,
+        kind,
+        status,
+        message,
+        expires_at,
+    )
+
+
+async def _invite_status(pool: asyncpg.Pool, invite_id: uuid.UUID) -> str | None:
+    return await pool.fetchval(
+        "SELECT status FROM project_invites WHERE id = $1", invite_id
+    )
+
+
+async def _membership_role(
+    pool: asyncpg.Pool, *, project_id: uuid.UUID, member_id: uuid.UUID | str
+) -> str | None:
+    return await pool.fetchval(
+        "SELECT role FROM project_members WHERE project_id = $1 AND member_id = $2",
+        project_id,
+        member_id,
+    )
+
+
+def _past() -> datetime.datetime:
+    return datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Set join policy, manager OR Project.edit, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_set_join_policy_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.post(
+        f"/projects/{uuid.uuid4()}/join-policy", json={"join_policy": "request"}
+    )
+    assert response.status_code == 401
+
+
+async def test_set_join_policy_rejects_without_role_or_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.post(
+        f"/projects/{uuid.uuid4()}/join-policy", json={"join_policy": "request"}
+    )
+    assert response.status_code == 403
+
+
+async def test_set_join_policy_returns_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    missing = uuid.uuid4()
+    await fake_ory.grant("Project", str(missing), "edit", identity_id)
+    response = await client.client.post(
+        f"/projects/{missing}/join-policy", json={"join_policy": "request"}
+    )
+    assert response.status_code == 404
+
+
+async def test_set_join_policy_persists_with_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="policy-edit")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/projects/{project_id}/join-policy", json={"join_policy": "closed"}
+    )
+    assert response.status_code == 200
+    assert response.json()["join_policy"] == "closed"
+    assert (
+        await kanae.pool.fetchval(
+            "SELECT join_policy FROM projects WHERE id = $1", project_id
+        )
+        == "closed"
+    )
+
+
+async def test_set_join_policy_persists_with_manager_role(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    project_id = await _insert_project(kanae.pool, name="policy-manager")
+
+    response = await client.client.post(
+        f"/projects/{project_id}/join-policy", json={"join_policy": "request"}
+    )
+    assert response.status_code == 200
+    assert response.json()["join_policy"] == "request"
+
+
+async def test_set_join_policy_rejects_invalid_value(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    project_id = await _insert_project(kanae.pool, name="policy-bad")
+    response = await client.client.post(
+        f"/projects/{project_id}/join-policy", json={"join_policy": "whenever"}
+    )
+    assert response.status_code == 422
+
+
+async def test_join_rejected_once_policy_not_open(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="gated")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+
+    response = await client.client.post(f"/projects/{project_id}/join")
+    assert response.status_code == 409
+
+
+# ──────────────────────────────────────────────────────────────────
+# Create invite (lead invites member), manager OR Project.edit, 5/min
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_create_invite_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.post(
+        f"/projects/{uuid.uuid4()}/invites", json={"member_id": str(uuid.uuid4())}
+    )
+    assert response.status_code == 401
+
+
+async def test_create_invite_rejects_without_role_or_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.post(
+        f"/projects/{uuid.uuid4()}/invites", json={"member_id": str(uuid.uuid4())}
+    )
+    assert response.status_code == 403
+
+
+async def test_create_invite_persists_pending_row(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    # the initiator is recorded as `invited_by`, which references members(id)
+    await _insert_member(
+        kanae.pool, member_id=uuid.UUID(identity_id), email="lead@test.local"
+    )
+    project_id = await _insert_project(kanae.pool, name="inviting")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target, name="Invitee")
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites",
+        json={"member_id": str(target), "message": "join us"},
+    )
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert body["kind"] == "invite"
+    assert body["status"] == "pending"
+    assert body["member"]["id"] == str(target)
+    assert body["invited_by"] == identity_id
+    assert body["message"] == "join us"
+    assert body["expires_at"] is not None
+
+    row = await kanae.pool.fetchrow(
+        "SELECT kind, status, invited_by FROM project_invites WHERE id = $1",
+        uuid.UUID(body["id"]),
+    )
+    assert row["kind"] == "invite"
+    assert row["status"] == "pending"
+    assert row["invited_by"] == uuid.UUID(identity_id)
+
+
+async def test_create_invite_works_for_manager_role(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as(Role.MANAGER)
+    await _insert_member(
+        kanae.pool, member_id=uuid.UUID(identity_id), email="lead@test.local"
+    )
+    project_id = await _insert_project(kanae.pool, name="manager-invite")
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites", json={"member_id": str(target)}
+    )
+    assert response.status_code == 200
+
+
+async def test_create_invite_409_when_already_member(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="already-in")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=target, role="member"
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites", json={"member_id": str(target)}
+    )
+    assert response.status_code == 409
+
+
+async def test_create_invite_409_when_pending_already_exists(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="dup-invite")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites", json={"member_id": str(target)}
+    )
+    assert response.status_code == 409
+
+
+async def test_create_invite_404_when_member_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="no-such-member")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites", json={"member_id": str(uuid.uuid4())}
+    )
+    assert response.status_code == 404
+
+
+async def test_create_invite_allowed_after_decline(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # terminal rows do not trip the one-pending partial unique index
+    identity_id = fake_ory.login_as()
+    await _insert_member(
+        kanae.pool, member_id=uuid.UUID(identity_id), email="lead@test.local"
+    )
+    project_id = await _insert_project(kanae.pool, name="reinvite")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        kind="invite",
+        status="declined",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites", json={"member_id": str(target)}
+    )
+    assert response.status_code == 200
+
+
+async def test_create_invite_rejects_overlong_message(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="msg-cap")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites",
+        json={"member_id": str(target), "message": "x" * 501},
+    )
+    assert response.status_code == 422
+
+
+async def test_create_invite_rejects_missing_member_id(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    project_id = await _insert_project(kanae.pool, name="no-body")
+    response = await client.client.post(f"/projects/{project_id}/invites", json={})
+    assert response.status_code == 422
+
+
+# ──────────────────────────────────────────────────────────────────
+# Create request (member asks to join), auth only, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_create_request_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.post(f"/projects/{uuid.uuid4()}/requests", json={})
+    assert response.status_code == 401
+
+
+async def test_create_request_404_when_project_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.post(f"/projects/{uuid.uuid4()}/requests", json={})
+    assert response.status_code == 404
+
+
+async def test_create_request_persists_pending_row(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="requestable")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+
+    response = await client.client.post(
+        f"/projects/{project_id}/requests", json={"message": "please"}
+    )
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert body["kind"] == "request"
+    assert body["status"] == "pending"
+    assert body["member"]["id"] == identity_id
+    assert body["invited_by"] == identity_id
+
+
+async def test_create_request_409_when_already_member(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="member-already")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=member_uuid, role="member"
+    )
+
+    response = await client.client.post(f"/projects/{project_id}/requests", json={})
+    assert response.status_code == 409
+
+
+async def test_create_request_409_when_open(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+    project_id = await _insert_project(kanae.pool, name="open-proj")  # default open
+
+    response = await client.client.post(f"/projects/{project_id}/requests", json={})
+    assert response.status_code == 409
+
+
+async def test_create_request_409_when_closed(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+    project_id = await _insert_project(kanae.pool, name="closed-proj")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="closed")
+
+    response = await client.client.post(f"/projects/{project_id}/requests", json={})
+    assert response.status_code == 409
+
+
+async def test_create_request_409_on_duplicate_pending(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="dup-request")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+    await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=member_uuid, kind="request"
+    )
+
+    response = await client.client.post(f"/projects/{project_id}/requests", json={})
+    assert response.status_code == 409
+
+
+async def test_create_request_sweeps_stale_then_allows(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="stale-request")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+    stale = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=member_uuid,
+        kind="request",
+        expires_at=_past(),
+    )
+
+    response = await client.client.post(f"/projects/{project_id}/requests", json={})
+    assert response.status_code == 200
+    # the expired row was swept rather than blocking the fresh handshake
+    assert await _invite_status(kanae.pool, stale) == "expired"
+
+
+async def test_create_request_rejects_overlong_message(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(kanae.pool, member_id=uuid.UUID(identity_id))
+    project_id = await _insert_project(kanae.pool, name="req-msg-cap")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+
+    response = await client.client.post(
+        f"/projects/{project_id}/requests", json={"message": "x" * 501}
+    )
+    assert response.status_code == 422
+
+
+# ──────────────────────────────────────────────────────────────────
+# Accept invite, auth + row-resolved symmetry gate, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_accept_invite_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.post(
+        f"/projects/{uuid.uuid4()}/invites/{uuid.uuid4()}/accept"
+    )
+    assert response.status_code == 401
+
+
+async def test_accept_invite_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="accept-missing")
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{uuid.uuid4()}/accept"
+    )
+    assert response.status_code == 404
+
+
+async def test_accept_invite_target_member_joins(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="accept-invite")
+    invite_id = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
+    assert await _invite_status(kanae.pool, invite_id) == "accepted"
+    assert (
+        await _membership_role(kanae.pool, project_id=project_id, member_id=target)
+        == "member"
+    )
+
+
+async def test_accept_invite_rejects_non_target(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()  # some other authenticated member
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="accept-wrong")
+    invite_id = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 403
+    # the speculative UPDATE/insert were rolled back
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+    assert (
+        await _membership_role(kanae.pool, project_id=project_id, member_id=target)
+        is None
+    )
+
+
+async def test_accept_request_lead_via_edit_approves(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="approve-edit")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    requester = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=requester)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requester,
+        invited_by=requester,
+        kind="request",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 200
+    assert await _invite_status(kanae.pool, invite_id) == "accepted"
+    assert (
+        await _membership_role(kanae.pool, project_id=project_id, member_id=requester)
+        == "member"
+    )
+
+
+async def test_accept_request_lead_via_manager_approves(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    project_id = await _insert_project(kanae.pool, name="approve-manager")
+    requester = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=requester)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requester,
+        invited_by=requester,
+        kind="request",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 200
+
+
+async def test_accept_request_rejects_non_lead(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()  # plain member, no role/permission
+    project_id = await _insert_project(kanae.pool, name="approve-denied")
+    requester = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=requester)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requester,
+        invited_by=requester,
+        kind="request",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 403
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+    assert (
+        await _membership_role(kanae.pool, project_id=project_id, member_id=requester)
+        is None
+    )
+
+
+async def test_accept_invite_409_when_already_terminal(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="accept-terminal")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        kind="invite",
+        status="declined",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 409
+
+
+async def test_accept_invite_409_when_expired(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="accept-expired")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        kind="invite",
+        expires_at=_past(),
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 409
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+    assert (
+        await _membership_role(kanae.pool, project_id=project_id, member_id=target)
+        is None
+    )
+
+
+async def test_accept_invite_idempotent_when_already_member(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # a race where the target joined after the invite was created still resolves
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="accept-idem")
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=target, role="member"
+    )
+    invite_id = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 200
+    assert await _invite_status(kanae.pool, invite_id) == "accepted"
+
+
+async def test_accept_invite_isolated_by_project(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # an invite id is only actionable under its own project path
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="real-proj")
+    other_project = await _insert_project(kanae.pool, name="other-proj")
+    invite_id = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.post(
+        f"/projects/{other_project}/invites/{invite_id}/accept"
+    )
+    assert response.status_code == 404
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Decline invite, auth + row-resolved symmetry gate, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_decline_invite_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.post(
+        f"/projects/{uuid.uuid4()}/invites/{uuid.uuid4()}/decline"
+    )
+    assert response.status_code == 401
+
+
+async def test_decline_invite_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="decline-missing")
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{uuid.uuid4()}/decline"
+    )
+    assert response.status_code == 404
+
+
+async def test_decline_invite_target_member_declines(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="decline-invite")
+    invite_id = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/decline"
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "declined"
+    assert await _invite_status(kanae.pool, invite_id) == "declined"
+    # declining never creates a membership
+    assert (
+        await _membership_role(kanae.pool, project_id=project_id, member_id=target)
+        is None
+    )
+
+
+async def test_decline_request_lead_denies(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="deny-request")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    requester = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=requester)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requester,
+        invited_by=requester,
+        kind="request",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/decline"
+    )
+    assert response.status_code == 200
+    assert await _invite_status(kanae.pool, invite_id) == "declined"
+
+
+async def test_decline_invite_rejects_non_target(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="decline-wrong")
+    invite_id = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/decline"
+    )
+    assert response.status_code == 403
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+
+
+async def test_decline_request_rejects_non_lead(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="deny-denied")
+    requester = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=requester)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requester,
+        invited_by=requester,
+        kind="request",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/decline"
+    )
+    assert response.status_code == 403
+
+
+async def test_decline_invite_409_when_terminal(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="decline-terminal")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        kind="invite",
+        status="accepted",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/decline"
+    )
+    assert response.status_code == 409
+
+
+async def test_decline_invite_409_when_expired(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    target = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="decline-expired")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        kind="invite",
+        expires_at=_past(),
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites/{invite_id}/decline"
+    )
+    assert response.status_code == 409
+
+
+# ──────────────────────────────────────────────────────────────────
+# Revoke invite, initiator-only, 5 per minute
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_revoke_invite_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.delete(
+        f"/projects/{uuid.uuid4()}/invites/{uuid.uuid4()}/revoke"
+    )
+    assert response.status_code == 401
+
+
+async def test_revoke_invite_404_when_missing(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="revoke-missing")
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{uuid.uuid4()}/revoke"
+    )
+    assert response.status_code == 404
+
+
+async def test_revoke_invite_initiator_lead_succeeds(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    lead = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=lead)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="revoke-invite")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        invited_by=lead,
+        kind="invite",
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "revoked"
+    assert await _invite_status(kanae.pool, invite_id) == "revoked"
+
+
+async def test_revoke_request_initiator_member_succeeds(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    requester = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=requester)
+    project_id = await _insert_project(kanae.pool, name="revoke-request")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requester,
+        invited_by=requester,
+        kind="request",
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 200
+    assert await _invite_status(kanae.pool, invite_id) == "revoked"
+
+
+async def test_revoke_invite_rejects_non_initiator(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()  # not the initiator
+    lead = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=lead)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="revoke-wrong")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        invited_by=lead,
+        kind="invite",
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 403
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+
+
+async def test_revoke_invite_409_when_terminal(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    lead = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=lead)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="revoke-terminal")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        invited_by=lead,
+        kind="invite",
+        status="revoked",
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 409
+
+
+async def test_revoke_invite_409_when_expired(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    lead = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=lead)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="revoke-expired")
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        invited_by=lead,
+        kind="invite",
+        expires_at=_past(),
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 409
+
+
+# ──────────────────────────────────────────────────────────────────
+# List project invites (lead view), manager OR Project.edit, 10/min
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_list_project_invites_requires_session(client: KanaeTestClient) -> None:
+    response = await client.client.get(f"/projects/{uuid.uuid4()}/invites")
+    assert response.status_code == 401
+
+
+async def test_list_project_invites_rejects_without_role_or_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.get(f"/projects/{uuid.uuid4()}/invites")
+    assert response.status_code == 403
+
+
+async def test_list_project_invites_returns_rows(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="list-invites")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    first = uuid.uuid4()
+    second = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=first)
+    await _insert_member(kanae.pool, member_id=second)
+    invite_a = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=first, kind="invite"
+    )
+    invite_b = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=second, kind="request"
+    )
+
+    response = await client.client.get(f"/projects/{project_id}/invites")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert {row["id"] for row in body} == {str(invite_a), str(invite_b)}
+
+
+async def test_list_project_invites_filters_by_status(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="filter-status")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    pending_member = uuid.uuid4()
+    declined_member = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=pending_member)
+    await _insert_member(kanae.pool, member_id=declined_member)
+    pending = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=pending_member, kind="invite"
+    )
+    await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=declined_member,
+        kind="invite",
+        status="declined",
+    )
+
+    response = await client.client.get(
+        f"/projects/{project_id}/invites", params={"status": "pending"}
+    )
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(pending)]
+
+
+async def test_list_project_invites_filters_by_kind(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="filter-kind")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    invited = uuid.uuid4()
+    requested = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=invited)
+    await _insert_member(kanae.pool, member_id=requested)
+    await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=invited, kind="invite"
+    )
+    request_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requested,
+        invited_by=requested,
+        kind="request",
+    )
+
+    response = await client.client.get(
+        f"/projects/{project_id}/invites", params={"kind": "request"}
+    )
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(request_id)]
+
+
+async def test_list_project_invites_lazily_marks_expired(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="lazy-expire")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        kind="invite",
+        expires_at=_past(),
+    )
+
+    response = await client.client.get(f"/projects/{project_id}/invites")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    row = next(r for r in body if r["id"] == str(invite_id))
+    # surfaced as expired even though the stored row is still pending
+    assert row["status"] == "expired"
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+
+
+async def test_list_project_invites_isolated_by_project(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="mine")
+    other = await _insert_project(kanae.pool, name="theirs")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    member = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=member)
+    await _insert_invite(kanae.pool, project_id=other, member_id=member, kind="invite")
+
+    response = await client.client.get(f"/projects/{project_id}/invites")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Invite-system rate limits
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_set_join_policy_enforces_5_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    project_id = await _insert_project(kanae.pool, name="policy-rate")
+
+    with hiro.Timeline().freeze():
+        for _ in range(5):
+            response = await client.client.post(
+                f"/projects/{project_id}/join-policy", json={"join_policy": "request"}
+            )
+            assert response.status_code == 200
+
+        blocked = await client.client.post(
+            f"/projects/{project_id}/join-policy", json={"join_policy": "open"}
+        )
+        assert blocked.status_code == 429
+
+
+async def test_create_invite_enforces_5_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    await _insert_member(
+        kanae.pool, member_id=uuid.UUID(identity_id), email="lead@test.local"
+    )
+    project_id = await _insert_project(kanae.pool, name="invite-rate")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+
+    with hiro.Timeline().freeze():
+        for _ in range(5):
+            target = uuid.uuid4()
+            await _insert_member(kanae.pool, member_id=target)
+            response = await client.client.post(
+                f"/projects/{project_id}/invites", json={"member_id": str(target)}
+            )
+            assert response.status_code == 200
+
+        blocked = await client.client.post(
+            f"/projects/{project_id}/invites", json={"member_id": str(uuid.uuid4())}
+        )
+        assert blocked.status_code == 429
+
+
+async def test_create_request_enforces_5_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()  # authenticated; missing project yields 404 but still counts
+    # the limiter buckets per-URL, so every hit must reuse the same path
+    project_id = uuid.uuid4()
+    with hiro.Timeline().freeze():
+        for _ in range(5):
+            response = await client.client.post(
+                f"/projects/{project_id}/requests", json={}
+            )
+            assert response.status_code == 404
+
+        blocked = await client.client.post(f"/projects/{project_id}/requests", json={})
+        assert blocked.status_code == 429
+
+
+async def test_accept_invite_enforces_5_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    # the limiter buckets per-URL, so every hit must reuse the same path
+    project_id = uuid.uuid4()
+    invite_id = uuid.uuid4()
+    with hiro.Timeline().freeze():
+        for _ in range(5):
+            response = await client.client.post(
+                f"/projects/{project_id}/invites/{invite_id}/accept"
+            )
+            assert response.status_code == 404
+
+        blocked = await client.client.post(
+            f"/projects/{project_id}/invites/{invite_id}/accept"
+        )
+        assert blocked.status_code == 429
+
+
+async def test_list_project_invites_enforces_10_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="list-rate")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+
+    with hiro.Timeline().freeze():
+        for _ in range(10):
+            response = await client.client.get(f"/projects/{project_id}/invites")
+            assert response.status_code == 200
+
+        blocked = await client.client.get(f"/projects/{project_id}/invites")
+        assert blocked.status_code == 429

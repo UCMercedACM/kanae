@@ -32,7 +32,7 @@ from utils.responses import (
 from utils.router import KanaeRouter
 
 from .events import Events, FullEvents
-from .projects import Projects
+from .projects import ProjectInvite, Projects
 
 # Per-hook context labels. If regenerating hook keys, the version suffix must be bumped to change them
 _SETTINGS_CONTEXT = b"kratos.settings.v1"
@@ -238,6 +238,70 @@ async def get_logged_projects(
 
     rows = await request.app.pool.fetch(query, *args)
     return [Projects(**dict(record)) for record in rows]
+
+
+@router.get(
+    "/members/me/projects/invites",
+    responses={200: {"model": list[ProjectInvite]}},
+)
+@router.limiter.limit("10/minute")
+async def list_my_project_invites(
+    request: RouteRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+    *,
+    status: Optional[
+        Literal["pending", "accepted", "declined", "revoked", "expired"]
+    ] = None,
+    kind: Optional[Literal["invite", "request"]] = None,
+) -> list[ProjectInvite]:
+    """List currently authenticated member's project invites"""
+    args = [session.identity.id]
+    constraint = "WHERE invites.member_id = $1"
+
+    if status and kind:
+        constraint = (
+            "WHERE invites.member_id = $1 AND invites.status = $2 AND invites.kind = $3"
+        )
+        args.extend((status, kind))
+    elif status or kind:
+        column = "status" if status else "kind"
+        constraint = f"WHERE invites.member_id = $1 AND invites.{column} = $2"
+        args.append(status or kind)
+
+    query = f"""
+    WITH invites AS (
+        SELECT
+            project_invites.id,
+            project_invites.project_id,
+            project_invites.member_id,
+            jsonb_build_object('id', members.id, 'name', members.name) AS member,
+            project_invites.invited_by,
+            project_invites.kind,
+            CASE
+                WHEN project_invites.status = 'pending'
+                     AND project_invites.expires_at IS NOT NULL
+                     AND project_invites.expires_at <= NOW()
+                THEN 'expired'
+                ELSE project_invites.status
+            END AS status,
+            project_invites.message,
+            project_invites.created_at,
+            project_invites.responded_at,
+            project_invites.expires_at
+        FROM project_invites
+        INNER JOIN members ON members.id = project_invites.member_id
+    )
+    SELECT
+        invites.id, invites.project_id, invites.member,
+        invites.invited_by, invites.kind, invites.status,
+        invites.message, invites.created_at,
+        invites.responded_at, invites.expires_at
+    FROM invites
+    {constraint}
+    ORDER BY invites.created_at DESC
+    """
+    rows = await request.app.pool.fetch(query, *args)
+    return [ProjectInvite(**dict(row)) for row in rows]
 
 
 @router.get("/members/me/events")
