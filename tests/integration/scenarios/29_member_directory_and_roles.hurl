@@ -6,9 +6,10 @@
 #
 # Bootstrapped state (tests/integration/init.sh): the members table holds
 # root/admin/manager/leads/member, and Keto grants admin->admin, manager->manager,
-# leads->leads, root->{root,admin}; member holds no role. Scenario 28 leaves
-# member role-less (its grant/revoke is net-zero), so the empty-set assertions
-# below are stable.
+# leads->leads, root->{root,admin}; member holds no role. No scenario ever grants
+# `member` a role — scenario 28's grant/revoke targets a dedicated `scratch`
+# identity instead — so the empty-set assertions below are stable even under
+# Hurl's parallel --test execution.
 
 # ── unauthenticated → 401 on both routes ──────────────────────────────────────
 GET {{KANAE_URL}}/members

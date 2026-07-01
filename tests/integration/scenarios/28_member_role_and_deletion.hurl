@@ -6,7 +6,10 @@
 # concerns hurl is uniquely good at: real Keto role gating (401/403), the
 # self-modification guard (409), schema rejection of unassignable roles (422),
 # the not-found path (404), and a net-zero ROOT grant→verify→revoke that drives
-# the real Keto write path. The destructive delete + the /members/me
+# the real Keto write path against a dedicated role-less `scratch` identity
+# (SCRATCH_ID) — kept distinct from `member` so this mutation never races the
+# role-less assertions other scenarios make about `member` under Hurl's
+# parallel --test execution. The destructive delete + the /members/me
 # self-service flow are covered end-to-end by scripts/test-flow.sh and the unit
 # suite (tests/test_members.py), which can mint the sudo/AAL2 conditions hurl
 # cannot.
@@ -91,26 +94,26 @@ HTTP 404
 DELETE {{KANAE_URL}}/members/00000000-0000-0000-0000-000000000000
 HTTP 404
 
-# grant manager to MEMBER → 200
-PUT {{KANAE_URL}}/members/{{MEMBER_ID}}/role
+# grant manager to SCRATCH → 200
+PUT {{KANAE_URL}}/members/{{SCRATCH_ID}}/role
 Content-Type: application/json
 { "role": "manager", "action": "grant" }
 HTTP 200
 
 # the real Keto tuple now resolves (direct read, bypassing Kanae's cache)
-GET {{KETO_READ_URL}}/relation-tuples/check?namespace=Role&object=manager&relation=member&subject_id={{MEMBER_ID}}
+GET {{KETO_READ_URL}}/relation-tuples/check?namespace=Role&object=manager&relation=member&subject_id={{SCRATCH_ID}}
 HTTP 200
 [Asserts]
 jsonpath "$.allowed" == true
 
-# revoke it again → 200, restoring MEMBER to role-less for other scenarios
-PUT {{KANAE_URL}}/members/{{MEMBER_ID}}/role
+# revoke it again → 200, restoring SCRATCH to role-less
+PUT {{KANAE_URL}}/members/{{SCRATCH_ID}}/role
 Content-Type: application/json
 { "role": "manager", "action": "revoke" }
 HTTP 200
 
 # Keto's check endpoint signals the result via status: 200 allowed, 403 denied.
-GET {{KETO_READ_URL}}/relation-tuples/check?namespace=Role&object=manager&relation=member&subject_id={{MEMBER_ID}}
+GET {{KETO_READ_URL}}/relation-tuples/check?namespace=Role&object=manager&relation=member&subject_id={{SCRATCH_ID}}
 HTTP 403
 [Asserts]
 jsonpath "$.allowed" == false
