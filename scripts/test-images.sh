@@ -44,7 +44,19 @@ DB_NAME=${DB_NAME:-kanae}
 DB_USER=${DB_USER:-postgres}
 
 COOKIES="$(mktemp -t kanae-images-cookies.XXXXXX)"
-trap 'rm -f "$COOKIES"' EXIT
+
+# Presigned upload URLs are signed by kanae (in-container) against the internal
+# S3 host "garage:3900", which the host running this script can't resolve — a
+# bare PUT there fails with curl code 000. Rather than editing /etc/hosts, point
+# just this script's subprocesses at the published port via a private glibc
+# HOSTALIASES file: getaddrinfo redirects the single-label host "garage" to
+# localhost for both curl (single PUT) and Python's urllib (multipart), while the
+# Host header — and therefore the SigV4 signature — stays "garage:3900".
+HOSTALIASES_FILE="$(mktemp -t kanae-images-hostaliases.XXXXXX)"
+printf 'garage localhost\n' >"$HOSTALIASES_FILE"
+export HOSTALIASES="$HOSTALIASES_FILE"
+
+trap 'rm -f "$COOKIES" "$HOSTALIASES_FILE"' EXIT
 
 EMAIL="images-$(date +%s)-$$@ucmerced.edu"
 PASSWORD="correct-horse-battery-staple-2026"
