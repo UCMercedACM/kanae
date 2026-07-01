@@ -171,9 +171,10 @@ _garage_pid=$!
 		[manager]=MANAGER_EMAIL
 		[leads]=LEADS_EMAIL
 		[member]=MEMBER_EMAIL
+		[scratch]=SCRATCH_EMAIL
 	)
 	declare -A IDS=()
-	ROLE_ORDER=(root admin manager leads member)
+	ROLE_ORDER=(root admin manager leads member scratch)
 
 	create_or_lookup_identity() {
 		local role="$1" email="$2" body resp code
@@ -267,6 +268,7 @@ _garage_pid=$!
 		printf 'MANAGER_ID=%s\n' "${IDS[manager]}"
 		printf 'LEADS_ID=%s\n' "${IDS[leads]}"
 		printf 'MEMBER_ID=%s\n' "${IDS[member]}"
+		printf 'SCRATCH_ID=%s\n' "${IDS[scratch]}"
 	} >"$HURL_SECRETS_FILE"
 ) &
 _ory_pid=$!
