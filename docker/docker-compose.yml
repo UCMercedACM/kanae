@@ -7,7 +7,7 @@ include:
 services:
   kanae:
     container_name: kanae
-    image: ghcr.io/ucmercedacm/kanae:latest
+    image: ghcr.io/ucmercedacm/kanae:edge
     environment:
       GRANIAN_WORKERS: ${KANAE_WORKERS:-1}
     volumes:
@@ -15,6 +15,7 @@ services:
       - ${CONFIG_LOCATION}:/kanae/config.yml
     ports:
       - 8000:8000
+      - 9555:9555
     networks:
       - default
       - db_bridge
@@ -31,8 +32,19 @@ services:
       keto:
         condition: service_started
         restart: true
+      garage:
+        condition: service_healthy
+        restart: true
+      garage-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
+    healthcheck: 
+      test: curl -fsS --max-time 2 http://127.0.0.1:8000
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   database:
     container_name: kanae_postgres
@@ -90,7 +102,37 @@ services:
       - garage:/var/lib/garage/meta
       - ../garage.toml:/etc/garage.toml
     restart: unless-stopped
-    
+    healthcheck:
+      # As per Dockerfile: https://git.deuxfleurs.fr/Deuxfleurs/garage/src/branch/main-v2/Dockerfile
+      # There is no distro so we have to do this
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  garage-init:
+    container_name: kanae_garage_init
+    build:
+      dockerfile_inline: |
+        FROM alpine:latest
+        RUN apk add --no-cache bash aws-cli yq
+        COPY --from=dxflrs/garage:v2.3.0 /garage /usr/local/bin/garage
+    entrypoint: bash /garage-init.sh
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+    volumes:
+      - ${CONFIG_LOCATION}:/kanae/config.yml:ro
+      - garage:/var/lib/garage/data
+      - garage:/var/lib/garage/meta
+      - ../garage.toml:/etc/garage.toml:ro
+      - ./garage-init.sh:/garage-init.sh:ro
+    network_mode: "service:garage"
+    depends_on:
+      garage:
+        condition: service_healthy
+    restart: "no"
+
 
   migrate:
     container_name: kanae_migrate
@@ -114,6 +156,7 @@ services:
 
 volumes:
   database:
+  garage:
 
 networks:
   db_bridge:
