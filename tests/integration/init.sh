@@ -75,6 +75,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 	yq -i '.ory.keto_read_url    = "http://keto:4466"' "$CONFIG_FILE"
 	yq -i '.ory.keto_write_url   = "http://keto:4467"' "$CONFIG_FILE"
 	yq -i '.storage.url          = "http://garage:3900"' "$CONFIG_FILE"
+	yq -i '.storage.presign_url  = "http://localhost:3900"' "$CONFIG_FILE"
 	yq -i '.postgres_uri = "postgresql://postgres:password@database:5432/kanae"' "$CONFIG_FILE"
 
 	fresh_config=1
