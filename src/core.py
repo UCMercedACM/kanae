@@ -246,6 +246,7 @@ class PublicConfig(TypedDict):
 
 class StorageConfig(BaseModel, frozen=True):
     url: str
+    presign_url: str
     region: str = "garage"
     bucket: str
     public: PublicConfig
@@ -520,10 +521,16 @@ class MultipartUploadChunks(NamedTuple):
 
 class StorageClient:
     def __init__(
-        self, config: StorageConfig, *, client: S3Client, glide: GlideManager
+        self,
+        config: StorageConfig,
+        *,
+        client: S3Client,
+        presign_client: S3Client,
+        glide: GlideManager,
     ) -> None:
         self.bucket = config.bucket
         self.client = client
+        self.presign_client = presign_client
 
         self.base_thumbnail_url = config.public["url"]
 
@@ -565,7 +572,7 @@ class StorageClient:
         Returns:
             str: Presigned URL the client uses to PUT the bytes directly.
         """
-        return await self.client.generate_presigned_url(
+        return await self.presign_client.generate_presigned_url(
             "put_object",
             Params={
                 "Bucket": self.bucket,
@@ -600,7 +607,7 @@ class StorageClient:
             UploadChunk(
                 index=index,
                 url=(
-                    await self.client.generate_presigned_url(
+                    await self.presign_client.generate_presigned_url(
                         "upload_part",
                         Params={**params, "PartNumber": index},
                         ExpiresIn=_PRESIGN_PUT_TTL,
@@ -744,7 +751,7 @@ class StorageClient:
         Returns:
             str: Presigned GET URL the client can use to read the object.
         """
-        return await self.client.generate_presigned_url(
+        return await self.presign_client.generate_presigned_url(
             "get_object",
             Params={
                 "Bucket": self.bucket,
@@ -1360,10 +1367,23 @@ class Kanae(FastAPI):
                 aws_secret_access_key=self.config.storage.secret_key,
                 config=AioConfig(signature_version="s3v4"),
             ) as s3_client,
+            self._boto_session.create_client(
+                "s3",
+                endpoint_url=self.config.storage.presign_url,
+                region_name=self.config.storage.region,
+                aws_access_key_id=self.config.storage.key_id,
+                aws_secret_access_key=self.config.storage.secret_key,
+                config=AioConfig(
+                    signature_version="s3v4", s3={"addressing_style": "path"}
+                ),
+            ) as presign_s3_client,
         ):
             app.ory = OryClient(self.config.ory, session=app.session, glide=app.glide)
             app.storage = StorageClient(
-                self.config.storage, client=s3_client, glide=app.glide
+                self.config.storage,
+                client=s3_client,
+                presign_client=presign_s3_client,
+                glide=app.glide,
             )
             self.sudo = SudoClient(app.pool)
             app.limiter.attach(app.glide)
