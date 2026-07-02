@@ -537,6 +537,7 @@ async def join_project(
     project_id: uuid.UUID,
     session: Annotated[KanaeSession, Depends(use_session)],
 ) -> JoinResponse:
+    """Joins a given project"""
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
     WITH target AS (
@@ -599,6 +600,7 @@ async def bulk_join_project(
     project_id: uuid.UUID,
     req: list[BulkJoinMember],
 ) -> JoinResponse:
+    """Join projects in bulk. Must be less than 10 members"""
     if len(req) > 10:
         msg = "Must be less than 10 members"
         raise BadRequestError(msg)
@@ -672,6 +674,7 @@ async def leave_project(
     project_id: uuid.UUID,
     session: Annotated[KanaeSession, Depends(use_session)],
 ) -> DeleteResponse:
+    """Leaves a given project"""
     query = """
     DELETE FROM project_members
     WHERE project_id = $1 AND member_id = $2;
@@ -925,14 +928,9 @@ async def _can_revoke_invite(
     project_id: uuid.UUID,
     subject_id: str,
 ) -> bool:
-    # The initiator can always revoke their own handshake.
     if invited_by is not None and str(invited_by) == str(subject_id):
         return True
 
-    # Project-side invites can additionally be revoked by any lead holding
-    # Project.edit, which covers orphaned invites (initiator deleted ->
-    # invited_by NULL) and co-lead cleanup. Requests stay initiator-only; a lead
-    # rejects a request by declining it, not revoking it.
     if kind == "invite":
         return await request.app.ory.check_permission(
             "Role", Role.MANAGER, "member", subject_id
@@ -1011,8 +1009,6 @@ async def accept_project_invite(
                 raise NotFoundError(_INVITE_NOT_FOUND)
 
             if row["expired"]:
-                # Persist the lazily-detected expiry (the expired_update CTE
-                # flipped the pending row) instead of only masking it on reads.
                 await tr.commit()
                 raise ConflictError(_EXPIRED_INVITE)
 
@@ -1099,8 +1095,6 @@ async def decline_project_invite(
                 raise NotFoundError(_INVITE_NOT_FOUND)
 
             if row["expired"]:
-                # Persist the lazily-detected expiry (the expired_update CTE
-                # flipped the pending row) instead of only masking it on reads.
                 await tr.commit()
                 raise ConflictError(_EXPIRED_INVITE)
 
@@ -1182,8 +1176,6 @@ async def revoke_project_invite(
                 raise NotFoundError(_INVITE_NOT_FOUND)
 
             if row["expired"]:
-                # Persist the lazily-detected expiry (the expired_update CTE
-                # flipped the pending row) instead of only masking it on reads.
                 await tr.commit()
                 raise ConflictError(_EXPIRED_INVITE)
 
