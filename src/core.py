@@ -35,7 +35,7 @@ import yaml
 from aiobotocore.config import AioConfig
 from aiobotocore.session import AioSession
 from argon2 import PasswordHasher
-from argon2.exceptions import VerificationError
+from argon2.exceptions import InvalidHashError, VerificationError
 from blake3 import blake3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError as BotoClientError
@@ -1302,6 +1302,10 @@ class Kanae(FastAPI):
             self.verification_error_handler,  # ty: ignore[invalid-argument-type]
         )
         self.add_exception_handler(
+            InvalidHashError,
+            self.invalid_hash_error_handler,  # ty: ignore[invalid-argument-type]
+        )
+        self.add_exception_handler(
             RateLimitExceeded,
             rate_limit_exceeded_handler,  # ty: ignore[invalid-argument-type]
         )
@@ -1349,6 +1353,15 @@ class Kanae(FastAPI):
         return ORJSONResponse(
             content={"error": "Failed to verify, entirely invalid hash"},
             status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    def invalid_hash_error_handler(
+        self, request: RouteRequest, exc: InvalidHashError
+    ) -> ORJSONResponse:
+        self._logger.error("Encountered a malformed stored argon2 hash: %s", exc)
+        return ORJSONResponse(
+            content={"error": "Stored attendance hash is malformed"},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
     ### Server-related utilities

@@ -647,7 +647,7 @@ async def test_verify_attendance_within_pre_event_hour_succeeds(
     assert response.json() == {"message": "Successfully verified attendance!"}
 
 
-async def test_verify_attendance_outside_window_returns_404(
+async def test_verify_attendance_outside_window_returns_409(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
     identity_id = fake_ory.login_as(Role.ADMIN)
@@ -666,7 +666,7 @@ async def test_verify_attendance_outside_window_returns_404(
     response = await client.client.post(
         f"/events/{event_id}/verify", json={"code": code}
     )
-    assert response.status_code == 404
+    assert response.status_code == 409
 
 
 async def test_verify_attendance_already_recorded_returns_409(
@@ -691,11 +691,11 @@ async def test_verify_attendance_already_recorded_returns_409(
     assert second.status_code == 409
 
 
-async def test_verify_attendance_wrong_event_returns_403(
+async def test_verify_attendance_wrong_event_returns_404(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
-    """A valid code submitted against a different event's URL fails the argon2
-    check, which the global VerificationError handler turns into a 403."""
+    """A valid code submitted against a different event's URL doesn't resolve a
+    row, since the lookup is scoped to the event in the path → 404."""
     identity_id = fake_ory.login_as(Role.ADMIN)
     member_uuid = uuid.UUID(identity_id)
     await _insert_member(kanae.pool, member_id=member_uuid)
@@ -718,11 +718,43 @@ async def test_verify_attendance_wrong_event_returns_403(
     )
     assert event_a != event_b
 
-    # event A's code, event B's URL → hash mismatch → 403.
+    # event A's code, event B's URL → no row scoped to event B → 404.
     response = await client.client.post(
         f"/events/{event_b}/verify", json={"code": code_a}
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
+
+
+async def test_verify_attendance_malformed_hash_returns_500(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    """A corrupt stored hash is a server-side integrity fault, not a client
+    error: the dedicated InvalidHashError handler returns a clean 500."""
+    identity_id = fake_ory.login_as(Role.ADMIN)
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+
+    event_id, code = await _create_event_with_code(
+        client,
+        kanae,
+        member_uuid=member_uuid,
+        name="corrupt-hash",
+        start_offset=datetime.timedelta(minutes=-30),
+        end_offset=datetime.timedelta(hours=1),
+    )
+
+    # Corrupt the stored hash so argon2 raises InvalidHashError on verify.
+    await kanae.pool.execute(
+        "UPDATE event_attendance_codes SET attendance_hash = $2 WHERE event_id = $1",
+        event_id,
+        "not-a-valid-argon2-hash",
+    )
+
+    response = await client.client.post(
+        f"/events/{event_id}/verify", json={"code": code}
+    )
+    assert response.status_code == 500
+    assert response.json() == {"error": "Stored attendance hash is malformed"}
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -1053,6 +1085,23 @@ async def test_edit_event_tags_partial_removal_keeps_survivors(
     )
     assert response.status_code == 200
     assert await _event_tag_titles(kanae.pool, event_id) == {"ai", "swe"}
+
+
+async def test_edit_event_tags_response_dedupes_and_reflects_db(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # Case-variant duplicates all lower-case to one tag; the response echoes the
+    # resulting DB state (deduped, sorted), not the raw request list.
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="tag-dedup")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await _insert_tag(kanae.pool, title="python")
+
+    response = await client.client.put(
+        f"/events/{event_id}/tags", json={"tags": ["python", "Python", "python"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["tags"] == ["python"]
 
 
 async def test_edit_event_tags_unknown_tag_rolls_back(
