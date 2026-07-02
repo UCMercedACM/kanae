@@ -1,6 +1,7 @@
 # The symmetry rule is the whole authorization model, so hammer it:
 #   - kind=invite  → only the TARGET member may accept/decline; the
-#     initiator may revoke; nobody else may do anything.
+#     initiator OR any lead (Role.MANAGER / Project.edit) may revoke; a
+#     plain member (not the target's counterpart) may do nothing.
 #   - kind=request → only a lead (Role.MANAGER OR Project.edit) may
 #     accept/decline; the initiator (the member) may revoke.
 # Plus the non-manager "lead" path: LEADS holds Project.edit (granted
@@ -154,12 +155,13 @@ HTTP 403
 [Asserts]
 jsonpath "$.detail" contains "cannot respond"
 
-# Revoke is initiator-only; MEMBER is the target of invite_id, not its
-# initiator → 403 (a different gate than accept/decline).
+# MEMBER is the target of invite_id, not its initiator, and holds neither
+# Role.MANAGER nor Project.edit → cannot revoke it (a different gate than
+# accept/decline).
 DELETE {{KANAE_URL}}/projects/{{project_id}}/invites/{{invite_id}}/revoke
 HTTP 403
 [Asserts]
-jsonpath "$.detail" contains "initiator"
+jsonpath "$.detail" contains "cannot revoke"
 
 # Malformed invite UUID → 422 before the handler (free, no limiter hit).
 POST {{KANAE_URL}}/projects/{{project_id}}/invites/not-a-uuid/accept
@@ -227,14 +229,16 @@ HTTP 409
 [Asserts]
 jsonpath "$.detail" contains "already revoked"
 
-# invite2 was opened by LEADS — MANAGER is not its initiator, so even
-# a manager cannot revoke it (revoke ignores role entirely).
+# invite2 was opened by LEADS — MANAGER isn't its initiator, but under the
+# initiator-OR-lead rule a Role.MANAGER holder may revoke a project-side
+# invite it didn't create.
 DELETE {{KANAE_URL}}/projects/{{project_id}}/invites/{{invite2}}/revoke
-HTTP 403
+HTTP 200
 [Asserts]
-jsonpath "$.detail" contains "initiator"
+jsonpath "$.id" == "{{invite2}}"
+jsonpath "$.status" == "revoked"
 
-# Nobody actually joined through any of these blocked actions.
+# Nobody actually joined: every invite was revoked and the request declined.
 GET {{KANAE_URL}}/projects/{{project_id}}
 HTTP 200
 [Asserts]

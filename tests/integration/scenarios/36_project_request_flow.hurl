@@ -120,14 +120,17 @@ jsonpath "$.status" == "pending"
 jsonpath "$.member.id" == "{{MEMBER_ID}}"
 jsonpath "$.invited_by" == "{{MEMBER_ID}}"
 jsonpath "$.message" == "I'd like to help out"
+# Requests now carry a TTL (like invites) so a stale one can't hold the slot.
+jsonpath "$.expires_at" exists
 
-# A second pending request collides on the one-pending index → 409.
+# A second pending request collides on the one-pending index → 409; the
+# message names the existing handshake as a request.
 POST {{KANAE_URL}}/projects/{{project_id}}/requests
 Content-Type: application/json
 {}
 HTTP 409
 [Asserts]
-jsonpath "$.detail" contains "pending handshake"
+jsonpath "$.detail" contains "pending request"
 
 # The request shows in the member's own outbox.
 GET {{KANAE_URL}}/members/me/projects/invites?kind=request

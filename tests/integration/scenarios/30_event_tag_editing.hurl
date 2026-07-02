@@ -41,13 +41,18 @@ HTTP 200
 [Asserts]
 jsonpath "$.tags" == null
 
-# Overwrite the tag set (Event.edit, satisfied by creator-owns).
+# Overwrite the tag set (Event.edit, satisfied by creator-owns). Send them
+# out of order with a duplicate; the response now echoes the resulting DB
+# state — deduplicated and alphabetically sorted — not the raw request list.
 PUT {{KANAE_URL}}/events/{{event_id}}/tags
 Content-Type: application/json
-{ "tags": ["scenario09-alpha", "scenario09-beta", "scenario09-gamma"] }
+{ "tags": ["scenario09-gamma", "scenario09-alpha", "scenario09-beta", "scenario09-alpha"] }
 HTTP 200
 [Asserts]
 jsonpath "$.tags" count == 3
+jsonpath "$.tags[0]" == "scenario09-alpha"
+jsonpath "$.tags[1]" == "scenario09-beta"
+jsonpath "$.tags[2]" == "scenario09-gamma"
 
 # GET surfaces them, alphabetically (array_agg ORDER BY title).
 GET {{KANAE_URL}}/events/{{event_id}}

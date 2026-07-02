@@ -116,18 +116,24 @@ HTTP 200
 [Asserts]
 body not contains "{{event_id}}"
 
-# Both filters set — *should* AND, but src/routes/members.py has a
-# bug: the `if planned and attended` constraint is immediately
-# overwritten by the unconditional `if planned: …` block below it,
-# so the combined filter degenerates to planned-only. Asserting the
-# current observed behaviour (the event IS returned) keeps this
-# scenario green; the bug deserves its own ticket + a test that
-# *fails* until the routes/members.py if/elif is restructured.
+# Both filters set → true AND semantics. We RSVP'd (planned=true) but were
+# never verified-attendance (attended=false), so requiring BOTH excludes the
+# event. This is the regression guard for the old bug where the combined
+# constraint was overwritten and degenerated to planned-only.
 GET {{KANAE_URL}}/members/me/events?planned=true&attended=true
+HTTP 200
+[Asserts]
+body not contains "{{event_id}}"
+
+# planned=true AND attended=false → the RSVP'd-but-unattended event IS returned.
+GET {{KANAE_URL}}/members/me/events?planned=true&attended=false
 HTTP 200
 [Asserts]
 body contains "{{event_id}}"
 
-# planned=false also excludes our event (since we DID plan).
+# planned=false excludes our event (we DID plan); `false` is a real filter now,
+# not treated as "unset".
 GET {{KANAE_URL}}/members/me/events?planned=false
 HTTP 200
+[Asserts]
+body not contains "{{event_id}}"
