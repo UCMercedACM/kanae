@@ -135,9 +135,9 @@ HTTP 404
 jsonpath "$.result" == "error"
 jsonpath "$.detail" isString
 
-# Verify against a valid-but-nonexistent event id — still 404 because
-# the code lookup doesn't join on event_id (it scans across all
-# attendance_codes for the given prefix).
+# Verify against a valid-but-nonexistent event id — 404 because the code
+# lookup is scoped to the path event id (JOIN on events.id), so nothing
+# resolves for an event that doesn't exist.
 POST {{KANAE_URL}}/events/00000000-0000-4000-8000-000000000025/verify
 Content-Type: application/json
 { "code": "wrongco" }

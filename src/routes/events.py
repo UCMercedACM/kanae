@@ -1,12 +1,9 @@
 import datetime
 import uuid
-from dataclasses import asdict
 from typing import Annotated, Literal, Optional, Self
 
 import asyncpg
 import base62
-from argon2 import Parameters
-from argon2.low_level import Type
 from dateutil import tz
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException, Query
@@ -38,40 +35,10 @@ from utils.responses import (
 )
 from utils.router import KanaeRouter
 
-_TYPE_TO_NAME = {Type.ID: "argon2id", Type.I: "argon2i", Type.D: "argon2d"}
-_REQUIRED_KEYS = ("v", "m", "t", "p")
-_CONDENSED_KEYS = {
-    "version": "v",
-    "memory_cost": "m",
-    "time_cost": "t",
-    "parallelism": "p",
-}
-
 _HASH_REGEX = r"^[0-9a-f]{64}$"
 _NO_NULL_REGEX = r"^[^\x00]+$"
 
 router = KanaeRouter(tags=["Events"])
-
-
-# Basically to take the params set within argon2.PasswordHasher, and compile them into arguments for validation purposes
-def compile_params(params: Parameters) -> str:
-    def _join_parts(part: tuple[str, str]) -> str:
-        return "=".join(part)
-
-    parts = [_TYPE_TO_NAME[params.type]]
-    sorted_parts = sorted(
-        [
-            (_CONDENSED_KEYS[key], str(param))
-            for key, param in asdict(params).items()
-            if key not in ("type", "salt_len", "hash_len")
-        ],
-        key=lambda x: _REQUIRED_KEYS.index(x[0]),
-    )
-
-    parts.extend(
-        [_join_parts(sorted_parts[0]), ",".join(map(_join_parts, sorted_parts[1:]))]
-    )
-    return f"${'$'.join(parts)}$"
 
 
 class EventTimezone:
@@ -302,16 +269,12 @@ async def edit_event(
             )  # Not sure if this is correct by RFC 9110 standards
 
         hash_row = await connection.fetchrow(fetch_hash_query, event_id)
-        if hash_row:
-            full_hash = (
-                compile_params(request.app.ph._parameters) + hash_row["attendance_hash"]
+        if hash_row and request.app.ph.check_needs_rehash(hash_row["attendance_hash"]):
+            await connection.execute(
+                update_hash_query,
+                event_id,
+                request.app.ph.hash(str(event_id)),
             )
-            if request.app.ph.check_needs_rehash(full_hash):
-                await connection.execute(
-                    update_hash_query,
-                    event_id,
-                    request.app.ph.hash(str(event_id)),
-                )
 
         return Events(**dict(rows))
 
@@ -346,7 +309,7 @@ async def delete_event(
 @router.post(
     "/events/create",
     dependencies=[has_any_role(Role.ADMIN, Role.LEADS)],
-    responses={200: {"model": Events}, 409: {"model": ConflictResponse}},
+    responses={200: {"model": Events}},
 )
 @router.limiter.limit("20/minute")
 async def create_events(
@@ -379,11 +342,13 @@ async def create_events(
             )
             encoded_hash = request.app.ph.hash(str(rows["id"]))
 
-            # note that the salt is stored along with the hash
+            # store the full encoded hash (the "password" is the event UUID, so
+            # it is not secret-sensitive); attendance_code is the base62 of the
+            # trailing hash segment and doubles as the 8-char lookup key
             await connection.execute(
                 attendance_query,
                 rows["id"],
-                "$".join(encoded_hash.split("$")[-2:]),
+                encoded_hash,
                 base62.encodebytes(encoded_hash.split("$")[-1].encode("utf-8")),
             )
 
@@ -401,10 +366,6 @@ async def create_events(
                     "relation": "member",
                 },
             )
-        except asyncpg.UniqueViolationError:
-            await tr.rollback()
-            msg = "Requested project already exists"
-            raise ConflictError(msg)
         except asyncpg.ForeignKeyViolationError:
             await tr.rollback()
             msg = "Creator member does not exist"
@@ -554,6 +515,13 @@ async def edit_event_tags(
     )
     SELECT EXISTS (SELECT 1 FROM check_event) AS exists;
     """
+    response_query = """
+    SELECT tags.title
+    FROM event_tags
+    JOIN tags ON tags.id = event_tags.tag_id
+    WHERE event_tags.event_id = $1
+    ORDER BY tags.title;
+    """
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
         await tr.start()
@@ -572,6 +540,11 @@ async def edit_event_tags(
                 await connection.executemany(
                     subquery, [(event_id, tag.lower()) for tag in req.tags]
                 )
+
+            response_tags = await connection.fetch(
+                response_query,
+                event_id,
+            )
         except asyncpg.NotNullViolationError:
             await tr.rollback()
             raise HTTPException(
@@ -581,7 +554,7 @@ async def edit_event_tags(
         else:
             await tr.commit()
 
-        return EventTagsResponse(tags=[tag.lower() for tag in req.tags])
+        return EventTagsResponse(tags=[row["title"] for row in response_tags])
 
 
 @router.delete(
@@ -641,7 +614,7 @@ async def join_event(
 
         rows = await connection.fetchrow(query, event_id)
         if not rows:
-            msg = "Should not happen"
+            msg = "Event does not exist"
             raise NotFoundError(msg)
 
         zone = EventTimezone(pool=request.app.pool)
@@ -690,6 +663,7 @@ class VerifyRequest(BaseModel, frozen=True):
         200: {"model": SuccessResponse},
         403: {"model": VerifyFailedResponse},
         404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
     },
 )
 @router.limiter.limit("5/second")
@@ -704,13 +678,11 @@ async def verify_attendance(
     SELECT events.start_at, events.end_at, event_attendance_codes.attendance_hash
     FROM events
     JOIN event_attendance_codes ON events.id = event_attendance_codes.event_id
-    WHERE substring(event_attendance_codes.attendance_code for 8) = $1;
+    WHERE events.id = $2 AND substring(event_attendance_codes.attendance_code for 8) = $1;
     """
-    record = await request.app.pool.fetchrow(query, req.code)
+    record = await request.app.pool.fetchrow(query, req.code, event_id)
     if not record:
         raise NotFoundError(detail="Unknown or invalid attendance code.")
-
-    full_hash = compile_params(request.app.ph._parameters) + record["attendance_hash"]
 
     zone = EventTimezone(pool=request.app.pool)
 
@@ -722,10 +694,10 @@ async def verify_attendance(
     window_open = record["start_at"] + relativedelta(hours=-1)
     if not (window_open <= now <= record["end_at"]):
         msg = "You must verify your hash either during the event or one hour beforehand. Please try again."
-        raise NotFoundError(msg)
+        raise ConflictError(msg)
 
     # should raise a error directly, which would need to be handled.
-    if request.app.ph.verify(full_hash, str(event_id)):
+    if request.app.ph.verify(record["attendance_hash"], str(event_id)):
         verify_query = """
         WITH check_prior AS (
             SELECT attended FROM events_members

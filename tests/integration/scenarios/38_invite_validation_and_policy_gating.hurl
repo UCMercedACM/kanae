@@ -165,13 +165,14 @@ Content-Type: application/json
 HTTP 403
 
 # MEMBER already has a pending invite from the lead → a request in the
-# opposite direction trips the same partial unique index → 409.
+# opposite direction is rejected (409). The message now names the actual
+# pending handshake — an invite — and points to accepting it.
 POST {{KANAE_URL}}/projects/{{project_id}}/requests
 Content-Type: application/json
 {}
 HTTP 409
 [Asserts]
-jsonpath "$.detail" contains "pending handshake"
+jsonpath "$.detail" contains "pending invite"
 
 # --- MANAGER closes the project entirely ---
 GET {{KRATOS_URL}}/self-service/login/browser?refresh=true

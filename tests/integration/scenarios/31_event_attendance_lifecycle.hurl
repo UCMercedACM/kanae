@@ -2,8 +2,9 @@
 #   organizer reads the code (G7) → creator joins → roster (G5) →
 #   verify happy-path (now possible because G7 hands out the code) →
 #   verify again → 409 already-recorded (G13 idempotency) →
-#   a valid code against a DIFFERENT event → 403 (argon2 mismatch, caught
-#   by the global VerificationError handler) → undo the check-in (G12).
+#   a valid code against a DIFFERENT event → 404 (the lookup is scoped to
+#   the event in the path, so A's code doesn't resolve a row on B) →
+#   undo the check-in (G12).
 #
 # Event window 2020 → 2099 brackets "now" on any plausible run date (same
 # trick as scenario 24), keeping verify inside its [start-1h, end] window.
@@ -91,11 +92,12 @@ Content-Type: application/json
 { "code": "{{code}}" }
 HTTP 409
 
-# G13: event A's code against event B → argon2 mismatch → global handler 403.
+# G13: event A's code against event B → the code doesn't belong to B, and the
+# lookup is scoped to the path event → 404 (not found), not a 403 mismatch.
 POST {{KANAE_URL}}/events/{{other_event_id}}/verify
 Content-Type: application/json
 { "code": "{{code}}" }
-HTTP 403
+HTTP 404
 
 # G12: undo the check-in (flips attended → false, keeps the RSVP).
 DELETE {{KANAE_URL}}/events/{{event_id}}/attendance/{{LEADS_ID}}

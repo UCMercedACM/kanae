@@ -51,6 +51,7 @@ _INVITE_TTL = datetime.timedelta(days=7)
 _INVITE_NOT_FOUND = "Invite does not exist"
 _PROJECT_OR_MEMBER_NOT_FOUND = "Project or member does not exist"
 _EXPIRED_INVITE = "This invite has expired"
+_AUTH_PERMS_FAILED = "Failed to verify permissions with the authorization service"
 
 _HASH_REGEX = r"^[0-9a-f]{64}$"
 _NO_NULL_REGEX = r"^[^\x00]+$"
@@ -328,6 +329,13 @@ async def edit_project_tags(
     )
     SELECT EXISTS (SELECT 1 FROM check_project) AS exists;
     """
+    resulting_query = """
+    SELECT tags.title
+    FROM project_tags
+    JOIN tags ON tags.id = project_tags.tag_id
+    WHERE project_tags.project_id = $1
+    ORDER BY tags.title;
+    """
 
     async with request.app.pool.acquire() as connection:
         tr = connection.transaction()
@@ -350,6 +358,11 @@ async def edit_project_tags(
                 await connection.executemany(
                     subquery, [(project_id, tag.lower()) for tag in req.tags]
                 )
+
+            resulting_tags = await connection.fetch(
+                resulting_query,
+                project_id,
+            )
         except asyncpg.NotNullViolationError:
             await tr.rollback()
             raise HTTPException(
@@ -359,7 +372,7 @@ async def edit_project_tags(
         else:
             await tr.commit()
 
-        return ProjectTagsResponse(tags=[tag.lower() for tag in req.tags])
+        return ProjectTagsResponse(tags=[row["title"] for row in resulting_tags])
 
 
 @router.delete(
@@ -524,6 +537,7 @@ async def join_project(
     project_id: uuid.UUID,
     session: Annotated[KanaeSession, Depends(use_session)],
 ) -> JoinResponse:
+    """Joins a given project"""
     # The member is authenticated already, aka meaning that there is an existing member in our database
     query = """
     WITH target AS (
@@ -551,7 +565,7 @@ async def join_project(
             if not row["member_joined"]:
                 await tr.rollback()
 
-                msg = "This project is not open to direct joins. Submit a join request instead."
+                msg = "This project is not open to direct joins or requests."
                 raise ConflictError(msg)
 
         except asyncpg.UniqueViolationError:
@@ -586,6 +600,7 @@ async def bulk_join_project(
     project_id: uuid.UUID,
     req: list[BulkJoinMember],
 ) -> JoinResponse:
+    """Join projects in bulk. Must be less than 10 members"""
     if len(req) > 10:
         msg = "Must be less than 10 members"
         raise BadRequestError(msg)
@@ -659,6 +674,7 @@ async def leave_project(
     project_id: uuid.UUID,
     session: Annotated[KanaeSession, Depends(use_session)],
 ) -> DeleteResponse:
+    """Leaves a given project"""
     query = """
     DELETE FROM project_members
     WHERE project_id = $1 AND member_id = $2;
@@ -697,22 +713,33 @@ async def create_invite(
 ) -> ProjectInvite:
     """Creates an invite to a given project"""
     query = """
-    WITH new_invite AS (
+    WITH ctx AS (
+        SELECT
+            EXISTS (
+                SELECT 1 FROM project_members
+                WHERE project_id = $1 AND member_id = $2
+            ) AS is_member,
+            (
+                SELECT kind FROM project_invites
+                WHERE project_id = $1 AND member_id = $2 AND status = 'pending'
+            ) AS pending_kind
+    ), new_invite AS (
         INSERT INTO project_invites (project_id, member_id, invited_by, kind, message, expires_at)
         SELECT $1, $2, $3, 'invite', $4, NOW() + $5
-        WHERE NOT EXISTS (
-            SELECT 1 FROM project_members WHERE project_id = $1 AND member_id = $2
-        )
+        FROM ctx
+        WHERE NOT ctx.is_member AND ctx.pending_kind IS NULL
         RETURNING *
     )
     SELECT
+        ctx.is_member, ctx.pending_kind,
         new_invite.id, new_invite.project_id,
         jsonb_build_object('id', members.id, 'name', members.name) AS member,
         new_invite.invited_by, new_invite.kind, new_invite.status,
         new_invite.message, new_invite.created_at, new_invite.responded_at,
         new_invite.expires_at
-    FROM new_invite
-    JOIN members ON members.id = new_invite.member_id;
+    FROM ctx
+    LEFT JOIN new_invite ON TRUE
+    LEFT JOIN members ON members.id = $2;
     """
     clear_stale_query = """
     UPDATE project_invites SET status = 'expired'
@@ -736,10 +763,20 @@ async def create_invite(
                 _INVITE_TTL,
             )
 
-            if not row:
+            if row["is_member"]:
                 await tr.rollback()
 
                 msg = "This member is already part of the project"
+                raise ConflictError(msg)
+
+            if row["pending_kind"] is not None:
+                await tr.rollback()
+
+                msg = (
+                    "This member has already requested to join — accept their request instead"
+                    if row["pending_kind"] == "request"
+                    else "A pending invite already exists for this member"
+                )
                 raise ConflictError(msg)
         except asyncpg.UniqueViolationError:
             await tr.rollback()
@@ -783,19 +820,24 @@ async def create_request(
             SELECT 1 FROM project_members
             WHERE project_id = $1 AND member_id = $2
         ) AS is_member
+    ), pending AS (
+        SELECT kind FROM project_invites
+        WHERE project_id = $1 AND member_id = $2 AND status = 'pending'
     ), new_request AS (
-        INSERT INTO project_invites (project_id, member_id, invited_by, kind, message)
-        SELECT $1, $2, $2, 'request', $3
+        INSERT INTO project_invites (project_id, member_id, invited_by, kind, message, expires_at)
+        SELECT $1, $2, $2, 'request', $3, NOW() + $4
         FROM projects
         CROSS JOIN membership
         WHERE projects.id = $1
           AND projects.join_policy = 'request'
           AND NOT membership.is_member
+          AND NOT EXISTS (SELECT 1 FROM pending)
         RETURNING *
     )
     SELECT
         projects.join_policy,
         membership.is_member,
+        (SELECT kind FROM pending) AS pending_kind,
         new_request.id, new_request.project_id,
         jsonb_build_object('id', members.id, 'name', members.name) AS member,
         new_request.invited_by, new_request.kind, new_request.status,
@@ -821,7 +863,7 @@ async def create_request(
         try:
             await connection.execute(clear_stale_query, project_id, session.identity.id)
             row = await connection.fetchrow(
-                query, project_id, session.identity.id, req.message
+                query, project_id, session.identity.id, req.message, _INVITE_TTL
             )
 
             if not row or row["is_member"] or row["join_policy"] != "request":
@@ -838,6 +880,16 @@ async def create_request(
                     raise ConflictError(msg)
 
                 msg = "This project is not accepting join requests"
+                raise ConflictError(msg)
+
+            if row["id"] is None:
+                await tr.rollback()
+
+                msg = (
+                    "You already have a pending invite to this project — accept it instead"
+                    if row["pending_kind"] == "invite"
+                    else "You already have a pending request for this project"
+                )
                 raise ConflictError(msg)
 
         except asyncpg.UniqueViolationError:
@@ -866,6 +918,27 @@ async def _can_respond_to_invite(
     ) or await request.app.ory.check_permission(
         "Project", str(project_id).lower(), "edit", subject_id
     )
+
+
+async def _can_revoke_invite(
+    request: RouteRequest,
+    *,
+    kind: str,
+    invited_by: Optional[uuid.UUID],
+    project_id: uuid.UUID,
+    subject_id: str,
+) -> bool:
+    if invited_by is not None and str(invited_by) == str(subject_id):
+        return True
+
+    if kind == "invite":
+        return await request.app.ory.check_permission(
+            "Role", Role.MANAGER, "member", subject_id
+        ) or await request.app.ory.check_permission(
+            "Project", str(project_id).lower(), "edit", subject_id
+        )
+
+    return False
 
 
 class InviteActionResponse(BaseModel, frozen=True):
@@ -904,6 +977,12 @@ async def accept_project_invite(
           AND status = 'pending'
           AND (expires_at IS NULL OR expires_at > NOW())
         RETURNING id
+    ), expired_update AS (
+        UPDATE project_invites
+        SET status = 'expired'
+        WHERE id = $2 AND project_id = $1
+          AND status = 'pending'
+          AND expires_at IS NOT NULL AND expires_at <= NOW()
     ), membership AS (
         INSERT INTO project_members (project_id, member_id, role)
         SELECT $1, member_id, 'member'
@@ -925,28 +1004,25 @@ async def accept_project_invite(
         try:
             row = await connection.fetchrow(query, project_id, invite_id)
 
-            if (
-                not row
-                or not row["accepted"]
-                or not await _can_respond_to_invite(
-                    request,
-                    kind=row["kind"],
-                    member_id=row["member_id"],
-                    project_id=project_id,
-                    subject_id=session.identity.id,
-                )
+            if not row:
+                await tr.rollback()
+                raise NotFoundError(_INVITE_NOT_FOUND)
+
+            if row["expired"]:
+                await tr.commit()
+                raise ConflictError(_EXPIRED_INVITE)
+
+            if not row["accepted"] or not await _can_respond_to_invite(
+                request,
+                kind=row["kind"],
+                member_id=row["member_id"],
+                project_id=project_id,
+                subject_id=session.identity.id,
             ):
                 await tr.rollback()
 
-                if not row:
-                    raise NotFoundError(_INVITE_NOT_FOUND)
-
-                if row["expired"] or not row["accepted"]:
-                    msg = (
-                        _EXPIRED_INVITE
-                        if row["expired"]
-                        else f"This invite is already {row['status']}"
-                    )
+                if not row["accepted"]:
+                    msg = f"This invite is already {row['status']}"
                     raise ConflictError(msg)
 
                 msg = "You cannot respond to this invite"
@@ -957,8 +1033,7 @@ async def accept_project_invite(
             raise NotFoundError(msg)
         except (BadGatewayError, ServiceUnavailableError):
             await tr.rollback()
-            msg = "Failed to verify permissions with the authorization service"
-            raise BadGatewayError(msg)
+            raise BadGatewayError(_AUTH_PERMS_FAILED)
         else:
             await tr.commit()
             return InviteActionResponse(id=invite_id, status="accepted")
@@ -995,6 +1070,12 @@ async def decline_project_invite(
           AND status = 'pending'
           AND (expires_at IS NULL OR expires_at > NOW())
         RETURNING id
+    ), expired_update AS (
+        UPDATE project_invites
+        SET status = 'expired'
+        WHERE id = $2 AND project_id = $1
+          AND status = 'pending'
+          AND expires_at IS NOT NULL AND expires_at <= NOW()
     )
     SELECT
         locked.kind, locked.member_id, locked.status,
@@ -1009,36 +1090,32 @@ async def decline_project_invite(
         try:
             row = await connection.fetchrow(query, project_id, invite_id)
 
-            if (
-                not row
-                or not row["declined"]
-                or not await _can_respond_to_invite(
-                    request,
-                    kind=row["kind"],
-                    member_id=row["member_id"],
-                    project_id=project_id,
-                    subject_id=session.identity.id,
-                )
+            if not row:
+                await tr.rollback()
+                raise NotFoundError(_INVITE_NOT_FOUND)
+
+            if row["expired"]:
+                await tr.commit()
+                raise ConflictError(_EXPIRED_INVITE)
+
+            if not row["declined"] or not await _can_respond_to_invite(
+                request,
+                kind=row["kind"],
+                member_id=row["member_id"],
+                project_id=project_id,
+                subject_id=session.identity.id,
             ):
                 await tr.rollback()
 
-                if not row:
-                    raise NotFoundError(_INVITE_NOT_FOUND)
-
-                if row["expired"] or not row["declined"]:
-                    msg = (
-                        _EXPIRED_INVITE
-                        if row["expired"]
-                        else f"This invite is already {row['status']}"
-                    )
+                if not row["declined"]:
+                    msg = f"This invite is already {row['status']}"
                     raise ConflictError(msg)
 
                 msg = "You cannot respond to this invite"
                 raise ForbiddenError(msg)
         except (BadGatewayError, ServiceUnavailableError):
             await tr.rollback()
-            msg = "Failed to verify permissions with the authorization service"
-            raise BadGatewayError(msg)
+            raise BadGatewayError(_AUTH_PERMS_FAILED)
         else:
             await tr.commit()
             return InviteActionResponse(id=invite_id, status="declined")
@@ -1063,7 +1140,7 @@ async def revoke_project_invite(
     """Revoke a pending project invite"""
     query = """
     WITH locked AS (
-        SELECT invited_by, status, expires_at
+        SELECT invited_by, kind, status, expires_at
         FROM project_invites
         WHERE id = $2 AND project_id = $1
         FOR UPDATE
@@ -1071,38 +1148,58 @@ async def revoke_project_invite(
         UPDATE project_invites
         SET status = 'revoked', responded_at = NOW() AT TIME ZONE 'utc'
         WHERE id = $2 AND project_id = $1
-          AND invited_by = $3
           AND status = 'pending'
           AND (expires_at IS NULL OR expires_at > NOW())
         RETURNING id
+    ), expired_update AS (
+        UPDATE project_invites
+        SET status = 'expired'
+        WHERE id = $2 AND project_id = $1
+          AND status = 'pending'
+          AND expires_at IS NOT NULL AND expires_at <= NOW()
     )
     SELECT
-        locked.invited_by, locked.status,
+        locked.invited_by, locked.kind, locked.status,
         (locked.expires_at IS NOT NULL AND locked.expires_at <= NOW()) AS expired,
         updated.id IS NOT NULL AS revoked
     FROM locked
     LEFT JOIN updated ON TRUE;
     """
-    row = await request.app.pool.fetchrow(
-        query, project_id, invite_id, session.identity.id
-    )
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
+        try:
+            row = await connection.fetchrow(query, project_id, invite_id)
 
-    if not row:
-        raise NotFoundError(_INVITE_NOT_FOUND)
+            if not row:
+                await tr.rollback()
+                raise NotFoundError(_INVITE_NOT_FOUND)
 
-    if str(row["invited_by"]) != str(session.identity.id):
-        msg = "Only the initiator can revoke this invite"
-        raise ForbiddenError(msg)
+            if row["expired"]:
+                await tr.commit()
+                raise ConflictError(_EXPIRED_INVITE)
 
-    if row["expired"] or not row["revoked"]:
-        msg = (
-            _EXPIRED_INVITE
-            if row["expired"]
-            else f"This invite is already {row['status']}"
-        )
-        raise ConflictError(msg)
+            if not row["revoked"] or not await _can_revoke_invite(
+                request,
+                kind=row["kind"],
+                invited_by=row["invited_by"],
+                project_id=project_id,
+                subject_id=session.identity.id,
+            ):
+                await tr.rollback()
 
-    return InviteActionResponse(id=invite_id, status="revoked")
+                if not row["revoked"]:
+                    msg = f"This invite is already {row['status']}"
+                    raise ConflictError(msg)
+
+                msg = "You cannot revoke this invite"
+                raise ForbiddenError(msg)
+        except (BadGatewayError, ServiceUnavailableError):
+            await tr.rollback()
+            raise BadGatewayError(_AUTH_PERMS_FAILED)
+        else:
+            await tr.commit()
+            return InviteActionResponse(id=invite_id, status="revoked")
 
 
 @router.get(

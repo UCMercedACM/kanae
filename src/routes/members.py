@@ -268,6 +268,7 @@ async def list_my_project_invites(
         constraint = f"WHERE invites.member_id = $1 AND invites.{column} = $2"
         args.append(status or kind)
 
+    # ruff: noqa: S608
     query = f"""
     WITH invites AS (
         SELECT
@@ -317,38 +318,40 @@ async def get_logged_events(
 ) -> list[FullEvents]:
     """Obtains events associated with the currently authenticated member.
 
-    `planned`/`attended` filter on RSVP/attendance flags (AND-combined).
+    `planned`/`attended` filter on RSVP/attendance flags (AND-combined); pass
+    `false` to match events explicitly not planned/attended, omit to ignore.
     `upcoming`/`past` filter on time (`start_at`/`end_at` vs now) and are
     mutually exclusive.
     """
-    if upcoming and past:
+    if upcoming is not None and past is not None:
         msg = "Cannot specify both upcoming and past."
         raise BadRequestError(msg)
 
-    constraint = ""
+    args = [session.identity.id, request.app.storage.base_thumbnail_url]
 
-    if planned and attended:
-        constraint = (
-            "AND events_members.planned = true AND events_members.attended = true"
+    flag_constraint = ""
+    if planned is not None and attended is not None:
+        flag_constraint = (
+            " AND events_members.planned = $3 AND events_members.attended = $4"
+        )
+        args.extend((planned, attended))
+    elif planned is not None or attended is not None:
+        column = "planned" if planned is not None else "attended"
+        flag_constraint = f" AND events_members.{column} = $3"
+        args.append(planned if planned is not None else attended)
+
+    time_constraint = ""
+    if upcoming is not None:
+        time_constraint = (
+            "AND events.start_at > NOW()"
+            if upcoming
+            else "AND events.start_at <= NOW()"
+        )
+    elif past is not None:
+        time_constraint = (
+            "AND events.end_at < NOW()" if past else "AND events.end_at >= NOW()"
         )
 
-    if planned:
-        constraint = "AND events_members.planned = true"
-    elif attended:
-        constraint = "AND events_members.attended = true"
-
-    args: list = [session.identity.id, request.app.storage.base_thumbnail_url]
-    time_constraint = ""
-    if upcoming:
-        time_constraint = "AND events.start_at > $3"
-        args.append(datetime.datetime.now(datetime.UTC))
-    elif past:
-        time_constraint = "AND events.end_at < $3"
-        args.append(datetime.datetime.now(datetime.UTC))
-
-    # ruff: noqa: S608
-    # This error says "possible SQL injection", but the variables are not passed in to the query directly
-    # Instead, they are used to check for the constraint query
     query = f"""
     SELECT
         events.id, events.name, events.description, events.start_at, events.end_at, events.location, events.type, events.timezone,
@@ -366,7 +369,7 @@ async def get_logged_events(
         END AS thumbnail,
         events.creator_id
     FROM members
-        INNER JOIN events_members ON members.id = events_members.member_id {constraint}
+        INNER JOIN events_members ON members.id = events_members.member_id {flag_constraint}
         INNER JOIN events ON events_members.event_id = events.id
     WHERE members.id = $1 {time_constraint}
     GROUP BY events.id;
@@ -476,7 +479,10 @@ async def modify_member_role(
 
 @router.delete(
     "/members/me",
-    responses={200: {"model": DeleteResponse}},
+    responses={
+        200: {"model": DeleteResponse},
+        404: {"model": NotFoundResponse},
+    },
 )
 @router.limiter.limit("1/minute")
 async def delete_logged_account(
@@ -485,9 +491,13 @@ async def delete_logged_account(
     """Permanently delete the member associated the currently logged session"""
     member_id = uuid.UUID(session.identity.id)
 
-    query = "DELETE FROM members WHERE id = $1;"
+    query = "DELETE FROM members WHERE id = $1 RETURNING id;"
+
+    response = await request.app.pool.fetchval(query, member_id)
+    if not response:
+        raise NotFoundError
+
     await purge_member(member_id, ory=request.app.ory)
-    await request.app.pool.execute(query, member_id)
 
     return DeleteResponse(message="okie dokie")
 
@@ -514,10 +524,11 @@ async def delete_member(
 
     query = "DELETE FROM members WHERE id = $1 RETURNING id;"
 
-    await purge_member(member_id, ory=request.app.ory)
     response = await request.app.pool.fetchval(query, member_id)
     if not response:
         raise NotFoundError
+
+    await purge_member(member_id, ory=request.app.ory)
 
     return DeleteResponse(message="okie dokie")
 
@@ -535,11 +546,6 @@ class _Identity(BaseModel, frozen=True, extra="forbid"):
 
 
 class KratosHookPayload(BaseModel, frozen=True, extra="forbid"):
-    """Payload Kratos sends after a settings or registration flow completes.
-
-    Shape is fixed by `payload.jsonnet` in docker/ory/kratos/hooks/.
-    """
-
     flow_id: uuid.UUID
     identity: _Identity
 

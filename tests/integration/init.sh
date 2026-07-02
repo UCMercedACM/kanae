@@ -70,6 +70,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 	key="$garage_secret_key" yq -i '.storage.secret_key = strenv(key)' "$CONFIG_FILE"
 
 	yq -i '.kanae.limiter.storage_uri = "valkey://valkey:6379/"' "$CONFIG_FILE"
+	yq -i '.kanae.limiter.enabled = false' "$CONFIG_FILE"
 	yq -i '.ory.kratos_public_url = "http://kratos:4433"' "$CONFIG_FILE"
 	yq -i '.ory.kratos_admin_url = "http://kratos:4434"' "$CONFIG_FILE"
 	yq -i '.ory.keto_read_url    = "http://keto:4466"' "$CONFIG_FILE"

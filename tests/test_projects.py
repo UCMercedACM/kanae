@@ -571,6 +571,23 @@ async def test_overwrite_tags_partial_removal_keeps_survivors(
     assert await _project_tag_titles(kanae.pool, project_id) == {"ai", "swe"}
 
 
+async def test_overwrite_tags_response_dedupes_and_reflects_db(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # Case-variant duplicates all lower-case to one tag; the response echoes the
+    # resulting DB state (deduped, sorted), not the raw request list.
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="tag-dedup")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    await _insert_tag(kanae.pool, title="python")
+
+    response = await client.client.put(
+        f"/projects/{project_id}/tags", json={"tags": ["python", "Python", "python"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["tags"] == ["python"]
+
+
 async def test_overwrite_tags_unknown_tag_rolls_back(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
@@ -1473,6 +1490,31 @@ async def test_create_invite_409_when_pending_already_exists(
     assert response.status_code == 409
 
 
+async def test_create_invite_409_when_pending_request_exists(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # A lead invites someone who already has a pending request in the opposite
+    # direction: the message should point them at accepting the request.
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="cross-invite")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        invited_by=target,
+        kind="request",
+    )
+
+    response = await client.client.post(
+        f"/projects/{project_id}/invites", json={"member_id": str(target)}
+    )
+    assert response.status_code == 409
+    assert "request" in response.json()["detail"].lower()
+
+
 async def test_create_invite_404_when_member_missing(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
@@ -1575,6 +1617,30 @@ async def test_create_request_persists_pending_row(
     assert body["invited_by"] == identity_id
 
 
+async def test_create_request_sets_expiry(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # Requests expire like invites, so a stale one doesn't hold the pending slot
+    # forever (the partial-unique (project, member) constraint).
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="request-expiry")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+
+    response = await client.client.post(f"/projects/{project_id}/requests", json={})
+    assert response.status_code == 200
+    assert response.json()["expires_at"] is not None
+
+    expires_at = await kanae.pool.fetchval(
+        "SELECT expires_at FROM project_invites"
+        " WHERE project_id = $1 AND member_id = $2",
+        project_id,
+        member_uuid,
+    )
+    assert expires_at is not None
+
+
 async def test_create_request_409_when_already_member(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
@@ -1628,6 +1694,25 @@ async def test_create_request_409_on_duplicate_pending(
 
     response = await client.client.post(f"/projects/{project_id}/requests", json={})
     assert response.status_code == 409
+
+
+async def test_create_request_409_when_pending_invite_exists(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # The member already has a pending invite in the opposite direction: the
+    # message should point them at accepting the invite.
+    identity_id = fake_ory.login_as()
+    member_uuid = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=member_uuid)
+    project_id = await _insert_project(kanae.pool, name="cross-request")
+    await _set_join_policy(kanae.pool, project_id=project_id, policy="request")
+    await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=member_uuid, kind="invite"
+    )
+
+    response = await client.client.post(f"/projects/{project_id}/requests", json={})
+    assert response.status_code == 409
+    assert "invite" in response.json()["detail"].lower()
 
 
 async def test_create_request_sweeps_stale_then_allows(
@@ -1849,7 +1934,8 @@ async def test_accept_invite_409_when_expired(
         f"/projects/{project_id}/invites/{invite_id}/accept"
     )
     assert response.status_code == 409
-    assert await _invite_status(kanae.pool, invite_id) == "pending"
+    # The expired invite is persisted as 'expired', not left masked as 'pending'.
+    assert await _invite_status(kanae.pool, invite_id) == "expired"
     assert (
         await _membership_role(kanae.pool, project_id=project_id, member_id=target)
         is None
@@ -2047,6 +2133,8 @@ async def test_decline_invite_409_when_expired(
         f"/projects/{project_id}/invites/{invite_id}/decline"
     )
     assert response.status_code == 409
+    # The expired invite is persisted as 'expired', not left masked as 'pending'.
+    assert await _invite_status(kanae.pool, invite_id) == "expired"
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -2143,6 +2231,88 @@ async def test_revoke_invite_rejects_non_initiator(
     assert await _invite_status(kanae.pool, invite_id) == "pending"
 
 
+async def test_revoke_invite_via_project_edit_succeeds(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # A co-lead holding Project.edit can revoke an invite they didn't initiate.
+    identity_id = fake_ory.login_as()
+    co_lead = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=co_lead)
+    initiator = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=initiator)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="revoke-colead")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        invited_by=initiator,
+        kind="invite",
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 200
+    assert await _invite_status(kanae.pool, invite_id) == "revoked"
+
+
+async def test_revoke_orphaned_invite_via_project_edit_succeeds(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # invited_by is NULL (the initiator's account was deleted); an edit holder
+    # can still clean up the dangling pending invite.
+    identity_id = fake_ory.login_as()
+    lead = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=lead)
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    project_id = await _insert_project(kanae.pool, name="revoke-orphaned")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        invited_by=None,
+        kind="invite",
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 200
+    assert await _invite_status(kanae.pool, invite_id) == "revoked"
+
+
+async def test_revoke_request_rejects_project_edit_holder(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # A lead rejects a join *request* by declining it, not revoking it; only the
+    # requesting member can revoke their own request.
+    identity_id = fake_ory.login_as()
+    lead = uuid.UUID(identity_id)
+    await _insert_member(kanae.pool, member_id=lead)
+    requester = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=requester)
+    project_id = await _insert_project(kanae.pool, name="revoke-req-lead")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=requester,
+        invited_by=requester,
+        kind="request",
+    )
+
+    response = await client.client.delete(
+        f"/projects/{project_id}/invites/{invite_id}/revoke"
+    )
+    assert response.status_code == 403
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+
+
 async def test_revoke_invite_409_when_terminal(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
@@ -2189,6 +2359,8 @@ async def test_revoke_invite_409_when_expired(
         f"/projects/{project_id}/invites/{invite_id}/revoke"
     )
     assert response.status_code == 409
+    # The expired invite is persisted as 'expired', not left masked as 'pending'.
+    assert await _invite_status(kanae.pool, invite_id) == "expired"
 
 
 # ──────────────────────────────────────────────────────────────────

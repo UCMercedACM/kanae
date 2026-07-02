@@ -76,13 +76,14 @@ HTTP 200
 [Asserts]
 jsonpath "$.session.identity.id" == "{{MEMBER_ID}}"
 
-# The target is not the initiator, so they cannot revoke the lead's
-# invite — revoke is initiator-only (403), distinct from decline.
+# The target is neither the initiator nor a lead (no Role.MANAGER /
+# Project.edit), so they cannot revoke the lead's invite (403) — a
+# distinct gate from decline.
 DELETE {{KANAE_URL}}/projects/{{project_id}}/invites/{{invite1}}/revoke
 HTTP 403
 [Asserts]
 jsonpath "$.result" == "error"
-jsonpath "$.detail" contains "initiator"
+jsonpath "$.detail" contains "cannot revoke"
 
 # MEMBER declines the first invite.
 POST {{KANAE_URL}}/projects/{{project_id}}/invites/{{invite1}}/decline
