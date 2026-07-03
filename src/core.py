@@ -96,7 +96,7 @@ Kanae is ACM @ UC Merced's API.
 This document details the API as it is right now.
 Changes can be made without notification, but announcements will be made for major changes.
 """
-__version__ = "0.2.1"
+__version__ = "0.3.1"
 
 LATENCY_HIGHER_BUCKETS = (
     0.01,
