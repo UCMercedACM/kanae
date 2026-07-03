@@ -1,6 +1,6 @@
 [project]
 name = "kanae"
-version = "0.1.0"
+version = "0.2.0"
 description = "Internal backend server for ACM @ UC Merced"
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
@@ -55,7 +55,7 @@ test = [
 [tool.ty.src]
 include = ["src"]
 exclude = [
-    "__pycache__", 
+    "__pycache__",
     "docs",
     "docker",
 ]
@@ -76,13 +76,13 @@ select = [
 ignore = [
     "B904",     # Niche standard
     "E501",     # Ruff suggested format
-    "FBT003",   # Inherently incorrect to enforce this 
+    "FBT003",   # Inherently incorrect to enforce this
     "PLR0913",  # Violations of these are not related to bad code
     "PLR2004",  # Magic numbers are fine sometimes
     "SIM105",   # Prefer not to use due to stylistic choices
     "UP045",    # Explicitly use typing.Optional to not confuse between union operators.
                 # See https://discuss.python.org/t/clarification-for-pep-604-is-foo-int-none-to-replace-all-use-of-foo-optional-int/26945/19
-    
+
     # These are recommended by Ruff if the formatter is to be used: https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
     "W191",
     "E111",
