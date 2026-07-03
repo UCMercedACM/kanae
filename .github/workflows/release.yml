@@ -11,24 +11,42 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.x"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: "latest"
+          enable-cache: true
+
       - name: Prepare for bundling
         run: |
           mkdir -p kanae-docker
           mkdir -p releases
-          cp docker/docker-compose.yml kanae-docker/
-          cp docker/example.env kanae-docker/
-          cp config.dist.yml kanae-docker/
-  
+          cp docker/docker-compose.yml kanae-docker/docker-compose.yml
+          cp docker/example.env kanae-docker/example.env
+          cp config.dist.yml kanae-docker/config.dist.yml
+
+      - name: Generate OpenAPI schema
+        env:
+          PYTHONPATH: src
+        run: |
+          cp config.dist.yml config.yml
+          uv run --with=orjson python scripts/generate-openapi.py releases/openapi.json
+
       - name: Bundle docker-related files
         run: |
           zip releases/kanae-docker.zip kanae-docker/**
-          tar -czf releases/kanae-docker.tar.gz kanae-docker/** 
-  
+          tar -czf releases/kanae-docker.tar.gz kanae-docker/**
+
       - name: Upload bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           path: releases
-  
+
 
   Release:
     runs-on: ubuntu-24.04
@@ -39,19 +57,31 @@ jobs:
       with:
         fetch-depth: '0'
 
-    # - name: Setup Atlas
-    #   uses: ariga/setup-atlas@v0
-    #   with:
-    #     cloud-token: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+    - name: Generate dispatch token
+      id: dispatch_token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_SECRET_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: Chapter-Website
 
+    - name: Generate release token
+      id: release_token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_SECRET_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: kanae
 
-    - name: Get Previous Tag
+    - name: Get previous tag
       uses: WyriHaximus/github-action-get-previous-tag@61819f33034117e6c686e6a31dba995a85afc9de # v2
       id: prev_tag
       with:
         fallback: v0.1.0
 
-    - name: Download Artifacts
+    - name: Download artifacts
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
         name: artifact
@@ -61,22 +91,23 @@ jobs:
       uses: anothrNick/github-tag-action@4ed44965e0db8dab2b466a16da04aec3cc312fd8 # 1.75.0
       id: tag_version
       env:
-        GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        GITHUB_TOKEN: ${{ steps.release_token.outputs.token }}
         WITH_V: true
         RELEASE_BRANCHES: main
-        
-    - name: Release New Version
+
+    - name: Release new version
       uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
       with:
         body: "https://github.com/UCMercedACM/kanae/compare/${{ steps.prev_tag.outputs.tag }}...${{ steps.tag_version.outputs.new_tag }}"
-        token: ${{ secrets.PAT_TOKEN }}
+        token: ${{ steps.release_token.outputs.token }}
         tag: ${{ steps.tag_version.outputs.new_tag }}
         name: ${{ steps.tag_version.outputs.new_tag }}
-        artifacts: "releases/kanae-docker.zip,releases/kanae-docker.tar.gz"
+        artifacts: "releases/kanae-docker.zip,releases/kanae-docker.tar.gz,releases/openapi.json"
 
-    # - name: Push schema
-    #   uses: ariga/atlas-action/schema/push@v1
-    #   with:
-    #     env: prod
-    #     tag: ${{ steps.tag_version.outputs.new_tag }}
-    #     version: ${{ steps.tag_version.outputs.new_tag }}
+    - name: Notify Chapter-Website of new OpenAPI schema
+      uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
+      with:
+        token: ${{ steps.dispatch_token.outputs.token }}
+        repository: ${{ github.repository_owner }}/Chapter-Website
+        event-type: api-schema-updated
+        client-payload: '{"tag": "${{ steps.tag_version.outputs.new_tag }}"}'
