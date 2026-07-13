@@ -38,14 +38,27 @@ YEL=$'\033[0;33m'
 BLU=$'\033[0;34m'
 RST=$'\033[0m'
 
-step() { printf "\n${BLU}━━ %s ━━${RST}\n" "$1"; }
-ok() { printf "${GRN}✓${RST} %s\n" "$1"; }
-warn() { printf "${YEL}⚠${RST} %s\n" "$1"; }
+step() {
+	local msg="$1"
+	printf "\n${BLU}━━ %s ━━${RST}\n" "$msg"
+}
+ok() {
+	local msg="$1"
+	printf "${GRN}✓${RST} %s\n" "$msg"
+}
+warn() {
+	local msg="$1"
+	printf "${YEL}⚠${RST} %s\n" "$msg"
+}
 fail() {
-	printf "${RED}✗${RST} %s\n" "$1" >&2
+	local msg="$1"
+	printf "${RED}✗${RST} %s\n" "$msg" >&2
 	exit 1
 }
-require() { command -v "$1" >/dev/null 2>&1 || fail "missing required tool: $1"; }
+require() {
+	local tool="$1"
+	command -v "$tool" >/dev/null 2>&1 || fail "missing required tool: $tool"
+}
 
 provision_identity() {
 	local jar="$1" email="$2" name="$3" password="$4" flow csrf resp
@@ -86,8 +99,14 @@ provision_bg() {
 }
 
 read_id() {
-	[[ -s "$1" ]] || fail "provisioning failed for $2"
-	printf '%s' "$(<"$1")"
+	local idfile="$1" label="$2"
+	[[ -s "$idfile" ]] || fail "provisioning failed for $label"
+	printf '%s' "$(<"$idfile")"
+}
+
+named_row() {
+	local role="$1" email="$2" id="$3"
+	printf '    %-8s %-30s %s\n' "$role" "$email" "$id"
 }
 
 reset_password() {
@@ -256,6 +275,8 @@ for i in "${!ROSTER_ROLES[@]}"; do
 		admin) grant_role "${ROSTER_IDS[$i]}" admin && roster_admins=$((roster_admins + 1)) ;;
 		manager) grant_role "${ROSTER_IDS[$i]}" manager && roster_managers=$((roster_managers + 1)) ;;
 		leads) grant_role "${ROSTER_IDS[$i]}" leads && roster_leads=$((roster_leads + 1)) ;;
+		member) ;;
+		*) warn "unknown roster role '${ROSTER_ROLES[$i]}' for ${ROSTER_EMAILS[$i]}; no role granted" ;;
 	esac
 done
 
@@ -282,11 +303,11 @@ wait
 printf '\n%sseed complete%s\n' "$GRN" "$RST"
 
 printf "\n  ${BLU}named accounts${RST} (shared password: %s)\n" "$PASSWORD"
-printf "    %-8s %-30s %s\n" "role" "email" "identity id"
-printf "    %-8s %-30s %s\n" "admin" "$ADMIN_EMAIL" "$ADMIN_ID"
-printf "    %-8s %-30s %s\n" "member" "$MEMBER_EMAIL" "$MEMBER_ID"
-printf "    %-8s %-30s %s\n" "manager" "$MANAGER_EMAIL" "$MANAGER_ID"
-printf "    %-8s %-30s %s\n" "lead" "$LEADS_EMAIL" "$LEAD_ID"
+named_row "role" "email" "identity id"
+named_row "admin" "$ADMIN_EMAIL" "$ADMIN_ID"
+named_row "member" "$MEMBER_EMAIL" "$MEMBER_ID"
+named_row "manager" "$MANAGER_EMAIL" "$MANAGER_ID"
+named_row "lead" "$LEADS_EMAIL" "$LEAD_ID"
 
 printf "\n  ${BLU}roster members${RST}: %d (data/members.json)\n" "${#ROSTER_IDS[@]}"
 printf "    %-8s %-32s %-32s %s\n" "role" "email" "password" "identity id"
