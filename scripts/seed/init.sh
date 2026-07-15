@@ -228,7 +228,7 @@ ADMIN_JAR="$WORK/admin.jar"
 MANAGER_JAR="$WORK/manager.jar"
 LEAD_JAR="$WORK/lead.jar"
 
-step "1. provision identities + roster (parallel)"
+step "1. provision identities + roster (serial)"
 
 ROSTER_NAMES=() ROSTER_EMAILS=() ROSTER_ROLES=() ROSTER_IDS=() ROSTER_PASSWORDS=()
 while IFS=$'\t' read -r name email role; do
@@ -237,18 +237,16 @@ while IFS=$'\t' read -r name email role; do
 	ROSTER_ROLES+=("$role")
 done < <(jq -r '.[] | [.name, .email, .role] | @tsv' "$DATA_DIR/members.json")
 
-provision_bg "$WORK/admin.id" "$ADMIN_JAR" "$ADMIN_EMAIL" "Seed Admin" "$PASSWORD" &
-provision_bg "$WORK/member.id" "$WORK/member.jar" "$MEMBER_EMAIL" "Seed Member" "$PASSWORD" &
-provision_bg "$WORK/manager.id" "$MANAGER_JAR" "$MANAGER_EMAIL" "Seed Manager" "$PASSWORD" &
-provision_bg "$WORK/lead.id" "$LEAD_JAR" "$LEADS_EMAIL" "Seed Lead" "$PASSWORD" &
+provision_bg "$WORK/admin.id" "$ADMIN_JAR" "$ADMIN_EMAIL" "Seed Admin" "$PASSWORD"
+provision_bg "$WORK/member.id" "$WORK/member.jar" "$MEMBER_EMAIL" "Seed Member" "$PASSWORD"
+provision_bg "$WORK/manager.id" "$MANAGER_JAR" "$MANAGER_EMAIL" "Seed Manager" "$PASSWORD"
+provision_bg "$WORK/lead.id" "$LEAD_JAR" "$LEADS_EMAIL" "Seed Lead" "$PASSWORD"
 
 for i in "${!ROSTER_EMAILS[@]}"; do
 	ROSTER_PASSWORDS[i]="$(openssl rand -hex 16)"
 	provision_bg "$WORK/roster-$i.id" "$WORK/roster-$i.jar" \
-		"${ROSTER_EMAILS[$i]}" "${ROSTER_NAMES[$i]}" "${ROSTER_PASSWORDS[$i]}" &
+		"${ROSTER_EMAILS[$i]}" "${ROSTER_NAMES[$i]}" "${ROSTER_PASSWORDS[$i]}"
 done
-
-wait
 
 ADMIN_ID=$(read_id "$WORK/admin.id" "$ADMIN_EMAIL")
 MEMBER_ID=$(read_id "$WORK/member.id" "$MEMBER_EMAIL")
