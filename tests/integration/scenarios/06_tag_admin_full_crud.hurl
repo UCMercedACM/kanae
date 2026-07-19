@@ -34,20 +34,23 @@ jsonpath "$.id" > 0
 jsonpath "$.title" == "scenario07-rust"
 jsonpath "$.description" == "systems language"
 
-# Get-by-id round-trip.
+# Get-by-id round-trip. Now carries in_use (FullTags) — a freshly created,
+# unattached tag is not in use.
 GET {{KANAE_URL}}/tags/{{tag_id}}
 HTTP 200
 [Asserts]
 jsonpath "$.id" == {{tag_id}}
 jsonpath "$.title" == "scenario07-rust"
 jsonpath "$.description" == "systems language"
+jsonpath "$.in_use" == false
 
-# Listing reflects the new row.
+# Listing reflects the new row and every row carries the in_use flag.
 GET {{KANAE_URL}}/tags
 HTTP 200
 [Asserts]
 jsonpath "$" isCollection
 body contains "scenario07-rust"
+jsonpath "$[0].in_use" isBoolean
 
 # Filter by similarity returns at least one match.
 GET {{KANAE_URL}}/tags?title=scenario07-rust

@@ -22,7 +22,7 @@ dependencies = [
     "pyvips[binary]~=3.1.1",
     "pyyaml~=6.0.3",
     "uvloop~=0.22.1 ; sys_platform != 'win32'",
-    "valkey-glide~=2.5.0",
+    "valkey-glide==2.4.2",
     "winloop~=0.6.2 ; sys_platform == 'win32'",
 ]
 

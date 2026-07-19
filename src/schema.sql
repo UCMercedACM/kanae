@@ -131,7 +131,7 @@ CREATE INDEX IF NOT EXISTS projects_name_trgm_idx ON projects USING gin (name gi
 -- Meaning that many projects can have many tags
 -- This basically implies that we need bridge tables to overcome the gap.
 CREATE TABLE IF NOT EXISTS tags (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     title TEXT NOT NULL,
     description TEXT
 );

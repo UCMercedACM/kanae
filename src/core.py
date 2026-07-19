@@ -58,7 +58,7 @@ from pydantic import BaseModel
 from starlette.datastructures import Headers
 
 from utils.cache import ORJSONSerializer, ValkeyCache, cached_method
-from utils.errors import BadRequestError, NotFoundError
+from utils.errors import AttachedTagError, BadRequestError, NotFoundError
 from utils.glide import GlideManager
 from utils.limiter.extension import (
     KanaeLimiter,
@@ -1306,6 +1306,10 @@ class Kanae(FastAPI):
             self.invalid_hash_error_handler,  # ty: ignore[invalid-argument-type]
         )
         self.add_exception_handler(
+            AttachedTagError,
+            self.attached_tag_error_handler,  # ty: ignore[invalid-argument-type]
+        )
+        self.add_exception_handler(
             RateLimitExceeded,
             rate_limit_exceeded_handler,  # ty: ignore[invalid-argument-type]
         )
@@ -1353,6 +1357,17 @@ class Kanae(FastAPI):
         return ORJSONResponse(
             content={"error": "Failed to verify, entirely invalid hash"},
             status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    def attached_tag_error_handler(
+        self, request: RouteRequest, exc: AttachedTagError
+    ) -> Response:
+        return ORJSONResponse(
+            content={
+                "detail": exc.detail,
+                "entries": [entry.model_dump() for entry in exc.entries],
+            },
+            status_code=status.HTTP_409_CONFLICT,
         )
 
     def invalid_hash_error_handler(
