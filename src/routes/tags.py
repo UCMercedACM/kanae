@@ -1,12 +1,11 @@
-from typing import Annotated, Optional
+import uuid
+from typing import Annotated, Literal, Optional
 
 from fastapi import Path, Query
 from pydantic import BaseModel, Field
 
 from utils.checks import Role, check_any, has_role, has_sudo
-from utils.errors import (
-    NotFoundError,
-)
+from utils.errors import AttachedTagError, NotFoundError
 from utils.request import RouteRequest
 from utils.responses import DeleteResponse, NotFoundResponse
 from utils.router import KanaeRouter
@@ -28,21 +27,32 @@ class Tags(BaseModel, frozen=True):
     description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
+class FullTags(BaseModel, frozen=True):
+    id: int
+    title: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    in_use: bool
+
+
 @router.get("/tags")
 async def get_tags(
     request: RouteRequest,
     title: Annotated[Optional[str], Query(min_length=3, pattern=_NO_NULL_REGEX)] = None,
-) -> list[Tags]:
+) -> list[FullTags]:
     """Get all tags that can be used or sort for a list of tags"""
     query = """
-    SELECT id, title, description
+    SELECT id, title, description,
+    (EXISTS (SELECT 1 FROM project_tags WHERE tag_id = tags.id)
+         OR EXISTS (SELECT 1 FROM event_tags WHERE tag_id = tags.id)) AS in_use
     FROM tags
     ORDER BY title DESC
     """
 
     if title:
         query = """
-        SELECT id, title, description
+        SELECT id, title, description,
+        (EXISTS (SELECT 1 FROM project_tags WHERE tag_id = tags.id)
+             OR EXISTS (SELECT 1 FROM event_tags WHERE tag_id = tags.id)) AS in_use
         FROM tags
         WHERE title % $1
         ORDER BY similarity(title, $1) DESC
@@ -50,20 +60,22 @@ async def get_tags(
 
     args: tuple[str, ...] = (title,) if title else ()
     records = await request.app.pool.fetch(query, *args)
-    return [Tags(**dict(row)) for row in records]
+    return [FullTags(**dict(row)) for row in records]
 
 
 @router.get(
     "/tags/{tag_id}",
-    responses={200: {"model": Tags}, 404: {"model": NotFoundResponse}},
+    responses={200: {"model": FullTags}, 404: {"model": NotFoundResponse}},
 )
 async def get_tag_by_id(
     request: RouteRequest,
     tag_id: Annotated[int, Path(ge=_TAG_ID_MIN, le=_TAG_ID_MAX)],
-) -> Tags:
+) -> FullTags:
     """Get tag via ID"""
     query = """
-    SELECT id, title, description
+    SELECT id, title, description,
+    (EXISTS (SELECT 1 FROM project_tags WHERE tag_id = tags.id)
+         OR EXISTS (SELECT 1 FROM event_tags WHERE tag_id = tags.id)) AS in_use
     FROM tags
     WHERE id = $1;
     """
@@ -71,7 +83,7 @@ async def get_tag_by_id(
     rows = await request.app.pool.fetchrow(query, tag_id)
     if not rows:
         raise NotFoundError
-    return Tags(**dict(rows))
+    return FullTags(**dict(rows))
 
 
 class ModifiedTag(BaseModel):
@@ -105,10 +117,25 @@ async def edit_tag(
     return Tags(**dict(rows))
 
 
+class AttachedTagEntry(BaseModel, frozen=True):
+    id: uuid.UUID
+    name: str
+    type: Literal["Project", "Event"]
+
+
+class AttachedTagResponse(BaseModel, frozen=True):
+    detail: str
+    entries: list[AttachedTagEntry]
+
+
 @router.delete(
     "/tags/{tag_id}",
     dependencies=[check_any(has_role(Role.ROOT), has_sudo())],
-    responses={200: {"model": DeleteResponse}, 404: {"model": NotFoundResponse}},
+    responses={
+        200: {"model": DeleteResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": AttachedTagResponse},
+    },
 )
 @router.limiter.limit("5/minute")
 async def delete_tag(
@@ -117,13 +144,42 @@ async def delete_tag(
 ) -> DeleteResponse:
     """Remove specified tag"""
     query = """
-    DELETE FROM tags
-    WHERE id = $1;
+    WITH usage AS (
+        SELECT projects.id, projects.name, 'Project' as type
+        FROM project_tags
+        JOIN projects ON projects.id = project_tags.project_id
+        WHERE project_tags.tag_id = $1
+
+        UNION ALL
+
+        SELECT events.id, events.name, 'Event' AS type
+        FROM event_tags
+        JOIN events ON events.id = event_tags.event_id
+        WHERE event_tags.tag_id = $1
+    ), deleted AS (
+        DELETE FROM tags
+        WHERE id = $1
+          AND NOT EXISTS (SELECT 1 FROM usage)
+        RETURNING id
+    )
+    SELECT
+        (SELECT jsonb_agg(jsonb_build_object('id', u.id, 'name', u.name, 'type', u.type))
+             FROM usage u) AS entries,
+        EXISTS (SELECT 1 FROM usage) AS in_use,
+        EXISTS (SELECT 1 FROM deleted) AS deleted;
     """
 
-    query_status = await request.app.pool.execute(query, tag_id)
-    if query_status[-1] == "0":
+    row = await request.app.pool.fetchrow(query, tag_id)
+
+    if row["in_use"]:
+        entries = [AttachedTagEntry(**entry) for entry in row["entries"]]
+
+        msg = "Tag is still in use"
+        raise AttachedTagError(msg, entries=entries)
+
+    if not row["deleted"]:
         raise NotFoundError
+
     return DeleteResponse()
 
 

@@ -10,6 +10,8 @@ from .responses import HTTP_404_DETAIL
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from routes.tags import AttachedTagEntry
+
     from .checks import CheckContext, CheckPredicate, ResourcePermission, Role
 
 
@@ -53,6 +55,12 @@ class ConflictError(BaseHTTPException):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.status_code = 409
+
+
+class AttachedTagError(ConflictError):
+    def __init__(self, detail: str, *, entries: list[AttachedTagEntry]) -> None:
+        super().__init__(detail)
+        self.entries = entries
 
 
 # HTTP 502

@@ -39,6 +39,59 @@ async def test_list_tags_returns_seeded_rows(
     assert {row["title"] for row in body} == {"python", "rust"}
 
 
+async def test_list_tags_reports_in_use_flag(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    attached_id: int = await kanae.pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        "attached",
+        "used by a project",
+    )
+    await kanae.pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        "orphan",
+        "used by nothing",
+    )
+    project_id = await kanae.pool.fetchval(
+        "INSERT INTO projects (name) VALUES ($1) RETURNING id", "some project"
+    )
+    await kanae.pool.execute(
+        "INSERT INTO project_tags (project_id, tag_id) VALUES ($1, $2)",
+        project_id,
+        attached_id,
+    )
+
+    response = await client.client.get("/tags")
+    assert response.status_code == 200
+    in_use = {row["title"]: row["in_use"] for row in response.json()}
+    assert in_use == {"attached": True, "orphan": False}
+
+
+async def test_list_tags_title_filter_includes_in_use(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    # The similarity-search branch must also carry the in_use column.
+    tag_id: int = await kanae.pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        "python",
+        "the lang",
+    )
+    event_id = await kanae.pool.fetchval(
+        "INSERT INTO events (name) VALUES ($1) RETURNING id", "some event"
+    )
+    await kanae.pool.execute(
+        "INSERT INTO event_tags (event_id, tag_id) VALUES ($1, $2)",
+        event_id,
+        tag_id,
+    )
+
+    response = await client.client.get("/tags?title=python")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert body[0]["title"] == "python"
+    assert body[0]["in_use"] is True
+
+
 async def test_list_tags_rejects_short_title_filter(client: KanaeTestClient) -> None:
     # `title` has Query(min_length=3) — two chars must 422
     response = await client.client.get("/tags?title=py")
@@ -58,7 +111,34 @@ async def test_get_tag_by_id_returns_row(client: KanaeTestClient, kanae: Kanae) 
     )
     response = await client.client.get(f"/tags/{tag_id}")
     assert response.status_code == 200
-    assert response.json() == {"id": tag_id, "title": "go", "description": "a lang"}
+    assert response.json() == {
+        "id": tag_id,
+        "title": "go",
+        "description": "a lang",
+        "in_use": False,
+    }
+
+
+async def test_get_tag_by_id_reports_in_use(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    tag_id: int = await kanae.pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        "attached",
+        "used by an event",
+    )
+    event_id = await kanae.pool.fetchval(
+        "INSERT INTO events (name) VALUES ($1) RETURNING id", "some event"
+    )
+    await kanae.pool.execute(
+        "INSERT INTO event_tags (event_id, tag_id) VALUES ($1, $2)",
+        event_id,
+        tag_id,
+    )
+
+    response = await client.client.get(f"/tags/{tag_id}")
+    assert response.status_code == 200
+    assert response.json()["in_use"] is True
 
 
 async def test_get_tag_by_id_returns_404_when_missing(client: KanaeTestClient) -> None:
@@ -235,6 +315,66 @@ async def test_delete_tag_removes_row(
         "SELECT count(*) FROM tags WHERE id = $1", tag_id
     )
     assert remaining == 0
+
+
+async def test_delete_tag_in_use_by_project_returns_409(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    tag_id: int = await kanae.pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        "pinned",
+        "attached to a project",
+    )
+    project_id = await kanae.pool.fetchval(
+        "INSERT INTO projects (name) VALUES ($1) RETURNING id", "kanae"
+    )
+    await kanae.pool.execute(
+        "INSERT INTO project_tags (project_id, tag_id) VALUES ($1, $2)",
+        project_id,
+        tag_id,
+    )
+
+    response = await client.client.delete(f"/tags/{tag_id}")
+    assert response.status_code == 409
+    body: dict[str, Any] = response.json()
+    assert body["detail"] == "Tag is still in use"
+    assert body["entries"] == [
+        {"id": str(project_id), "name": "kanae", "type": "Project"}
+    ]
+
+    # The conflict must leave the tag intact.
+    remaining: int = await kanae.pool.fetchval(
+        "SELECT count(*) FROM tags WHERE id = $1", tag_id
+    )
+    assert remaining == 1
+
+
+async def test_delete_tag_in_use_by_event_returns_409(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ROOT)
+    tag_id: int = await kanae.pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        "pinned",
+        "attached to an event",
+    )
+    event_id = await kanae.pool.fetchval(
+        "INSERT INTO events (name) VALUES ($1) RETURNING id", "orientation"
+    )
+    await kanae.pool.execute(
+        "INSERT INTO event_tags (event_id, tag_id) VALUES ($1, $2)",
+        event_id,
+        tag_id,
+    )
+
+    response = await client.client.delete(f"/tags/{tag_id}")
+    assert response.status_code == 409
+    body: dict[str, Any] = response.json()
+    assert body["detail"] == "Tag is still in use"
+    assert body["entries"] == [
+        {"id": str(event_id), "name": "orientation", "type": "Event"}
+    ]
 
 
 # ──────────────────────────────────────────────────────────────────
