@@ -39,7 +39,6 @@
       "automerge": true
     },
     {
-
       "matchManagers": [
         "github-actions"
       ],
