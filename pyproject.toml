@@ -5,7 +5,7 @@ description = "Internal backend server for ACM @ UC Merced"
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
-    "aiobotocore~=3.7.0",
+    "aiobotocore~=3.8.0",
     "aiocache~=0.12.3",
     "aiohttp[speedups]~=3.14.0",
     "argon2-cffi~=25.1.0",
@@ -22,7 +22,7 @@ dependencies = [
     "pyvips[binary]~=3.1.1",
     "pyyaml~=6.0.3",
     "uvloop~=0.22.1 ; sys_platform != 'win32'",
-    "valkey-glide~=2.4.0",
+    "valkey-glide~=2.5.0",
     "winloop~=0.6.2 ; sys_platform == 'win32'",
 ]
 
@@ -34,7 +34,7 @@ dev = [
 ]
 lint = [
     "ruff~=0.15.11",
-    "ty==0.0.59",
+    "ty==0.0.61",
     { include-group = "types" },
 ]
 types = [
@@ -49,7 +49,7 @@ test = [
     "pytest-asyncio~=1.4.0",
     "testcontainers~=4.14.2",
     "hypothesis~=6.156.1",
-    "schemathesis~=4.22.3",
+    "schemathesis~=4.23.0",
 ]
 
 [tool.ty.src]
