@@ -68,6 +68,9 @@ DELETE {{KANAE_URL}}/tags/{{tag_id}}
 HTTP 409
 [Asserts]
 jsonpath "$.detail" == "Tag is still in use"
+# attached_tag_error_handler renders the AttachedTagResponse shape directly:
+# detail + entries, and NOT the "result" key the generic error handler adds.
+jsonpath "$.result" not exists
 jsonpath "$.entries" isCollection
 jsonpath "$.entries" count == 1
 jsonpath "$.entries[0].id" == "{{event_id}}"

@@ -337,11 +337,10 @@ async def test_delete_tag_in_use_by_project_returns_409(
 
     response = await client.client.delete(f"/tags/{tag_id}")
     assert response.status_code == 409
-    body: dict[str, Any] = response.json()
-    assert body["detail"] == "Tag is still in use"
-    assert body["entries"] == [
-        {"id": str(project_id), "name": "kanae", "type": "Project"}
-    ]
+    assert response.json() == {
+        "detail": "Tag is still in use",
+        "entries": [{"id": str(project_id), "name": "kanae", "type": "Project"}],
+    }
 
     # The conflict must leave the tag intact.
     remaining: int = await kanae.pool.fetchval(
@@ -370,11 +369,51 @@ async def test_delete_tag_in_use_by_event_returns_409(
 
     response = await client.client.delete(f"/tags/{tag_id}")
     assert response.status_code == 409
-    body: dict[str, Any] = response.json()
-    assert body["detail"] == "Tag is still in use"
-    assert body["entries"] == [
-        {"id": str(event_id), "name": "orientation", "type": "Event"}
-    ]
+    assert "result" not in response.json()  # dedicated handler, not the generic one
+    assert response.json() == {
+        "detail": "Tag is still in use",
+        "entries": [{"id": str(event_id), "name": "orientation", "type": "Event"}],
+    }
+
+
+async def test_delete_tag_in_use_lists_every_attachment(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # A tag attached to both a project and an event surfaces both in entries —
+    # exercises the UNION ALL (projects first, then events) and the handler
+    # serializing more than one entry.
+    fake_ory.login_as(Role.ROOT)
+    tag_id: int = await kanae.pool.fetchval(
+        "INSERT INTO tags (title, description) VALUES ($1, $2) RETURNING id",
+        "pinned",
+        "attached to both",
+    )
+    project_id = await kanae.pool.fetchval(
+        "INSERT INTO projects (name) VALUES ($1) RETURNING id", "kanae"
+    )
+    event_id = await kanae.pool.fetchval(
+        "INSERT INTO events (name) VALUES ($1) RETURNING id", "orientation"
+    )
+    await kanae.pool.execute(
+        "INSERT INTO project_tags (project_id, tag_id) VALUES ($1, $2)",
+        project_id,
+        tag_id,
+    )
+    await kanae.pool.execute(
+        "INSERT INTO event_tags (event_id, tag_id) VALUES ($1, $2)",
+        event_id,
+        tag_id,
+    )
+
+    response = await client.client.delete(f"/tags/{tag_id}")
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Tag is still in use",
+        "entries": [
+            {"id": str(project_id), "name": "kanae", "type": "Project"},
+            {"id": str(event_id), "name": "orientation", "type": "Event"},
+        ],
+    }
 
 
 # ──────────────────────────────────────────────────────────────────
