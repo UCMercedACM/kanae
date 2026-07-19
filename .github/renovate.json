@@ -11,6 +11,10 @@
     "enabled": true,
     "automerge": true
   },
+  // valkey-glide v2.5.0 has a regression bug, due to their FFI rewrite from UDS
+  // Ignore it for now, as it will be pinned to v2.4.2 until this regression is fixed
+  // See: https://github.com/valkey-io/valkey-glide/pull/5637
+  "ignoreDeps": ["valkey-glide"],
   "packageRules": [
     {
       "matchManagers": [
@@ -35,7 +39,7 @@
       "automerge": true
     },
     {
-      
+
       "matchManagers": [
         "github-actions"
       ],
