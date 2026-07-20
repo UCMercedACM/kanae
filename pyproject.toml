@@ -48,8 +48,8 @@ test = [
     "pytest~=9.1.0",
     "pytest-asyncio~=1.4.0",
     "testcontainers~=4.14.2",
-    "hypothesis~=6.156.1",
-    "schemathesis~=4.23.0",
+    "hypothesis~=6.157.0",
+    "schemathesis~=4.24.0",
 ]
 
 [tool.ty.src]
