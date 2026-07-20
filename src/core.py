@@ -82,6 +82,7 @@ if TYPE_CHECKING:
         Sequence,
     )
 
+    from fastapi.routing import APIRoute
     from starlette.types import Message, Receive, Scope, Send
     from types_aiobotocore_s3 import S3Client
     from types_aiobotocore_s3.type_defs import HeadObjectOutputTypeDef
@@ -163,6 +164,11 @@ def _is_docker() -> bool:
     return dockerenv_path.exists() or (
         path.is_file() and any("docker" in line for line in path.open())
     )
+
+
+def _build_operation_id(route: APIRoute) -> str:
+    head, *tail = route.name.split("_")
+    return head + "".join([word.capitalize() for word in tail])
 
 
 def find_config() -> Optional[Path]:
@@ -1263,6 +1269,7 @@ class Kanae(FastAPI):
             default_response_class=ORJSONResponse,
             redoc_url="/docs",
             docs_url=None,
+            generate_unique_id_function=_build_operation_id,
             lifespan=self.lifespan,
         )
 
