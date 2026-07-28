@@ -11,12 +11,12 @@ dependencies = [
     "argon2-cffi~=25.1.0",
     "asyncpg~=0.31.0",
     "blake3~=1.0.8",
-    "fastapi~=0.139.0",
+    "fastapi~=0.140.7",
     "fastapi-pagination~=0.15.12",
     "granian~=2.7.4",
     "limits~=5.8.0",
     "orjson~=3.11.8",
-    "prometheus-fastapi-instrumentator~=8.0.0",
+    "prometheus-fastapi-instrumentator~=8.1.0",
     "pybase62~=1.0.0",
     "python-dateutil~=2.9.0.post0",
     "pyvips[binary]~=3.1.1",
@@ -33,12 +33,12 @@ dev = [
     { include-group = "test" },
 ]
 lint = [
-    "ruff~=0.15.11",
-    "ty==0.0.61",
+    "ruff~=0.16.0",
+    "ty==0.0.64",
     { include-group = "types" },
 ]
 types = [
-    "types-aiobotocore[s3]~=3.7.0",
+    "types-aiobotocore[s3]~=3.8.0",
     "types-boto3[s3]~=1.43.14",
 ]
 test = [
@@ -47,8 +47,8 @@ test = [
     "httpx~=0.28.1",
     "pytest~=9.1.0",
     "pytest-asyncio~=1.4.0",
-    "testcontainers~=4.14.2",
-    "hypothesis~=6.157.0",
+    "testcontainers~=4.15.0",
+    "hypothesis~=6.161.8",
     "schemathesis~=4.24.0",
 ]
 
