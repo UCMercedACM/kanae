@@ -17,6 +17,7 @@ from asgi_lifespan import LifespanManager
 from fastapi import FastAPI, Request, Response
 from fastapi_pagination import add_pagination
 from starlette.middleware.cors import CORSMiddleware
+from testcontainers.community.postgres import PostgresContainer
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.exceptions import ContainerStartException
 from testcontainers.core.image import DockerImage
@@ -24,7 +25,6 @@ from testcontainers.core.network import Network
 from testcontainers.core.utils import raise_for_deprecated_parameter
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.core.waiting_utils import WaitStrategy
-from testcontainers.postgres import PostgresContainer
 from yarl import URL
 
 from core import Kanae, KanaeConfig, find_config
@@ -334,7 +334,7 @@ def setup() -> Generator[KanaeServices, None, None]:
     with (
         DockerImage(
             path=_DOCKERFILE.parents[2],
-            dockerfile_path=_DOCKERFILE,
+            dockerfile_path=str(_DOCKERFILE),
             tag="kanae-pg-test:latest",
         ) as image,
         PostgresContainer(str(image)) as postgres,

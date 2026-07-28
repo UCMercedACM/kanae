@@ -13,8 +13,10 @@
   },
   // valkey-glide v2.5.0 has a regression bug, due to their FFI rewrite from UDS
   // Ignore it for now, as it will be pinned to v2.4.2 until this regression is fixed
+  // Also, FastAPI broke some stuff in 0.140.5+. Until fastapi-pagination fixes it, ignore it
   // See: https://github.com/valkey-io/valkey-glide/pull/5637
-  "ignoreDeps": ["valkey-glide"],
+  // See: https://github.com/uriyyo/fastapi-pagination/issues/1990
+  "ignoreDeps": ["valkey-glide", "fastapi"],
   "packageRules": [
     {
       "matchManagers": [

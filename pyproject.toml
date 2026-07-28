@@ -11,7 +11,7 @@ dependencies = [
     "argon2-cffi~=25.1.0",
     "asyncpg~=0.31.0",
     "blake3~=1.0.8",
-    "fastapi~=0.140.7",
+    "fastapi==0.139.2",
     "fastapi-pagination~=0.15.12",
     "granian~=2.7.4",
     "limits~=5.8.0",
