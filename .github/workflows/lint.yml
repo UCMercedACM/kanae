@@ -40,7 +40,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --group lint
+          uv sync --frozen --group lint
 
       - name: Check typing
         run: |
