@@ -23,7 +23,6 @@ jobs:
       TESTCONTAINER_DOCKER_NETWORK: kanae-testcontainers
       UV_NO_DEV: true
       UV_NO_DEFAULT_GROUPS: true
-      UV_FROZEN: true
 
     steps:
       - name: Checkout Repository
@@ -54,7 +53,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          uv run pytest
+          uv run --frozen pytest
 
   Integration:
     name: Integration
