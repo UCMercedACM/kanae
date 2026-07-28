@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      
+
   pull_request:
     branches:
       - main
@@ -23,6 +23,7 @@ jobs:
       TESTCONTAINER_DOCKER_NETWORK: kanae-testcontainers
       UV_NO_DEV: true
       UV_NO_DEFAULT_GROUPS: true
+      UV_FROZEN: true
 
     steps:
       - name: Checkout Repository
@@ -42,7 +43,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --frozen --group test
+          uv sync --group test
 
       - name: Set up server configuration
         run: |
@@ -88,4 +89,3 @@ jobs:
       - name: Clean up integration stack
         run: |
           docker compose -f docker/docker-compose.test.yml --env-file docker/.env down -v=True --remove-orphans
-

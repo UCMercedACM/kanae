@@ -1018,7 +1018,7 @@ class PrometheusMiddleware:
                     in_progress,
                 )
 
-    async def _record_metrics(
+    async def _record_metrics(  # noqa: PLR0917
         self,
         request: Request,
         handler: str,
@@ -1079,7 +1079,7 @@ class PrometheusMiddleware:
                 template or if no template the path. Second element tells you
                 if the path is templated or not.
         """
-        route_name = routing.get_route_name(request)
+        route_name = routing.get_route_name(request, should_include_root_path=False)
         return route_name or request.url.path, bool(route_name)
 
     def _is_handler_excluded(self, handler: str, *, is_templated: bool) -> bool:
@@ -1185,7 +1185,7 @@ class PrometheusInstrumentator:
     def add(
         self,
         *instrumentation_function: Optional[
-            Callable[[metrics.Info], None | Awaitable[None]]
+            Callable[[metrics.Info], Awaitable[None] | None]
         ],
     ) -> None:
         """Adds a function to list of instrumentations

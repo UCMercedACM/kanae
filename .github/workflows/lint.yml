@@ -3,7 +3,7 @@ on:
   push:
     branches:
       - main
-      
+
   pull_request:
     branches:
       - main
@@ -21,9 +21,10 @@ jobs:
     env:
       UV_NO_DEV: true
       UV_NO_DEFAULT_GROUPS: true
+      UV_FROZEN: true
 
     steps:
-      - name: Checkout Repository  
+      - name: Checkout Repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Set up Python ${{ matrix.version }}
@@ -39,8 +40,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --frozen --group lint
-          
+          uv sync --group lint
+
       - name: Check typing
         run: |
           uv run ty check src --error-on-warning
