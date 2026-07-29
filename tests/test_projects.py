@@ -853,7 +853,7 @@ async def test_leave_project_removes_membership(
 
 
 # ──────────────────────────────────────────────────────────────────
-# Modify member role, undocumented, Project.own + manager, 3 per minute
+# Modify member role, undocumented, manager OR Project.own, 3 per minute
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -865,17 +865,114 @@ async def test_modify_member_requires_session(client: KanaeTestClient) -> None:
     assert response.status_code == 401
 
 
-async def test_modify_member_rejects_without_manager_role(
+async def test_modify_member_rejects_without_manager_or_own(
     client: KanaeTestClient, fake_ory: FakeOryClient
 ) -> None:
-    identity_id = fake_ory.login_as()
-    target_project = uuid.uuid4()
-    await fake_ory.grant("Project", str(target_project), "own", identity_id)
+    fake_ory.login_as()
     response = await client.client.put(
-        f"/projects/{target_project}/member/modify",
+        f"/projects/{uuid.uuid4()}/member/modify",
         json={"id": str(uuid.uuid4()), "role": "lead"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize("role", [Role.LEADS, Role.ROOT])
+async def test_modify_member_rejects_unrelated_roles_without_own(
+    client: KanaeTestClient, fake_ory: FakeOryClient, role: Role
+) -> None:
+    # Only MANAGER (or ADMIN, via the has_permissions bypass) clears this
+    # without Project.own.
+    fake_ory.login_as(role)
+    response = await client.client.put(
+        f"/projects/{uuid.uuid4()}/member/modify",
+        json={"id": str(uuid.uuid4()), "role": "lead"},
+    )
+    assert response.status_code == 403
+
+
+async def test_modify_member_allows_manager_without_own(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    member_to_promote = uuid.uuid4()
+    project_id = await _insert_project(kanae.pool, name="manager-no-own")
+
+    await _insert_member(kanae.pool, member_id=member_to_promote)
+    await _link_project_member(
+        kanae.pool,
+        project_id=project_id,
+        member_id=member_to_promote,
+        role="member",
+    )
+
+    response = await client.client.put(
+        f"/projects/{project_id}/member/modify",
+        json={"id": str(member_to_promote), "role": "lead"},
+    )
+    assert response.status_code == 200
+    assert (
+        await _membership_role(
+            kanae.pool, project_id=project_id, member_id=member_to_promote
+        )
+        == "lead"
+    )
+
+
+async def test_modify_member_allows_owner_without_manager_role(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    member_to_promote = uuid.uuid4()
+    project_id = await _insert_project(kanae.pool, name="owner-no-manager")
+    await fake_ory.grant("Project", str(project_id), "own", identity_id)
+
+    await _insert_member(kanae.pool, member_id=member_to_promote)
+    await _link_project_member(
+        kanae.pool,
+        project_id=project_id,
+        member_id=member_to_promote,
+        role="member",
+    )
+
+    response = await client.client.put(
+        f"/projects/{project_id}/member/modify",
+        json={"id": str(member_to_promote), "role": "lead"},
+    )
+    assert response.status_code == 200
+    assert (
+        await _membership_role(
+            kanae.pool, project_id=project_id, member_id=member_to_promote
+        )
+        == "lead"
+    )
+
+
+async def test_modify_member_allows_admin_without_own(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    member_to_promote = uuid.uuid4()
+    project_id = await _insert_project(kanae.pool, name="admin-modifiable")
+
+    await _insert_member(kanae.pool, member_id=member_to_promote)
+    await _link_project_member(
+        kanae.pool,
+        project_id=project_id,
+        member_id=member_to_promote,
+        role="member",
+    )
+
+    response = await client.client.put(
+        f"/projects/{project_id}/member/modify",
+        json={"id": str(member_to_promote), "role": "lead"},
+    )
+    assert response.status_code == 200
+    assert (
+        await _membership_role(
+            kanae.pool, project_id=project_id, member_id=member_to_promote
+        )
+        == "lead"
+    )
 
 
 async def test_modify_member_promotes_existing_membership(
@@ -2603,3 +2700,92 @@ async def test_list_project_invites_enforces_10_per_minute(
 
         blocked = await client.client.get(f"/projects/{project_id}/invites")
         assert blocked.status_code == 429
+
+
+# ──────────────────────────────────────────────────────────────────
+# Admin bypass on has_permissions, no per-resource Keto grant needed
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_admin_edits_project_without_project_grant(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    project_id = await _insert_project(kanae.pool, name="admin-editable")
+
+    response = await client.client.put(
+        f"/projects/{project_id}",
+        json={
+            "name": "renamed-by-admin",
+            "description": "new-desc",
+            "link": "https://new.test",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["name"] == "renamed-by-admin"
+
+
+async def test_admin_deletes_project_without_own_grant(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    project_id = await _insert_project(kanae.pool, name="admin-deletable")
+
+    response = await client.client.delete(f"/projects/{project_id}")
+    assert response.status_code == 200
+
+    remaining = await kanae.pool.fetchval(
+        "SELECT count(*) FROM projects WHERE id = $1", project_id
+    )
+    assert remaining == 0
+
+
+async def test_admin_lists_invites_without_project_grant(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    project_id = await _insert_project(kanae.pool, name="admin-invites")
+
+    response = await client.client.get(f"/projects/{project_id}/invites")
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("role", [Role.MANAGER, Role.LEADS, Role.ROOT])
+async def test_non_admin_roles_do_not_bypass_project_permissions(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae, role: Role
+) -> None:
+    fake_ory.login_as(role)
+    project_id = await _insert_project(kanae.pool, name=f"no-bypass-{role.value}")
+
+    response = await client.client.delete(f"/projects/{project_id}")
+    assert response.status_code == 403
+
+
+async def test_roleless_member_still_denied_project_edit(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="still-denied")
+
+    response = await client.client.put(
+        f"/projects/{project_id}",
+        json={"name": "nope", "description": "d", "link": "https://x.test"},
+    )
+    assert response.status_code == 403
+
+
+async def test_admin_malformed_project_id_falls_through_to_422(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    response = await client.client.get("/projects/not-a-uuid/media")
+    assert response.status_code == 422
+    assert "uuid_parsing" in {e["type"] for e in response.json()["errors"]}
+
+
+async def test_non_admin_malformed_project_id_still_403(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.get("/projects/not-a-uuid/media")
+    assert response.status_code == 403

@@ -271,6 +271,10 @@ def has_permissions[ContextT: CheckContext](
         TypeError: No permissions were supplied.
         MissingPermissions: Caller lacks the specified permissions
 
+    Note:
+        Members that hold `Role.ADMIN` pass unconditionally. An "admin" owns
+        all resources, as they are an admin of the site.
+
     Example:
         Require both edit and own on a project before allowing deletion::
 
@@ -299,6 +303,11 @@ def has_permissions[ContextT: CheckContext](
         ]
 
         if not missing:
+            return True
+
+        if await ctx.ory.check_permission(
+            "Role", Role.ADMIN, "member", ctx.session.identity.id
+        ):
             return True
 
         raise MissingPermissions(missing)

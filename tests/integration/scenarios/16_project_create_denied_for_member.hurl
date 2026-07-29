@@ -51,7 +51,8 @@ Content-Type: application/json
 [{ "id": "{{MEMBER_ID}}" }]
 HTTP 403
 
-# Member role modify — Project.own AND Role.MANAGER required.
+# Member role modify — Role.MANAGER OR Project.own required. MEMBER has
+# neither.
 PUT {{KANAE_URL}}/projects/77777777-7777-4777-8777-777777777777/member/modify
 Content-Type: application/json
 { "id": "{{MEMBER_ID}}", "role": "lead" }
