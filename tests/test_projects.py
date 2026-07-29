@@ -1361,7 +1361,7 @@ async def test_thumbnail_upload_presigns_unknown_hash(
     assert body["url"]
 
 
-async def test_thumbnail_upload_returns_existing_record_and_links_it(
+async def test_thumbnail_upload_returns_existing_record_without_linking(
     client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
 ) -> None:
     identity_id = fake_ory.login_as()
@@ -1381,7 +1381,7 @@ async def test_thumbnail_upload_returns_existing_record_and_links_it(
     assert body["size"] == 2048
     assert body["url"]
 
-    assert await _project_media_linked(kanae.pool, project_id, _VALID_HASH)
+    assert not await _project_media_linked(kanae.pool, project_id, _VALID_HASH)
 
 
 async def test_thumbnail_upload_existing_record_wins_over_declared_size(

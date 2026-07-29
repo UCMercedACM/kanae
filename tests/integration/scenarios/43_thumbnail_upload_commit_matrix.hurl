@@ -12,10 +12,10 @@
 #
 # Dummy UUIDs with no DB row stand in for a real project/event, as in 25/26 —
 # Keto grants alone let every auth-gated path be reached. That works here
-# because neither upload route needs the resource row:
-#   - projects: the project_media link is inserted only when the hash already
-#     exists in `media`, and none of these hashes do
-#   - events: there is no bridge table at all, so `events` is never consulted
+# because neither upload route needs the resource row: both are a bare lookup
+# against `media` keyed on the hash alone. Neither attaches what it finds — a
+# thumbnail source is not gallery content, so the project route deliberately
+# leaves project_media untouched, and events have no bridge table at all.
 #
 # Phase ordering follows the same dependency chain as 25/26: session check →
 # Keto check (raw path string, before UUID coercion) → Pydantic → handler.

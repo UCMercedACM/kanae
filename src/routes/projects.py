@@ -1598,20 +1598,12 @@ async def upload_project_thumbnail(
     validate_thumbnail(req.content_type, req.size)
 
     query = """
-    WITH media_exists AS (
-        SELECT hash, content_type, kind, size, created_at
-        FROM media
-        WHERE hash = $1
-    ),
-    link AS (
-        INSERT INTO project_media (project_id, media_hash)
-        SELECT $2, hash FROM media_exists
-        ON CONFLICT DO NOTHING
-    )
-    SELECT hash, content_type, kind, size, created_at FROM media_exists;
+    SELECT hash, content_type, kind, size, created_at
+    FROM media
+    WHERE hash = $1;
     """
 
-    exists = await request.app.pool.fetchrow(query, req.hash, project_id)
+    exists = await request.app.pool.fetchrow(query, req.hash)
     if exists:
         url = await request.app.storage.get_url(exists["hash"], exists["content_type"])
         return MediaRecord(**dict(exists), url=url)
@@ -1665,10 +1657,6 @@ async def commit_project_thumbnail(
             ON CONFLICT (hash) DO UPDATE
                 SET hash = EXCLUDED.hash
             RETURNING hash
-        ), link AS (
-            INSERT INTO project_media (project_id, media_hash)
-            SELECT $5, hash FROM insert_media
-            ON CONFLICT DO NOTHING
         ), locked AS (
             SELECT thumbnail_hash FROM projects
             WHERE id = $5
