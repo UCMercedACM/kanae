@@ -288,7 +288,7 @@ def has_permissions[ContextT: CheckContext](
         msg = "has_permissions must contain more than one arguments"
         raise TypeError(msg)
 
-    async def pred(ctx: ContextT) -> Literal[True]:
+    async def pred(ctx: ContextT) -> bool:
         missing = [
             perm
             for perm in permissions
