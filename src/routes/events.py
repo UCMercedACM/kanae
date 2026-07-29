@@ -10,10 +10,7 @@ from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
-from core import (
-    store_thumbnail,
-    validate_thumbnail,
-)
+from core import MediaRecord, store_thumbnail, validate_thumbnail
 from utils.auth import use_session
 from utils.checks import Event, Role, has_any_role, has_permissions
 from utils.errors import (
@@ -384,15 +381,6 @@ async def create_events(
 
 
 class SimpleUploadResponse(BaseModel, frozen=True):
-    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
-
-
-class MediaRecord(BaseModel, frozen=True):
-    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
-    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
-    kind: Literal["image", "video"]
-    size: int
-    created_at: datetime.datetime
     url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 

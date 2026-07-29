@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from core import (
     ALLOWED_IMAGE_TYPES,
     ALLOWED_VIDEO_TYPES,
+    MediaRecord,
     MultipartUploadChunks,
     UploadChunk,
     store_thumbnail,
@@ -1405,15 +1406,6 @@ class MultipartUploadResponse(BaseModel, frozen=True):
     chunks: list[UploadChunk]
 
 
-class MediaRecord(BaseModel, frozen=True):
-    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
-    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
-    kind: Literal["image", "video"]
-    size: int
-    created_at: datetime.datetime
-    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
-
-
 class UploadRequest(BaseModel, frozen=True):
     hash: Annotated[str, Field(pattern=_HASH_REGEX)]
     content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
@@ -1430,13 +1422,7 @@ class UploadRequest(BaseModel, frozen=True):
         415: {"model": HTTPExceptionResponse},
     },
 )
-# Higher than the 10/minute write norm because callers spend one request per
-# *file*, not per user action: a gallery drop of N files is N uploads within a
-# few seconds. The handler is cheap — one indexed SELECT plus a local SigV4
-# presign, with no S3 round-trip — so the ceiling is about bounding request
-# volume, not protecting work. Matches list_project_media, the other route
-# whose cardinality follows the media count.
-@router.limiter.limit("60/minute")
+@router.limiter.limit("10/minute")
 async def upload_media(
     request: RouteRequest,
     project_id: uuid.UUID,
@@ -1506,10 +1492,7 @@ class CommitRequest(BaseModel, frozen=True):
         502: {"model": HTTPExceptionResponse},
     },
 )
-# Paired one-for-one with upload_media, so it needs the same ceiling — a batch
-# that can presign N files has to be able to finalize N files. One S3 HEAD plus
-# one INSERT per call, no CPU work.
-@router.limiter.limit("60/minute")
+@router.limiter.limit("10/minute")
 async def commit_media(
     request: RouteRequest,
     project_id: uuid.UUID,

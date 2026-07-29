@@ -16,6 +16,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     ClassVar,
     Literal,
@@ -54,7 +55,7 @@ from prometheus_client import (
     generate_latest,
 )
 from prometheus_fastapi_instrumentator import metrics, routing
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.datastructures import Headers
 
 from utils.cache import ORJSONSerializer, ValkeyCache, cached_method
@@ -157,6 +158,9 @@ _THUMBNAIL_MAX_W = 1600
 _THUMBNAIL_MAX_H = 500
 _WEBP_QUALITY = 75
 _WEBP_EFFORT = 6
+
+_HASH_REGEX = r"^[0-9a-f]{64}$"
+_NO_NULL_REGEX = r"^[^\x00]+$"
 
 
 def _is_docker() -> bool:
@@ -551,6 +555,15 @@ class MultipartUpload(BaseModel, frozen=True):
 class MultipartUploadChunks(NamedTuple):
     chunk_index: int
     etag: str
+
+
+class MediaRecord(BaseModel, frozen=True):
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    kind: Literal["image", "video"]
+    size: int
+    created_at: datetime.datetime
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class StorageClient:
