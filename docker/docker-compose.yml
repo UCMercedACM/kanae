@@ -39,7 +39,7 @@ services:
         condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
-    healthcheck: 
+    healthcheck:
       test: curl -fsS --max-time 2 http://127.0.0.1:8000
       interval: 3s
       timeout: 5s

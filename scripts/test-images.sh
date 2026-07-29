@@ -802,12 +802,17 @@ STAGED_PROJ_HASH=$(jq -r '.thumbnail.hash // empty' <<<"$STAGED_PROJ")
 	|| fail "project thumbnail is $STAGED_PROJ_HASH, expected $STAGED_HASH"
 ok "project.thumbnail.hash matches the commit response"
 
-# The commit also re-linked the source into project_media, so the reaped hash
-# is back in the project's media list.
+# The commit re-inserted the source into `media` (which is what lets step 34
+# take the dedup branch) but deliberately left project_media alone, so the
+# reaped hash must NOT be back in the project's gallery. A thumbnail source is
+# not gallery content.
 STAGED_LIST=$(curl -s -b "$COOKIES" "$KANAE/projects/$PROJECT_ID/media")
-jq -e --arg h "$THUMB_SRC_HASH" 'any(.[]; .hash == $h)' <<<"$STAGED_LIST" >/dev/null \
-	|| fail "commit did not re-link the source media: $STAGED_LIST"
-ok "commit re-linked the source into project_media"
+# An `... && fail` one-liner would abort under `set -e` on the passing path, so
+# the negative assertion is spelled out as an if.
+if jq -e --arg h "$THUMB_SRC_HASH" 'any(.[]; .hash == $h)' <<<"$STAGED_LIST" >/dev/null; then
+	fail "commit linked the source into project_media: $STAGED_LIST"
+fi
+ok "commit left the source out of project_media"
 
 STAGED_CHECK=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE %{content_type}" "$STAGED_URL")
 STAGED_STATUS="${STAGED_CHECK%% *}"
