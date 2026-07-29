@@ -16,6 +16,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     ClassVar,
     Literal,
@@ -54,7 +55,7 @@ from prometheus_client import (
     generate_latest,
 )
 from prometheus_fastapi_instrumentator import metrics, routing
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.datastructures import Headers
 
 from utils.cache import ORJSONSerializer, ValkeyCache, cached_method
@@ -152,10 +153,14 @@ _TARGET_CHUNK_COUNT = 128
 _ONE_MIB = 1024 * 1024
 _TARGET_BUCKET = _TARGET_CHUNK_COUNT * _ONE_MIB
 
+_MAX_THUMBNAIL_SIZE = 32 * 1024 * 1024  # 32 MB
 _THUMBNAIL_MAX_W = 1600
 _THUMBNAIL_MAX_H = 500
 _WEBP_QUALITY = 75
 _WEBP_EFFORT = 6
+
+_HASH_REGEX = r"^[0-9a-f]{64}$"
+_NO_NULL_REGEX = r"^[^\x00]+$"
 
 
 def _is_docker() -> bool:
@@ -498,6 +503,33 @@ async def store_thumbnail(
     return processed_image
 
 
+def validate_thumbnail(content_type: str, size: int) -> None:
+    """Validates whether a given thumbnail source is valid or not
+
+    Args:
+        content_type (str): The source's MIME type
+        size (int): Size of the source in bytes
+
+    Raises:
+        BadRequestError: Thumbnail source is not valid
+        HTTPException: Whether the source is too large
+    """
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        msg = "Thumbnail must be an image"
+        raise BadRequestError(msg)
+
+    if size <= 0:
+        msg = "Size must be positive"
+        raise BadRequestError(msg)
+
+    if size > _MAX_THUMBNAIL_SIZE:
+        msg = f"Thumbnail size {size} exceeds limit {_MAX_THUMBNAIL_SIZE}"
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=msg,
+        )
+
+
 class ProcessedThumbnail(NamedTuple):
     output: bytes
     hash: str
@@ -523,6 +555,21 @@ class MultipartUpload(BaseModel, frozen=True):
 class MultipartUploadChunks(NamedTuple):
     chunk_index: int
     etag: str
+
+
+class UploadRequest(BaseModel, frozen=True):
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    size: int
+
+
+class MediaRecord(BaseModel, frozen=True):
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    kind: Literal["image", "video"]
+    size: int
+    created_at: datetime.datetime
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class StorageClient:

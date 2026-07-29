@@ -9,12 +9,13 @@ import hiro
 import pytest
 from conftest import FakeOryClient, KanaeTestClient
 
-from core import Kanae
+from core import _MAX_THUMBNAIL_SIZE, Kanae
 from utils.checks import Role
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 _VALID_HASH = "a" * 64  # 64 hex chars to match the route's _HASH_REGEX
+_OVERSIZED_THUMBNAIL = _MAX_THUMBNAIL_SIZE + 1
 
 
 async def _insert_member(
@@ -90,6 +91,27 @@ def _valid_event_payload(
         "timezone": "UTC",
         "creator_id": str(creator_id) if creator_id else str(uuid.uuid4()),
     }
+
+
+async def _insert_media(
+    pool: asyncpg.Pool,
+    *,
+    media_hash: str,
+    content_type: str = "image/png",
+    size: int = 1024,
+    creator_id: uuid.UUID | str | None = None,
+) -> None:
+    # `kind` is a generated column derived from content_type, so it's omitted.
+    await pool.execute(
+        """
+        INSERT INTO media (hash, content_type, size, creator_id)
+        VALUES ($1, $2, $3, $4)
+        """,
+        media_hash,
+        content_type,
+        size,
+        creator_id,
+    )
 
 
 async def _insert_tag(
@@ -1519,3 +1541,206 @@ async def test_roleless_member_still_denied_event_attendance(
 
     response = await client.client.get(f"/events/{event_id}/attendance")
     assert response.status_code == 403
+
+
+# ──────────────────────────────────────────────────────────────────
+# Thumbnail upload and commit, requires Event.edit
+# ──────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("route", ["upload", "commit"])
+async def test_thumbnail_flow_requires_session(
+    client: KanaeTestClient, route: str
+) -> None:
+    response = await client.client.post(
+        f"/events/{uuid.uuid4()}/thumbnail/{route}",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 1024},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("route", ["upload", "commit"])
+async def test_thumbnail_flow_rejects_without_edit_permission(
+    client: KanaeTestClient, fake_ory: FakeOryClient, route: str
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.post(
+        f"/events/{uuid.uuid4()}/thumbnail/{route}",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 1024},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("route", ["upload", "commit"])
+async def test_thumbnail_flow_rejects_bad_hash(
+    client: KanaeTestClient, fake_ory: FakeOryClient, route: str
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/{route}",
+        json={"hash": "not-hex-64", "content_type": "image/png", "size": 1024},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("route", ["upload", "commit"])
+async def test_thumbnail_flow_requires_size(
+    client: KanaeTestClient, fake_ory: FakeOryClient, route: str
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/{route}",
+        json={"hash": _VALID_HASH, "content_type": "image/png"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("route", ["upload", "commit"])
+@pytest.mark.parametrize("content_type", ["video/mp4", "application/pdf"])
+async def test_thumbnail_flow_rejects_non_image(
+    client: KanaeTestClient, fake_ory: FakeOryClient, route: str, content_type: str
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/{route}",
+        json={"hash": _VALID_HASH, "content_type": content_type, "size": 1024},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("route", ["upload", "commit"])
+async def test_thumbnail_flow_rejects_zero_size(
+    client: KanaeTestClient, fake_ory: FakeOryClient, route: str
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/{route}",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 0},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("route", ["upload", "commit"])
+async def test_thumbnail_flow_rejects_oversized(
+    client: KanaeTestClient, fake_ory: FakeOryClient, route: str
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/{route}",
+        json={
+            "hash": _VALID_HASH,
+            "content_type": "image/png",
+            "size": _OVERSIZED_THUMBNAIL,
+        },
+    )
+    assert response.status_code == 413
+
+
+async def test_thumbnail_upload_presigns_unknown_hash(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="thumb-presign")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/upload",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 1024},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    # SimpleUploadResponse — a bare presigned PUT target, no record fields.
+    assert set(body) == {"url"}
+    assert body["url"]
+
+
+async def test_thumbnail_upload_never_consults_the_event_row(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = uuid.uuid4()
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/upload",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 1024},
+    )
+    assert response.status_code == 200
+
+
+async def test_thumbnail_upload_returns_existing_record(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="thumb-dedupe")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await _insert_media(kanae.pool, media_hash=_VALID_HASH, size=2048)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/upload",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 2048},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["hash"] == _VALID_HASH
+    assert body["kind"] == "image"
+    assert body["size"] == 2048
+    assert body["url"]
+
+
+async def test_thumbnail_upload_existing_record_wins_over_declared_size(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="thumb-db-wins")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await _insert_media(
+        kanae.pool, media_hash=_VALID_HASH, content_type="image/jpeg", size=4096
+    )
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/upload",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 1024},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["size"] == 4096
+    assert body["content_type"] == "image/jpeg"
+
+
+async def test_thumbnail_upload_does_not_set_thumbnail(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="thumb-not-set")
+    await fake_ory.grant("Event", str(event_id), "edit", identity_id)
+    await _insert_media(kanae.pool, media_hash=_VALID_HASH)
+
+    response = await client.client.post(
+        f"/events/{event_id}/thumbnail/upload",
+        json={"hash": _VALID_HASH, "content_type": "image/png", "size": 1024},
+    )
+    assert response.status_code == 200
+
+    thumbnail_hash = await kanae.pool.fetchval(
+        "SELECT thumbnail_hash FROM events WHERE id = $1", event_id
+    )
+    assert thumbnail_hash is None

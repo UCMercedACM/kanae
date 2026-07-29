@@ -8,10 +8,19 @@
 #   PUT    /projects/{id}/media/positions (reorder)
 #   DELETE /projects/{id}/media/{hash}    (detach)
 #
+# and for the thumbnail staging flow on both resources:
+#   POST   /projects/{id}/thumbnail/upload + /commit
+#   POST   /events/{id}/thumbnail/upload   + /commit
+#
 # Reuses the registration + role + project setup from test-flow.sh and then
 # pushes every file in ./test-images through the full upload flow — single
 # PUT for files ≤ 16 MB, multipart for anything larger — plus a set of
 # negative cases for the validation guards.
+#
+# The thumbnail half (steps 29+) covers both entry branches: the project run
+# starts from a reaped hash and therefore presigns + PUTs, while the event run
+# reuses that now-known hash and takes the dedup branch. Both converge on
+# commit, which is where the pyvips encode and the thumbnail_hash swap happen.
 #
 # Run after `docker compose up -d`. Garage must be initialized too
 # (`mise run garage:setup`). Requires: curl, jq, docker, uvx (mise),
@@ -71,6 +80,10 @@ RST=$'\033[0m'
 
 H_CONTENT_TYPE="Content-Type: application/json"
 JQ_HASH='.hash // empty'
+JQ_URL='.url // empty'
+
+# curl --write-out format selecting just the response status.
+CURL_HTTP_CODE='%{http_code}'
 
 step() {
 	local msg="$1"
@@ -89,6 +102,12 @@ fail() {
 	printf "${RED}✗${RST} %s\n" "$msg" >&2
 	exit 1
 }
+# One indented continuation line, e.g. a URL printed under its label. A helper
+# rather than a format-string constant: `printf "$FMT"` trips SC2059.
+detail() {
+	local msg="$1"
+	printf '    %s\n' "$msg"
+}
 
 require() {
 	local cmd="$1"
@@ -100,7 +119,7 @@ assert_http() {
 	local expected="$1" method="$2" url="$3"
 	shift 3
 	local actual
-	actual="$(curl -s -o /dev/null -w '%{http_code}' -X "$method" "$url" "$@")"
+	actual="$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" -X "$method" "$url" "$@")"
 	if [[ "$actual" != "$expected" ]]; then
 		fail "expected HTTP $expected from $method $url, got $actual"
 	fi
@@ -155,6 +174,17 @@ done < <(find "$IMAGES_DIR" -maxdepth 1 -type f \
 
 [[ ${#MEDIA_FILES[@]} -ge 1 ]] || fail "no supported media files in $IMAGES_DIR"
 ok "found ${#MEDIA_FILES[@]} media files"
+
+# /media/upload is billed per file, and steps 8-12 spend 5 more on the same
+# key. The limiter keys on the request path (key_style="url") and each run
+# creates a fresh project, so nothing carries over between runs — but a large
+# enough directory exhausts the budget inside a single run, which surfaces as a
+# confusing 429 on whichever negative case happens to land last.
+UPLOAD_RATE_LIMIT=60 # mirrors @router.limiter.limit on upload_media
+if ((${#MEDIA_FILES[@]} + 5 > UPLOAD_RATE_LIMIT)); then
+	warn "${#MEDIA_FILES[@]} files + 5 negative cases exceeds the ${UPLOAD_RATE_LIMIT}/minute limit on /media/upload"
+	warn "expect 429s — trim $IMAGES_DIR or raise the limit on upload_media"
+fi
 
 curl -sf "$KRATOS_PUBLIC/health/ready" >/dev/null || fail "kratos not ready at $KRATOS_PUBLIC"
 ok "kratos ready"
@@ -268,11 +298,11 @@ upload_single() {
 	fi
 
 	local url
-	url=$(jq -r '.url // empty' <<<"$upload_resp")
+	url=$(jq -r "$JQ_URL" <<<"$upload_resp")
 	[[ -n "$url" ]] || fail "no presigned url in upload response: $upload_resp"
 
 	local put_code
-	put_code=$(curl -s -o /dev/null -w '%{http_code}' \
+	put_code=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" \
 		-X PUT "$url" \
 		-H "Content-Type: $content_type" \
 		--data-binary "@$file")
@@ -562,16 +592,16 @@ THUMB_OBJ=$(jq -c '.thumbnail' <<<"$PROJ_RESP")
 	|| fail "thumbnail missing from project response: $PROJ_RESP"
 
 THUMB_HASH=$(jq -r "$JQ_HASH" <<<"$THUMB_OBJ")
-THUMB_URL=$(jq -r '.url // empty' <<<"$THUMB_OBJ")
+THUMB_URL=$(jq -r "$JQ_URL" <<<"$THUMB_OBJ")
 [[ -n "$THUMB_HASH" && -n "$THUMB_URL" ]] \
 	|| fail "thumbnail object missing hash or url: $THUMB_OBJ"
 ok "thumbnail.hash = $THUMB_HASH"
-printf "    %s\n" "$THUMB_URL"
+detail "$THUMB_URL"
 
 # ── 22. thumbnail URL is anonymously reachable and returns webp ───────────────
 step "22. GET <thumbnail_url> returns 200 + image/webp"
 
-THUMB_CHECK=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$THUMB_URL")
+THUMB_CHECK=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE %{content_type}" "$THUMB_URL")
 THUMB_STATUS="${THUMB_CHECK%% *}"
 THUMB_TYPE="${THUMB_CHECK#* }"
 if [[ "$THUMB_STATUS" == "200" && "$THUMB_TYPE" == image/webp* ]]; then
@@ -663,7 +693,7 @@ POST_DELETE_THUMB=$(jq -r '.thumbnail' <<<"$POST_DELETE")
 	|| fail "thumbnail not cleared from project: $POST_DELETE_THUMB"
 ok "project.thumbnail is null after DELETE"
 
-DEL_CHECK=$(curl -s -o /dev/null -w '%{http_code}' "$CURRENT_URL")
+DEL_CHECK=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" "$CURRENT_URL")
 if [[ "$DEL_CHECK" == "404" ]]; then
 	ok "thumbnail URL now returns 404 anonymously"
 else
@@ -675,11 +705,254 @@ step "28. DELETE /projects/{id}/thumbnail is idempotent"
 
 assert_http 200 DELETE "$KANAE/projects/$PROJECT_ID/thumbnail" -b "$COOKIES"
 
+# ── thumbnail upload/commit helpers ───────────────────────────────────────────
+
+# Run the two-step thumbnail staging flow against a resource base URL
+# ("$KANAE/projects/<id>" or "$KANAE/events/<id>"):
+#
+#   POST <base>/thumbnail/upload  → presigned PUT url, or the existing record
+#   PUT  <presigned url>          → only on the presign branch
+#   POST <base>/thumbnail/commit  → processes the WebP and attaches it
+#
+# Prints "<mode> <thumbnail_hash> <thumbnail_url>" on success, where mode is
+# "fresh" (presigned, bytes PUT) or "dedup" (hash already known, PUT skipped).
+#
+# Everything the caller needs goes to stdout: callers invoke this inside a
+# command substitution, which runs the function in a subshell, so a global
+# assigned here would be discarded on return. Nothing else may be printed.
+thumbnail_flow() {
+	local base="$1" file="$2" hash="$3" size="$4" content_type="$5"
+	local body="{\"hash\":\"$hash\",\"content_type\":\"$content_type\",\"size\":$size}"
+	local mode
+
+	local upload_resp
+	upload_resp=$(curl -s -X POST "$base/thumbnail/upload" \
+		-b "$COOKIES" \
+		-H "$H_CONTENT_TYPE" \
+		-d "$body")
+
+	if [[ "$(jq -r 'has("hash")' <<<"$upload_resp")" == "true" ]]; then
+		# Dedup branch: the hash is already in `media`, so the bytes are
+		# already in the bucket and there is nothing to PUT.
+		mode="dedup"
+	else
+		mode="fresh"
+
+		local url put_code
+		url=$(jq -r "$JQ_URL" <<<"$upload_resp")
+		[[ -n "$url" ]] \
+			|| fail "no presigned url in thumbnail upload response: $upload_resp"
+
+		put_code=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" \
+			-X PUT "$url" \
+			-H "Content-Type: $content_type" \
+			--data-binary "@$file")
+		[[ "$put_code" =~ ^2[0-9][0-9]$ ]] \
+			|| fail "PUT to thumbnail presigned url returned $put_code (expected 2xx)"
+	fi
+
+	local commit_resp thumb_hash thumb_url
+	commit_resp=$(curl -s -X POST "$base/thumbnail/commit" \
+		-b "$COOKIES" \
+		-H "$H_CONTENT_TYPE" \
+		-d "$body")
+	thumb_hash=$(jq -r "$JQ_HASH" <<<"$commit_resp")
+	thumb_url=$(jq -r "$JQ_URL" <<<"$commit_resp")
+	[[ -n "$thumb_hash" && -n "$thumb_url" ]] \
+		|| fail "thumbnail commit failed: $commit_resp"
+
+	# Commit returns the *processed* WebP, not the source that was uploaded,
+	# so its digest must differ from the source hash.
+	[[ "$thumb_hash" != "$hash" ]] \
+		|| fail "commit echoed the source hash instead of the processed WebP digest"
+
+	printf '%s %s %s\n' "$mode" "$thumb_hash" "$thumb_url"
+}
+
+# ── 29. detach the thumbnail source so the staging flow starts cold ───────────
+step "29. DELETE /media/<hash> reaps the source, making the next upload fresh"
+
+# remove_project_media drops the media row and the S3 object once no
+# project_media rows reference the hash, so this hash becomes unknown to both
+# the DB and the bucket — which is what forces the presign branch below.
+assert_http 200 DELETE "$KANAE/projects/$PROJECT_ID/media/$THUMB_SRC_HASH" -b "$COOKIES"
+
+THUMB_SRC_SIZE=$(stat -c %s "$THUMB_SRC_FILE")
+
+# ── 30. project thumbnail via upload -> PUT -> commit ─────────────────────────
+step "30. POST /projects/{id}/thumbnail/upload + /commit (full staging flow)"
+
+FLOW_RESULT=$(thumbnail_flow \
+	"$KANAE/projects/$PROJECT_ID" \
+	"$THUMB_SRC_FILE" "$THUMB_SRC_HASH" "$THUMB_SRC_SIZE" "$THUMB_SRC_CT")
+# `read` with a here-string runs in the current shell, so these persist.
+read -r STAGED_MODE STAGED_HASH STAGED_URL <<<"$FLOW_RESULT"
+
+[[ "$STAGED_MODE" == "fresh" ]] \
+	|| warn "expected the presign branch after the reap, took '$STAGED_MODE' instead"
+ok "$STAGED_MODE flow committed thumbnail $STAGED_HASH"
+detail "$STAGED_URL"
+
+# ── 31. the committed thumbnail is the project's thumbnail ────────────────────
+step "31. GET /projects/{id} reflects the committed thumbnail"
+
+STAGED_PROJ=$(curl -s -b "$COOKIES" "$KANAE/projects/$PROJECT_ID")
+STAGED_PROJ_HASH=$(jq -r '.thumbnail.hash // empty' <<<"$STAGED_PROJ")
+[[ "$STAGED_PROJ_HASH" == "$STAGED_HASH" ]] \
+	|| fail "project thumbnail is $STAGED_PROJ_HASH, expected $STAGED_HASH"
+ok "project.thumbnail.hash matches the commit response"
+
+# The commit also re-linked the source into project_media, so the reaped hash
+# is back in the project's media list.
+STAGED_LIST=$(curl -s -b "$COOKIES" "$KANAE/projects/$PROJECT_ID/media")
+jq -e --arg h "$THUMB_SRC_HASH" 'any(.[]; .hash == $h)' <<<"$STAGED_LIST" >/dev/null \
+	|| fail "commit did not re-link the source media: $STAGED_LIST"
+ok "commit re-linked the source into project_media"
+
+STAGED_CHECK=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE %{content_type}" "$STAGED_URL")
+STAGED_STATUS="${STAGED_CHECK%% *}"
+STAGED_TYPE="${STAGED_CHECK#* }"
+if [[ "$STAGED_STATUS" == "200" && "$STAGED_TYPE" == image/webp* ]]; then
+	ok "staged thumbnail URL serves bytes anonymously ($STAGED_STATUS, $STAGED_TYPE)"
+else
+	warn "staged thumbnail URL did not return 200 + image/webp (status=$STAGED_STATUS, type=$STAGED_TYPE)"
+fi
+
+# ── 32. negatives on the project staging routes ───────────────────────────────
+step "32. validation guards on /thumbnail/upload"
+
+# The guard matrix runs on the upload route. validate_thumbnail is one shared
+# function that all four thumbnail handlers call identically, so re-asserting
+# each case against commit buys no coverage — and commit only has 3/minute to
+# spend, which this script needs for the real commit above plus the 409 in
+# step 37. The commit-specific 404 runs once, on the event route in step 36.
+
+# Video content type → 400, not the 415 that /media/upload answers with. The
+# thumbnail validator narrows to images and reports it as a bad request.
+assert_http 400 POST "$KANAE/projects/$PROJECT_ID/thumbnail/upload" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"video/mp4","size":1024}'
+
+# Same input, the other validator — 415 here, 400 above.
+assert_http 415 POST "$KANAE/projects/$PROJECT_ID/media/upload" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"application/pdf","size":1024}'
+
+assert_http 400 POST "$KANAE/projects/$PROJECT_ID/thumbnail/upload" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"image/png","size":0}'
+
+# Over the 32 MB thumbnail cap.
+assert_http 413 POST "$KANAE/projects/$PROJECT_ID/thumbnail/upload" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"image/png","size":33554433}'
+
+# ── 33. create an event to exercise the same flow without a bridge table ──────
+step "33. grant leads role and create an event"
+
+curl -sf -X PUT "$KETO_WRITE/admin/relation-tuples" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{
+    "namespace":  "Role",
+    "object":     "leads",
+    "relation":   "member",
+    "subject_id": "'"$IDENTITY_ID"'"
+  }' >/dev/null
+docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
+ok "Role:leads#member tuple written, cache flushed"
+
+# `id` is required by the request model (create_events takes a full `Events`)
+# but is then dropped via exclude={"id", "creator_id"} — Postgres mints the
+# real UUID, and the response carries it. So this value is a placeholder that
+# never reaches the database; PROJECT_ID-style reuse of it would be wrong.
+# creator_id is optional and comes from the session, so it's omitted.
+EVENT_BODY='{
+  "id": "00000000-0000-4000-8000-000000000000",
+  "name": "Media Test Event",
+  "description": "for thumbnail route tests",
+  "start_at": "2099-01-01T00:00:00Z",
+  "end_at":   "2099-01-01T02:00:00Z",
+  "location": "Online",
+  "type": "general",
+  "timezone": "America/Los_Angeles"
+}'
+EVENT_RESP=$(curl -s -X POST "$KANAE/events/create" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d "$EVENT_BODY")
+EVENT_ID=$(jq -r '.id // empty' <<<"$EVENT_RESP")
+[[ -n "$EVENT_ID" ]] || fail "event create failed: $EVENT_RESP"
+docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
+ok "event id: $EVENT_ID"
+
+# ── 34. event thumbnail via upload -> commit (dedup branch) ───────────────────
+step "34. POST /events/{id}/thumbnail/upload + /commit"
+
+# The source hash is back in `media` after step 30's commit, so this run takes
+# the dedup branch and skips the PUT — the other half of the upload route.
+# Events have no media-association table, so nothing is linked either way.
+EVENT_FLOW=$(thumbnail_flow \
+	"$KANAE/events/$EVENT_ID" \
+	"$THUMB_SRC_FILE" "$THUMB_SRC_HASH" "$THUMB_SRC_SIZE" "$THUMB_SRC_CT")
+read -r EVENT_MODE EVENT_THUMB_HASH EVENT_THUMB_URL <<<"$EVENT_FLOW"
+
+[[ "$EVENT_MODE" == "dedup" ]] \
+	|| warn "expected the dedup branch for a known hash, took '$EVENT_MODE' instead"
+ok "$EVENT_MODE flow committed thumbnail $EVENT_THUMB_HASH"
+detail "$EVENT_THUMB_URL"
+
+# Same source bytes as the project thumbnail, so the processed WebP is
+# content-identical and lands on the same hash.
+[[ "$EVENT_THUMB_HASH" == "$STAGED_HASH" ]] \
+	|| warn "event thumbnail hash $EVENT_THUMB_HASH differs from the project's $STAGED_HASH for identical source bytes"
+
+# ── 35. the committed thumbnail is the event's thumbnail ──────────────────────
+step "35. GET /events/{id} reflects the committed thumbnail"
+
+EVENT_GET=$(curl -s -b "$COOKIES" "$KANAE/events/$EVENT_ID")
+EVENT_GET_HASH=$(jq -r '.thumbnail.hash // empty' <<<"$EVENT_GET")
+[[ "$EVENT_GET_HASH" == "$EVENT_THUMB_HASH" ]] \
+	|| fail "event thumbnail is $EVENT_GET_HASH, expected $EVENT_THUMB_HASH"
+ok "event.thumbnail.hash matches the commit response"
+
+# ── 36. negatives on the event staging routes ─────────────────────────────────
+step "36. validation guards on the event staging routes"
+
+assert_http 400 POST "$KANAE/events/$EVENT_ID/thumbnail/upload" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"video/mp4","size":1024}'
+
+assert_http 404 POST "$KANAE/events/$EVENT_ID/thumbnail/commit" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d '{"hash":"deadbeefcafebabefacefedbadc0debead5badc0ffeefedfeedbabec0dedeadc","content_type":"image/png","size":1024}'
+
+# ── 37. commit with a mismatched declared size -> 409 ─────────────────────────
+step "37. POST /thumbnail/commit with the wrong size -> 409"
+
+# head reports the real object size, which won't match the inflated declaration.
+# Destructive on purpose and therefore last: the route deletes the source
+# object from the bucket before answering, so the source can't be committed
+# again after this. The already-processed WebPs live in the public bucket and
+# are unaffected, so the thumbnails set above keep working.
+assert_http 409 POST "$KANAE/projects/$PROJECT_ID/thumbnail/commit" \
+	-b "$COOKIES" \
+	-H "$H_CONTENT_TYPE" \
+	-d "{\"hash\":\"$THUMB_SRC_HASH\",\"content_type\":\"$THUMB_SRC_CT\",\"size\":$((THUMB_SRC_SIZE + 1))}"
+
+ok "source object was discarded by the size-mismatch guard"
+
 # ── done ──────────────────────────────────────────────────────────────────────
 printf '\n%sall media + thumbnail flow checks passed%s\n' "$GRN" "$RST"
 printf "  identity id: %s\n" "$IDENTITY_ID"
 printf "  project id:  %s\n" "$PROJECT_ID"
+printf "  event id:    %s\n" "$EVENT_ID"
 printf "  hashes:\n"
 for h in "${HASHES[@]}"; do
-	printf "    %s\n" "$h"
+	detail "$h"
 done

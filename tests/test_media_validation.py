@@ -9,7 +9,12 @@ from hypothesis import (
     strategies as st,
 )
 
-from core import ALLOWED_IMAGE_TYPES, ALLOWED_VIDEO_TYPES
+from core import (
+    _MAX_THUMBNAIL_SIZE,
+    ALLOWED_IMAGE_TYPES,
+    ALLOWED_VIDEO_TYPES,
+    validate_thumbnail,
+)
 from routes.projects import (
     _MAX_IMAGE_SIZE,
     _MAX_VIDEO_SIZE,
@@ -29,6 +34,11 @@ _DISALLOWED_FIXED: tuple[str, ...] = (
     "application/octet-stream",
     "",
 )
+
+
+# ══════════════════════════════════════════════════════════════════
+# _validate_media — the general media gate on /media/upload+commit.
+# ══════════════════════════════════════════════════════════════════
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -193,4 +203,131 @@ def test_image_oversize_always_413(content_type: str, size: int) -> None:
 def test_video_oversize_always_413(content_type: str, size: int) -> None:
     with pytest.raises(HTTPException) as exc_info:
         _validate_media(content_type, size)
+    assert exc_info.value.status_code == 413
+
+
+# ══════════════════════════════════════════════════════════════════
+# validate_thumbnail — the narrower gate on the thumbnail
+# upload/commit flow. Images only, one cap, no per-kind branch.
+# ══════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_IMAGE_TYPES))
+@pytest.mark.parametrize(
+    "size",
+    [
+        1,
+        _MAX_THUMBNAIL_SIZE - 1,
+        _MAX_THUMBNAIL_SIZE,
+    ],
+)
+def test_thumbnail_size_within_limit_passes(content_type: str, size: int) -> None:
+    assert validate_thumbnail(content_type, size) is None
+
+
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_IMAGE_TYPES))
+@pytest.mark.parametrize(
+    "size",
+    [
+        _MAX_THUMBNAIL_SIZE + 1,
+        _MAX_THUMBNAIL_SIZE * 2,
+    ],
+)
+def test_thumbnail_size_over_limit_raises_413(content_type: str, size: int) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        validate_thumbnail(content_type, size)
+    assert exc_info.value.status_code == 413
+
+
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_IMAGE_TYPES))
+@pytest.mark.parametrize("size", [0, -1, -(2**31)])
+def test_thumbnail_non_positive_size_raises_bad_request(
+    content_type: str, size: int
+) -> None:
+    with pytest.raises(BadRequestError):
+        validate_thumbnail(content_type, size)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Content-type handling — where this validator deliberately diverges
+# from `_validate_media`.
+# ──────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("content_type", sorted(ALLOWED_VIDEO_TYPES))
+@pytest.mark.parametrize("size", [1, 1024, _MAX_THUMBNAIL_SIZE])
+def test_thumbnail_video_rejected_as_bad_request(content_type: str, size: int) -> None:
+    with pytest.raises(BadRequestError) as exc_info:
+        validate_thumbnail(content_type, size)
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.parametrize("content_type", _DISALLOWED_FIXED)
+def test_thumbnail_disallowed_content_type_raises_400_not_415(
+    content_type: str,
+) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        validate_thumbnail(content_type, 1024)
+    assert exc_info.value.status_code == 400
+
+
+def test_thumbnail_content_type_checked_before_size() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        validate_thumbnail("video/mp4", _MAX_THUMBNAIL_SIZE * 4)
+    assert exc_info.value.status_code == 400
+
+
+@given(
+    content_type=st.text(min_size=0, max_size=200),
+    size=st.integers(min_value=-(2**62), max_value=2**62),
+)
+@settings(
+    max_examples=200,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+def test_thumbnail_validator_terminates_in_a_known_outcome(
+    content_type: str, size: int
+) -> None:
+    try:
+        validate_thumbnail(content_type, size)
+    except HTTPException:
+        return
+    assert content_type in ALLOWED_IMAGE_TYPES
+    assert 0 < size <= _MAX_THUMBNAIL_SIZE
+
+
+@given(
+    content_type=st.text(min_size=1, max_size=200).filter(
+        lambda value: value not in ALLOWED_IMAGE_TYPES
+    ),
+    size=st.integers(min_value=1, max_value=_MAX_THUMBNAIL_SIZE),
+)
+@settings(
+    max_examples=100,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
+)
+def test_thumbnail_arbitrary_non_image_rejected_400(
+    content_type: str, size: int
+) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        validate_thumbnail(content_type, size)
+    assert exc_info.value.status_code == 400
+
+
+@given(
+    content_type=st.sampled_from(sorted(ALLOWED_IMAGE_TYPES)),
+    size=st.integers(
+        min_value=_MAX_THUMBNAIL_SIZE + 1, max_value=_MAX_THUMBNAIL_SIZE * 8
+    ),
+)
+@settings(
+    max_examples=50,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+def test_thumbnail_image_oversize_always_413(content_type: str, size: int) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        validate_thumbnail(content_type, size)
     assert exc_info.value.status_code == 413
