@@ -14,6 +14,7 @@ from core import (
     MultipartUploadChunks,
     UploadChunk,
     store_thumbnail,
+    validate_thumbnail,
 )
 from utils.auth import use_session
 from utils.checks import Project, Role, check_any, has_permissions, has_role
@@ -1429,7 +1430,13 @@ class UploadRequest(BaseModel, frozen=True):
         415: {"model": HTTPExceptionResponse},
     },
 )
-@router.limiter.limit("10/minute")
+# Higher than the 10/minute write norm because callers spend one request per
+# *file*, not per user action: a gallery drop of N files is N uploads within a
+# few seconds. The handler is cheap — one indexed SELECT plus a local SigV4
+# presign, with no S3 round-trip — so the ceiling is about bounding request
+# volume, not protecting work. Matches list_project_media, the other route
+# whose cardinality follows the media count.
+@router.limiter.limit("60/minute")
 async def upload_media(
     request: RouteRequest,
     project_id: uuid.UUID,
@@ -1499,7 +1506,10 @@ class CommitRequest(BaseModel, frozen=True):
         502: {"model": HTTPExceptionResponse},
     },
 )
-@router.limiter.limit("10/minute")
+# Paired one-for-one with upload_media, so it needs the same ceiling — a batch
+# that can presign N files has to be able to finalize N files. One S3 HEAD plus
+# one INSERT per call, no CPU work.
+@router.limiter.limit("60/minute")
 async def commit_media(
     request: RouteRequest,
     project_id: uuid.UUID,
@@ -1589,6 +1599,151 @@ async def commit_media(
     )
 
 
+@router.post(
+    "/projects/{project_id}/thumbnail/upload",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": MediaRecord},
+        400: {"model": BadRequestResponse},
+        403: {"model": ForbiddenResponse},
+        413: {"model": HTTPExceptionResponse},
+    },
+)
+@router.limiter.limit("10/minute")
+async def upload_project_thumbnail(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: UploadRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> MediaRecord | SimpleUploadResponse:
+    """Begin a thumbnail upload by minting a presigned URL or returning the existing record"""
+    validate_thumbnail(req.content_type, req.size)
+
+    query = """
+    WITH media_exists AS (
+        SELECT hash, content_type, kind, size, created_at
+        FROM media
+        WHERE hash = $1
+    ),
+    link AS (
+        INSERT INTO project_media (project_id, media_hash)
+        SELECT $2, hash FROM media_exists
+        ON CONFLICT DO NOTHING
+    )
+    SELECT hash, content_type, kind, size, created_at FROM media_exists;
+    """
+
+    exists = await request.app.pool.fetchrow(query, req.hash, project_id)
+    if exists:
+        url = await request.app.storage.get_url(exists["hash"], exists["content_type"])
+        return MediaRecord(**dict(exists), url=url)
+
+    url = await request.app.storage.upload(req.hash, content_type=req.content_type)
+    return SimpleUploadResponse(url=url)
+
+
+@router.post(
+    "/projects/{project_id}/thumbnail/commit",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": ProjectThumbnail},
+        400: {"model": BadRequestResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+        409: {"model": ConflictResponse},
+        413: {"model": HTTPExceptionResponse},
+    },
+)
+@router.limiter.limit("10/minute")
+async def commit_project_thumbnail(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    req: UploadRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> ProjectThumbnail:
+    """Finalize a thumbnail upload, then process and attach it to the project"""
+    validate_thumbnail(req.content_type, req.size)
+
+    try:
+        head = await request.app.storage.head(req.hash, content_type=req.content_type)
+    except ClientError:
+        msg = "No such media exists"
+        raise NotFoundError(msg)
+
+    if head["ContentLength"] != req.size:
+        await request.app.storage.delete(req.hash, content_type=req.content_type)
+
+        msg = "Uploaded size does not match declared size"
+        raise ConflictError(msg)
+
+    processed_image = await store_thumbnail(
+        request, media_hash=req.hash, content_type=req.content_type
+    )
+
+    query = """
+        WITH insert_media AS (
+            INSERT INTO media (hash, content_type, size, creator_id)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (hash) DO UPDATE
+                SET hash = EXCLUDED.hash
+            RETURNING hash
+        ), link AS (
+            INSERT INTO project_media (project_id, media_hash)
+            SELECT $5, hash FROM insert_media
+            ON CONFLICT DO NOTHING
+        ), locked AS (
+            SELECT thumbnail_hash FROM projects
+            WHERE id = $5
+            FOR UPDATE
+        ), old AS (
+            SELECT thumbnail_hash FROM locked
+            WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != $6
+        )
+        UPDATE projects
+        SET thumbnail_hash = $6
+        WHERE id = $5
+        RETURNING id, (SELECT thumbnail_hash FROM old) AS old_hash;
+    """
+    async with request.app.pool.acquire() as connection:
+        tr = connection.transaction()
+        await tr.start()
+
+        try:
+            response = await connection.fetchrow(
+                query,
+                req.hash,
+                req.content_type,
+                req.size,
+                session.identity.id,
+                project_id,
+                processed_image.hash,
+            )
+
+            if response is None:
+                await tr.rollback()
+                await request.app.storage.delete_thumbnail(processed_image.hash)
+
+                msg = "Project no longer exists"
+                raise NotFoundError(msg)
+
+        except asyncpg.ForeignKeyViolationError:
+            await tr.rollback()
+
+            await request.app.storage.delete_thumbnail(processed_image.hash)
+            msg = "Project or creator no longer exists"
+            raise NotFoundError(msg)
+        else:
+            await tr.commit()
+
+    if response["old_hash"]:
+        await request.app.storage.delete_thumbnail(response["old_hash"])
+
+    return ProjectThumbnail(
+        hash=processed_image.hash,
+        url=request.app.storage.get_thumbnail_url(processed_image.hash),
+    )
+
+
 class SetThumbnailRequest(BaseModel, frozen=True):
     hash: Annotated[str, Field(pattern=_HASH_REGEX)]
     content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
@@ -1656,6 +1811,45 @@ async def set_project_thumbnail(
         await request.app.storage.delete_thumbnail(response["old_hash"])
 
     return SuccessResponse(message="ok")
+
+
+@router.delete(
+    "/projects/{project_id}/thumbnail",
+    dependencies=[has_permissions(Project.edit)],
+    responses={
+        200: {"model": DeleteResponse},
+        403: {"model": ForbiddenResponse},
+        404: {"model": NotFoundResponse},
+    },
+)
+@router.limiter.limit("5/minute")
+async def remove_project_thumbnail(
+    request: RouteRequest,
+    project_id: uuid.UUID,
+    session: Annotated[KanaeSession, Depends(use_session)],
+) -> DeleteResponse:
+    """Removes the associated thumbnail of a given project"""
+    query = """
+    WITH old_thumbnail AS (
+        SELECT thumbnail_hash
+        FROM projects
+        WHERE id = $1
+    )
+    UPDATE projects
+    SET thumbnail_hash = NULL
+    WHERE id = $1
+    RETURNING id, (SELECT thumbnail_hash FROM old_thumbnail) AS old_hash
+    """
+
+    response = await request.app.pool.fetchrow(query, project_id)
+
+    if not response:
+        raise NotFoundError
+
+    if response["old_hash"]:
+        await request.app.storage.delete_thumbnail(response["old_hash"])
+
+    return DeleteResponse()
 
 
 @router.get(
@@ -1795,42 +1989,3 @@ async def remove_project_media(
             )
 
         return DeleteResponse()
-
-
-@router.delete(
-    "/projects/{project_id}/thumbnail",
-    dependencies=[has_permissions(Project.edit)],
-    responses={
-        200: {"model": DeleteResponse},
-        403: {"model": ForbiddenResponse},
-        404: {"model": NotFoundResponse},
-    },
-)
-@router.limiter.limit("5/minute")
-async def remove_project_thumbnail(
-    request: RouteRequest,
-    project_id: uuid.UUID,
-    session: Annotated[KanaeSession, Depends(use_session)],
-) -> DeleteResponse:
-    """Removes the associated thumbnail of a given project"""
-    query = """
-    WITH old_thumbnail AS (
-        SELECT thumbnail_hash
-        FROM projects
-        WHERE id = $1
-    )
-    UPDATE projects
-    SET thumbnail_hash = NULL
-    WHERE id = $1
-    RETURNING id, (SELECT thumbnail_hash FROM old_thumbnail) AS old_hash
-    """
-
-    response = await request.app.pool.fetchrow(query, project_id)
-
-    if not response:
-        raise NotFoundError
-
-    if response["old_hash"]:
-        await request.app.storage.delete_thumbnail(response["old_hash"])
-
-    return DeleteResponse()
