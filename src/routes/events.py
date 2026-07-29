@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
-from core import MediaRecord, store_thumbnail, validate_thumbnail
+from core import MediaRecord, UploadRequest, store_thumbnail, validate_thumbnail
 from utils.auth import use_session
 from utils.checks import Event, Role, has_any_role, has_permissions
 from utils.errors import (
@@ -32,7 +32,6 @@ from utils.responses import (
     HTTPExceptionResponse,
     JoinResponse,
     NotFoundResponse,
-    SimpleUploadResponse,
     SuccessResponse,
 )
 from utils.router import KanaeRouter
@@ -381,10 +380,8 @@ async def create_events(
             return Events(**dict(rows))
 
 
-class UploadRequest(BaseModel, frozen=True):
-    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
-    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
-    size: int
+class SimpleUploadResponse(BaseModel, frozen=True):
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 @router.post(

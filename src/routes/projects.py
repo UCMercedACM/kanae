@@ -14,6 +14,7 @@ from core import (
     MediaRecord,
     MultipartUploadChunks,
     UploadChunk,
+    UploadRequest,
     store_thumbnail,
     validate_thumbnail,
 )
@@ -38,7 +39,6 @@ from utils.responses import (
     HTTPExceptionResponse,
     JoinResponse,
     NotFoundResponse,
-    SimpleUploadResponse,
     SuccessResponse,
 )
 from utils.router import KanaeRouter
@@ -1397,16 +1397,14 @@ def _validate_media(content_type: str, size: int) -> None:
         )
 
 
+class SimpleUploadResponse(BaseModel, frozen=True):
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+
+
 class MultipartUploadResponse(BaseModel, frozen=True):
     upload_id: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
     size: int
     chunks: list[UploadChunk]
-
-
-class UploadRequest(BaseModel, frozen=True):
-    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
-    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
-    size: int
 
 
 @router.post(

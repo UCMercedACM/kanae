@@ -80,6 +80,10 @@ RST=$'\033[0m'
 
 H_CONTENT_TYPE="Content-Type: application/json"
 JQ_HASH='.hash // empty'
+JQ_URL='.url // empty'
+
+# curl --write-out format selecting just the response status.
+CURL_HTTP_CODE='%{http_code}'
 
 step() {
 	local msg="$1"
@@ -98,6 +102,12 @@ fail() {
 	printf "${RED}✗${RST} %s\n" "$msg" >&2
 	exit 1
 }
+# One indented continuation line, e.g. a URL printed under its label. A helper
+# rather than a format-string constant: `printf "$FMT"` trips SC2059.
+detail() {
+	local msg="$1"
+	printf '    %s\n' "$msg"
+}
 
 require() {
 	local cmd="$1"
@@ -109,7 +119,7 @@ assert_http() {
 	local expected="$1" method="$2" url="$3"
 	shift 3
 	local actual
-	actual="$(curl -s -o /dev/null -w '%{http_code}' -X "$method" "$url" "$@")"
+	actual="$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" -X "$method" "$url" "$@")"
 	if [[ "$actual" != "$expected" ]]; then
 		fail "expected HTTP $expected from $method $url, got $actual"
 	fi
@@ -288,11 +298,11 @@ upload_single() {
 	fi
 
 	local url
-	url=$(jq -r '.url // empty' <<<"$upload_resp")
+	url=$(jq -r "$JQ_URL" <<<"$upload_resp")
 	[[ -n "$url" ]] || fail "no presigned url in upload response: $upload_resp"
 
 	local put_code
-	put_code=$(curl -s -o /dev/null -w '%{http_code}' \
+	put_code=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" \
 		-X PUT "$url" \
 		-H "Content-Type: $content_type" \
 		--data-binary "@$file")
@@ -582,16 +592,16 @@ THUMB_OBJ=$(jq -c '.thumbnail' <<<"$PROJ_RESP")
 	|| fail "thumbnail missing from project response: $PROJ_RESP"
 
 THUMB_HASH=$(jq -r "$JQ_HASH" <<<"$THUMB_OBJ")
-THUMB_URL=$(jq -r '.url // empty' <<<"$THUMB_OBJ")
+THUMB_URL=$(jq -r "$JQ_URL" <<<"$THUMB_OBJ")
 [[ -n "$THUMB_HASH" && -n "$THUMB_URL" ]] \
 	|| fail "thumbnail object missing hash or url: $THUMB_OBJ"
 ok "thumbnail.hash = $THUMB_HASH"
-printf "    %s\n" "$THUMB_URL"
+detail "$THUMB_URL"
 
 # ── 22. thumbnail URL is anonymously reachable and returns webp ───────────────
 step "22. GET <thumbnail_url> returns 200 + image/webp"
 
-THUMB_CHECK=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$THUMB_URL")
+THUMB_CHECK=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE %{content_type}" "$THUMB_URL")
 THUMB_STATUS="${THUMB_CHECK%% *}"
 THUMB_TYPE="${THUMB_CHECK#* }"
 if [[ "$THUMB_STATUS" == "200" && "$THUMB_TYPE" == image/webp* ]]; then
@@ -683,7 +693,7 @@ POST_DELETE_THUMB=$(jq -r '.thumbnail' <<<"$POST_DELETE")
 	|| fail "thumbnail not cleared from project: $POST_DELETE_THUMB"
 ok "project.thumbnail is null after DELETE"
 
-DEL_CHECK=$(curl -s -o /dev/null -w '%{http_code}' "$CURRENT_URL")
+DEL_CHECK=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" "$CURRENT_URL")
 if [[ "$DEL_CHECK" == "404" ]]; then
 	ok "thumbnail URL now returns 404 anonymously"
 else
@@ -729,11 +739,11 @@ thumbnail_flow() {
 		mode="fresh"
 
 		local url put_code
-		url=$(jq -r '.url // empty' <<<"$upload_resp")
+		url=$(jq -r "$JQ_URL" <<<"$upload_resp")
 		[[ -n "$url" ]] \
 			|| fail "no presigned url in thumbnail upload response: $upload_resp"
 
-		put_code=$(curl -s -o /dev/null -w '%{http_code}' \
+		put_code=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE" \
 			-X PUT "$url" \
 			-H "Content-Type: $content_type" \
 			--data-binary "@$file")
@@ -747,7 +757,7 @@ thumbnail_flow() {
 		-H "$H_CONTENT_TYPE" \
 		-d "$body")
 	thumb_hash=$(jq -r "$JQ_HASH" <<<"$commit_resp")
-	thumb_url=$(jq -r '.url // empty' <<<"$commit_resp")
+	thumb_url=$(jq -r "$JQ_URL" <<<"$commit_resp")
 	[[ -n "$thumb_hash" && -n "$thumb_url" ]] \
 		|| fail "thumbnail commit failed: $commit_resp"
 
@@ -781,7 +791,7 @@ read -r STAGED_MODE STAGED_HASH STAGED_URL <<<"$FLOW_RESULT"
 [[ "$STAGED_MODE" == "fresh" ]] \
 	|| warn "expected the presign branch after the reap, took '$STAGED_MODE' instead"
 ok "$STAGED_MODE flow committed thumbnail $STAGED_HASH"
-printf "    %s\n" "$STAGED_URL"
+detail "$STAGED_URL"
 
 # ── 31. the committed thumbnail is the project's thumbnail ────────────────────
 step "31. GET /projects/{id} reflects the committed thumbnail"
@@ -799,7 +809,7 @@ jq -e --arg h "$THUMB_SRC_HASH" 'any(.[]; .hash == $h)' <<<"$STAGED_LIST" >/dev/
 	|| fail "commit did not re-link the source media: $STAGED_LIST"
 ok "commit re-linked the source into project_media"
 
-STAGED_CHECK=$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "$STAGED_URL")
+STAGED_CHECK=$(curl -s -o /dev/null -w "$CURL_HTTP_CODE %{content_type}" "$STAGED_URL")
 STAGED_STATUS="${STAGED_CHECK%% *}"
 STAGED_TYPE="${STAGED_CHECK#* }"
 if [[ "$STAGED_STATUS" == "200" && "$STAGED_TYPE" == image/webp* ]]; then
@@ -893,7 +903,7 @@ read -r EVENT_MODE EVENT_THUMB_HASH EVENT_THUMB_URL <<<"$EVENT_FLOW"
 [[ "$EVENT_MODE" == "dedup" ]] \
 	|| warn "expected the dedup branch for a known hash, took '$EVENT_MODE' instead"
 ok "$EVENT_MODE flow committed thumbnail $EVENT_THUMB_HASH"
-printf "    %s\n" "$EVENT_THUMB_URL"
+detail "$EVENT_THUMB_URL"
 
 # Same source bytes as the project thumbnail, so the processed WebP is
 # content-identical and lands on the same hash.
@@ -944,5 +954,5 @@ printf "  project id:  %s\n" "$PROJECT_ID"
 printf "  event id:    %s\n" "$EVENT_ID"
 printf "  hashes:\n"
 for h in "${HASHES[@]}"; do
-	printf "    %s\n" "$h"
+	detail "$h"
 done

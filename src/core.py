@@ -557,6 +557,12 @@ class MultipartUploadChunks(NamedTuple):
     etag: str
 
 
+class UploadRequest(BaseModel, frozen=True):
+    hash: Annotated[str, Field(pattern=_HASH_REGEX)]
+    content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    size: int
+
+
 class MediaRecord(BaseModel, frozen=True):
     hash: Annotated[str, Field(pattern=_HASH_REGEX)]
     content_type: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
