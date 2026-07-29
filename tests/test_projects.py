@@ -2601,6 +2601,205 @@ async def test_list_project_invites_isolated_by_project(
 
 
 # ──────────────────────────────────────────────────────────────────
+# List invites across every project (dashboard view), manager OR
+# admin, 10/min. No project in the path, so `Project.edit` has nothing
+# to scope to - the gate is roles only.
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_list_all_project_invites_requires_session(
+    client: KanaeTestClient,
+) -> None:
+    response = await client.client.get("/projects/invites")
+    assert response.status_code == 401
+
+
+async def test_list_all_project_invites_rejects_plain_member(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as()
+    response = await client.client.get("/projects/invites")
+    assert response.status_code == 403
+
+
+async def test_list_all_project_invites_rejects_project_editor(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    identity_id = fake_ory.login_as()
+    project_id = await _insert_project(kanae.pool, name="editor-scoped")
+    await fake_ory.grant("Project", str(project_id), "edit", identity_id)
+
+    response = await client.client.get("/projects/invites")
+    assert response.status_code == 403
+
+
+async def test_list_all_project_invites_spans_projects(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    first_project = await _insert_project(kanae.pool, name="all-first")
+    second_project = await _insert_project(kanae.pool, name="all-second")
+    first_member = uuid.uuid4()
+    second_member = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=first_member)
+    await _insert_member(kanae.pool, member_id=second_member)
+    invite_a = await _insert_invite(
+        kanae.pool, project_id=first_project, member_id=first_member, kind="invite"
+    )
+    invite_b = await _insert_invite(
+        kanae.pool,
+        project_id=second_project,
+        member_id=second_member,
+        invited_by=second_member,
+        kind="request",
+    )
+
+    response = await client.client.get("/projects/invites")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert {row["id"] for row in body} == {str(invite_a), str(invite_b)}
+    assert {row["project_id"] for row in body} == {
+        str(first_project),
+        str(second_project),
+    }
+
+
+async def test_list_all_project_invites_allows_admin(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    project_id = await _insert_project(kanae.pool, name="admin-view")
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    invite_id = await _insert_invite(
+        kanae.pool, project_id=project_id, member_id=target, kind="invite"
+    )
+
+    response = await client.client.get("/projects/invites")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(invite_id)]
+
+
+async def test_list_all_project_invites_filters_by_status(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    first_project = await _insert_project(kanae.pool, name="all-status-first")
+    second_project = await _insert_project(kanae.pool, name="all-status-second")
+    pending_member = uuid.uuid4()
+    declined_member = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=pending_member)
+    await _insert_member(kanae.pool, member_id=declined_member)
+    pending = await _insert_invite(
+        kanae.pool, project_id=first_project, member_id=pending_member, kind="invite"
+    )
+    await _insert_invite(
+        kanae.pool,
+        project_id=second_project,
+        member_id=declined_member,
+        kind="invite",
+        status="declined",
+    )
+
+    response = await client.client.get(
+        "/projects/invites", params={"status": "pending"}
+    )
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(pending)]
+
+
+async def test_list_all_project_invites_filters_by_kind(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    first_project = await _insert_project(kanae.pool, name="all-kind-first")
+    second_project = await _insert_project(kanae.pool, name="all-kind-second")
+    invited = uuid.uuid4()
+    requested = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=invited)
+    await _insert_member(kanae.pool, member_id=requested)
+    await _insert_invite(
+        kanae.pool, project_id=first_project, member_id=invited, kind="invite"
+    )
+    request_id = await _insert_invite(
+        kanae.pool,
+        project_id=second_project,
+        member_id=requested,
+        invited_by=requested,
+        kind="request",
+    )
+
+    response = await client.client.get("/projects/invites", params={"kind": "request"})
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(request_id)]
+
+
+async def test_list_all_project_invites_filters_by_status_and_kind(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    first_project = await _insert_project(kanae.pool, name="all-both-first")
+    second_project = await _insert_project(kanae.pool, name="all-both-second")
+    wanted_member = uuid.uuid4()
+    other_member = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=wanted_member)
+    await _insert_member(kanae.pool, member_id=other_member)
+    wanted = await _insert_invite(
+        kanae.pool,
+        project_id=first_project,
+        member_id=wanted_member,
+        invited_by=wanted_member,
+        kind="request",
+    )
+    # right kind, wrong status
+    await _insert_invite(
+        kanae.pool,
+        project_id=second_project,
+        member_id=other_member,
+        invited_by=other_member,
+        kind="request",
+        status="accepted",
+    )
+    # right status, wrong kind
+    await _insert_invite(
+        kanae.pool, project_id=second_project, member_id=other_member, kind="invite"
+    )
+
+    response = await client.client.get(
+        "/projects/invites", params={"status": "pending", "kind": "request"}
+    )
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    assert [row["id"] for row in body] == [str(wanted)]
+
+
+async def test_list_all_project_invites_lazily_marks_expired(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+    project_id = await _insert_project(kanae.pool, name="all-lazy-expire")
+    target = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=target)
+    invite_id = await _insert_invite(
+        kanae.pool,
+        project_id=project_id,
+        member_id=target,
+        kind="invite",
+        expires_at=_past(),
+    )
+
+    response = await client.client.get("/projects/invites")
+    assert response.status_code == 200
+    body: list[dict[str, Any]] = response.json()
+    row = next(r for r in body if r["id"] == str(invite_id))
+    assert row["status"] == "expired"
+    assert await _invite_status(kanae.pool, invite_id) == "pending"
+
+
+# ──────────────────────────────────────────────────────────────────
 # Invite-system rate limits
 # ──────────────────────────────────────────────────────────────────
 
@@ -2699,6 +2898,20 @@ async def test_list_project_invites_enforces_10_per_minute(
             assert response.status_code == 200
 
         blocked = await client.client.get(f"/projects/{project_id}/invites")
+        assert blocked.status_code == 429
+
+
+async def test_list_all_project_invites_enforces_10_per_minute(
+    client: KanaeTestClient, fake_ory: FakeOryClient
+) -> None:
+    fake_ory.login_as(Role.MANAGER)
+
+    with hiro.Timeline().freeze():
+        for _ in range(10):
+            response = await client.client.get("/projects/invites")
+            assert response.status_code == 200
+
+        blocked = await client.client.get("/projects/invites")
         assert blocked.status_code == 429
 
 

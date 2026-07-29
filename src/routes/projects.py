@@ -192,6 +192,71 @@ async def list_projects(
 
 
 @router.get(
+    "/projects/invites",
+    dependencies=[check_any(has_role(Role.MANAGER), has_role(Role.ADMIN))],
+    responses={
+        200: {"model": list[ProjectInvite]},
+        403: {"model": ForbiddenResponse},
+    },
+)
+@router.limiter.limit("10/minute")
+async def list_all_project_invites(
+    request: RouteRequest,
+    session: Annotated[KanaeSession, Depends(use_session)],
+    *,
+    status: Optional[
+        Literal["pending", "accepted", "declined", "revoked", "expired"]
+    ] = None,
+    kind: Optional[Literal["invite", "request"]] = None,
+) -> list[ProjectInvite]:
+    """View project invites across every project, meant for managers to view"""
+    args: list = []
+    constraint = ""
+
+    if status and kind:
+        constraint = "WHERE invites.status = $1 AND invites.kind = $2"
+        args.extend((status, kind))
+    elif status or kind:
+        column = "status" if status else "kind"
+        constraint = f"WHERE invites.{column} = $1"
+        args.append(status or kind)
+
+    query = f"""
+    WITH invites AS (
+        SELECT
+            project_invites.id,
+            project_invites.project_id,
+            jsonb_build_object('id', members.id, 'name', members.name) AS member,
+            project_invites.invited_by,
+            project_invites.kind,
+            CASE
+                WHEN project_invites.status = 'pending'
+                     AND project_invites.expires_at IS NOT NULL
+                     AND project_invites.expires_at <= NOW()
+                THEN 'expired'
+                ELSE project_invites.status
+            END AS status,
+            project_invites.message,
+            project_invites.created_at,
+            project_invites.responded_at,
+            project_invites.expires_at
+        FROM project_invites
+        INNER JOIN members ON members.id = project_invites.member_id
+    )
+    SELECT
+        invites.id, invites.project_id, invites.member,
+        invites.invited_by, invites.kind, invites.status,
+        invites.message, invites.created_at,
+        invites.responded_at, invites.expires_at
+    FROM invites
+    {constraint}
+    ORDER BY invites.created_at DESC
+    """
+    rows = await request.app.pool.fetch(query, *args)
+    return [ProjectInvite(**dict(row)) for row in rows]
+
+
+@router.get(
     "/projects/{project_id}",
     responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
 )
