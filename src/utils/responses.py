@@ -1,12 +1,14 @@
 import json
 from collections.abc import Sequence
-from typing import Any
+from typing import Annotated, Any
 
 import orjson
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 HTTP_404_DETAIL = "Resource not found"
+
+_NO_NULL_REGEX = r"^[^\x00]+$"
 
 
 class ORJSONResponse(JSONResponse):
@@ -93,3 +95,8 @@ class DeleteResponse(SuccessResponse, frozen=True):
 
 class JoinResponse(SuccessResponse, frozen=True):
     message: str = "Successfully joined"
+
+
+### Other responses
+class SimpleUploadResponse(BaseModel, frozen=True):
+    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]

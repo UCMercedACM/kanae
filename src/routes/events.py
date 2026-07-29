@@ -32,6 +32,7 @@ from utils.responses import (
     HTTPExceptionResponse,
     JoinResponse,
     NotFoundResponse,
+    SimpleUploadResponse,
     SuccessResponse,
 )
 from utils.router import KanaeRouter
@@ -378,10 +379,6 @@ async def create_events(
         else:
             await tr.commit()
             return Events(**dict(rows))
-
-
-class SimpleUploadResponse(BaseModel, frozen=True):
-    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class UploadRequest(BaseModel, frozen=True):

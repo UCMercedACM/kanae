@@ -38,6 +38,7 @@ from utils.responses import (
     HTTPExceptionResponse,
     JoinResponse,
     NotFoundResponse,
+    SimpleUploadResponse,
     SuccessResponse,
 )
 from utils.router import KanaeRouter
@@ -1394,10 +1395,6 @@ def _validate_media(content_type: str, size: int) -> None:
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=msg,
         )
-
-
-class SimpleUploadResponse(BaseModel, frozen=True):
-    url: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
 
 
 class MultipartUploadResponse(BaseModel, frozen=True):
