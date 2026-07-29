@@ -1427,3 +1427,95 @@ async def test_list_events_name_combines_with_after(
     )
     assert response.status_code == 200
     assert {e["name"] for e in response.json()["data"]} == {"workshop-new"}
+
+
+# ──────────────────────────────────────────────────────────────────
+# Admin bypass on has_permissions, no per-resource Keto grant needed
+# ──────────────────────────────────────────────────────────────────
+
+
+async def test_admin_lists_attendance_without_event_grant(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    # Regression: admins used to 403 here because event creation only writes
+    # owners@creator and editors@Role:leads#member, so a global admin held no
+    # tuple on the event at all.
+    fake_ory.login_as(Role.ADMIN)
+    event_id = await _insert_event(kanae.pool, name="admin-roster")
+    attendee = await _insert_member(
+        kanae.pool, member_id=uuid.uuid4(), name="Attendee", email="a@test.local"
+    )
+    await _link_event_member(
+        kanae.pool, event_id=event_id, member_id=attendee, planned=True, attended=True
+    )
+
+    response = await client.client.get(f"/events/{event_id}/attendance")
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+
+
+async def test_admin_edits_event_without_event_grant(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    event_id = await _insert_event(kanae.pool, name="admin-editable")
+
+    response = await client.client.put(
+        f"/events/{event_id}", json=_valid_event_payload(name="renamed-by-admin")
+    )
+    assert response.status_code == 200
+    assert response.json()["name"] == "renamed-by-admin"
+
+
+async def test_admin_deletes_event_without_own_grant(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    event_id = await _insert_event(kanae.pool, name="admin-deletable")
+
+    response = await client.client.delete(f"/events/{event_id}")
+    assert response.status_code == 200
+
+    remaining = await kanae.pool.fetchval(
+        "SELECT count(*) FROM events WHERE id = $1", event_id
+    )
+    assert remaining == 0
+
+
+async def test_admin_reads_attendance_code_without_event_grant(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as(Role.ADMIN)
+    event_id = await _insert_event(kanae.pool, name="admin-code")
+    await kanae.pool.execute(
+        "INSERT INTO event_attendance_codes (event_id, attendance_hash, attendance_code) "
+        "VALUES ($1, $2, $3)",
+        event_id,
+        "dummyhash",
+        "ADMIN123TRAILING",
+    )
+
+    response = await client.client.get(f"/events/{event_id}/attendance-code")
+    assert response.status_code == 200
+    assert response.json()["code"] == "ADMIN123"
+
+
+@pytest.mark.parametrize("role", [Role.MANAGER, Role.LEADS, Role.ROOT])
+async def test_non_admin_roles_do_not_bypass_event_permissions(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae, role: Role
+) -> None:
+    fake_ory.login_as(role)
+    event_id = await _insert_event(kanae.pool, name=f"no-bypass-{role.value}")
+
+    response = await client.client.get(f"/events/{event_id}/attendance")
+    assert response.status_code == 403
+
+
+async def test_roleless_member_still_denied_event_attendance(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    fake_ory.login_as()
+    event_id = await _insert_event(kanae.pool, name="still-denied")
+
+    response = await client.client.get(f"/events/{event_id}/attendance")
+    assert response.status_code == 403

@@ -1,15 +1,15 @@
 # Manager-side project administration journey: create → bulk-join
-# extra members → grant self Project.own (required by member/modify) →
-# promote a member to lead → flip the same member to "former" →
-# verify the role transitions surface in /projects/{id}.members.
+# extra members → grant self Project.own → promote a member to lead →
+# flip the same member to "former" → verify the role transitions surface
+# in /projects/{id}.members.
 #
 # Exercises three routes nothing else touches:
 #   POST /projects/{id}/bulk-join     (1/minute, this scenario owns it)
 #   PUT  /projects/{id}/member/modify (3/minute, this scenario owns it)
-#   `check_any(has_role(MANAGER), has_permissions(Project.own))` on
-#   bulk-join is satisfied via the MANAGER role from bootstrap, so we
-#   only need Keto Project.own for member/modify (which also checks
-#   Project.own AND Role.MANAGER).
+#   Both carry `check_any(has_role(MANAGER), has_permissions(Project.own))`,
+#   satisfied here by the MANAGER role from bootstrap. The explicit
+#   Project.own grant below is therefore redundant for authorization — it is
+#   kept so this scenario also covers the owner arm and the Keto write path.
 #
 # Pydantic 422s (malformed UUIDs, missing fields, bad literals) fire
 # BEFORE the route function and don't count against the limiters, so
@@ -119,7 +119,8 @@ body contains "{{MANAGER_ID}}"
 body contains "{{MEMBER_ID}}"
 body contains "{{LEADS_ID}}"
 
-# --- Project.own grant (member/modify requires it AND Role.MANAGER).
+# --- Project.own grant. member/modify already admits this session via the
+# MANAGER role; the grant exercises the owner arm and the Keto write path.
 PUT {{KETO_WRITE_URL}}/admin/relation-tuples
 Content-Type: application/json
 Accept: application/json

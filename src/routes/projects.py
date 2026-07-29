@@ -1278,7 +1278,7 @@ class UpgradeMemberRole(BaseModel, frozen=True):
 
 @router.put(
     "/projects/{project_id}/member/modify",
-    dependencies=[has_permissions(Project.own), has_role(Role.MANAGER)],
+    dependencies=[check_any(has_role(Role.MANAGER), has_permissions(Project.own))],
     include_in_schema=False,
     responses={200: {"model": DeleteResponse}},
 )

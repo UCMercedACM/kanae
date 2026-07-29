@@ -208,14 +208,19 @@ jsonpath "$.session.identity.id" == "{{ADMIN_ID}}"
 # first thing that can fail.
 
 # Path-param malformed UUID — has_permissions(Project.view) reads the raw
-# path string as the Keto object id BEFORE FastAPI coerces it to uuid.UUID.
-# ADMIN holds Project:dddddddd-…/view but not Project:not-a-uuid/view, so
-# Keto answers "no" and the dependency returns 403 — the path-coercion 422
-# is never reached. (Routes that bypass Keto via has_role — bulk-join,
-# tested in scenario 23 — *do* surface path 422 because the role check is
-# project-id-agnostic.)
+# path string as the Keto object id BEFORE FastAPI coerces it to uuid.UUID,
+# and `_is_uuid` rejects "not-a-uuid" without ever asking Keto. For a
+# non-admin that surfaces as 403 (the permission is "missing"), but ADMIN
+# short-circuits the whole check, so the request proceeds to path coercion
+# and Pydantic answers 422 instead. Same as any other role-agnostic route
+# (bulk-join via has_role, scenario 23).
+#
+# So the status here is admin-specific: re-running this block as MEMBER
+# would yield 403, not 422.
 GET {{KANAE_URL}}/projects/not-a-uuid/media
-HTTP 403
+HTTP 422
+[Asserts]
+jsonpath "$.errors[*].type" contains "uuid_parsing"
 
 # upload: missing hash.
 POST {{KANAE_URL}}/projects/dddddddd-dddd-4ddd-8ddd-dddddddddddd/media/upload
