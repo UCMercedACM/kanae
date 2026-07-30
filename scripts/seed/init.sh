@@ -17,15 +17,31 @@ KRATOS_PUBLIC=${KRATOS_PUBLIC:-http://localhost:4433}
 KRATOS_ADMIN=${KRATOS_ADMIN:-http://localhost:4434}
 KETO_WRITE=${KETO_WRITE:-http://localhost:4467}
 KANAE=${KANAE:-http://localhost:8000}
-DB_CONTAINER=${DB_CONTAINER:-kanae_postgres}
-VALKEY_CONTAINER=${VALKEY_CONTAINER:-kanae_valkey}
+DB_HOST=${DB_HOST:-localhost}
+DB_PORT=${DB_PORT:-5432}
 DB_NAME=${DB_NAME:-kanae}
 DB_USER=${DB_USER:-postgres}
+VALKEY_HOST=${VALKEY_HOST:-localhost}
+VALKEY_PORT=${VALKEY_PORT:-6379}
+DB_CONTAINER=${DB_CONTAINER:-kanae_postgres}
+VALKEY_CONTAINER=${VALKEY_CONTAINER:-kanae_valkey}
 ADMIN_EMAIL=${ADMIN_EMAIL:-admin@seed.test.local}
 MEMBER_EMAIL=${MEMBER_EMAIL:-member@seed.test.local}
 MANAGER_EMAIL=${MANAGER_EMAIL:-manager@seed.test.local}
 LEADS_EMAIL=${LEADS_EMAIL:-leads@seed.test.local}
 MEMBERS_TIMEOUT=${SEED_MEMBERS_TIMEOUT:-15}
+MEMBERS_INTERVAL=0.2
+MEMBERS_ATTEMPTS=$((MEMBERS_TIMEOUT * 5))
+WAIT_RETRIES=${SEED_WAIT_RETRIES:-30}
+
+if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+	POSTGRES_PASSWORD=${DB_PASSWORD:-password}
+fi
+
+HAS_PSQL=0
+HAS_VALKEY_CLI=0
+if command -v psql >/dev/null 2>&1; then HAS_PSQL=1; fi
+if command -v valkey-cli >/dev/null 2>&1; then HAS_VALKEY_CLI=1; fi
 
 H_ACCEPT="Accept: application/json"
 H_CONTENT_TYPE="Content-Type: application/json"
@@ -59,63 +75,110 @@ require() {
 	local tool="$1"
 	command -v "$tool" >/dev/null 2>&1 || fail "missing required tool: $tool"
 }
-
-provision_identity() {
-	local jar="$1" email="$2" name="$3" password="$4" flow csrf resp
-
-	flow=$(curl -sc "$jar" -b "$jar" -H "$H_ACCEPT" \
-		"$KRATOS_PUBLIC/self-service/registration/browser" | jq -r .id)
-	[[ -n "$flow" && "$flow" != "null" ]] || fail "no registration flow id for $email"
-	csrf=$(curl -sc "$jar" -b "$jar" -H "$H_ACCEPT" \
-		"$KRATOS_PUBLIC/self-service/registration/flows?id=$flow" \
-		| jq -r '.ui.nodes[] | select(.attributes.name=="csrf_token") | .attributes.value')
-
-	resp=$(curl -sc "$jar" -b "$jar" -H "$H_CONTENT_TYPE" -H "$H_ACCEPT" \
-		-X POST "$KRATOS_PUBLIC/self-service/registration?flow=$flow" \
-		-d '{
-      "method": "password",
-      "csrf_token": "'"$csrf"'",
-      "password":   "'"$password"'",
-      "traits": { "email": "'"$email"'", "name": "'"$name"'" }
-    }')
-	IDENTITY_ID=$(jq -r '.identity.id // empty' <<<"$resp")
-
-	if [[ -z "$IDENTITY_ID" ]]; then
-		warn "registration for $email did not mint an identity; resetting password and logging in"
-		reset_password "$email" "$password" \
-			|| fail "could not register or reset $email: $(jq -c '.ui.messages // .error // .' <<<"$resp")"
-		login_identity "$jar" "$email" "$password" \
-			|| fail "login for $email failed after password reset"
-		IDENTITY_ID=$(curl -sb "$jar" "$KANAE/members/me" | jq -r "$ID_FILTER")
-		[[ -n "$IDENTITY_ID" ]] || fail "login for $email did not resolve an identity"
-	fi
-}
-
-provision_bg() {
-	local idfile="$1"
-	shift
-	provision_identity "$@"
-	printf '%s' "$IDENTITY_ID" >"$idfile"
-}
-
-read_id() {
-	local idfile="$1" label="$2"
-	[[ -s "$idfile" ]] || fail "provisioning failed for $label"
-	printf '%s' "$(<"$idfile")"
-}
-
 named_row() {
 	local role="$1" email="$2" id="$3"
 	printf '    %-8s %-30s %s\n' "$role" "$email" "$id"
 }
 
-reset_password() {
-	local email="$1" password="$2" identity id body
+psql_query() {
+	if ((HAS_PSQL)); then
+		PGPASSWORD="$POSTGRES_PASSWORD" psql \
+			--host "$DB_HOST" --port "$DB_PORT" \
+			--username "$DB_USER" --dbname "$DB_NAME" \
+			--no-psqlrc --quiet --tuples-only --no-align "$@"
+	else
+		docker exec "$DB_CONTAINER" psql \
+			--username "$DB_USER" --dbname "$DB_NAME" \
+			--no-psqlrc --quiet --tuples-only --no-align "$@"
+	fi
+}
+
+valkey_query() {
+	if ((HAS_VALKEY_CLI)); then
+		valkey-cli -h "$VALKEY_HOST" -p "$VALKEY_PORT" "$@"
+	else
+		docker exec "$VALKEY_CONTAINER" valkey-cli "$@"
+	fi
+}
+
+existing_values() {
+	local table="$1" column="$2"
+	psql_query -c "SELECT $column FROM $table;" \
+		| jq -Rsc 'split("\n") | map(select(length > 0))'
+}
+
+cookie_curl() {
+	local jar="$1" headers="$1.headers" cookies=""
+	shift
+	if [[ -s "$jar" ]]; then read -r cookies <"$jar" || true; fi
+
+	local -a cookie_header=()
+	if [[ -n "$cookies" ]]; then cookie_header=(-H "Cookie: $cookies"); fi
+
+	curl -s -D "$headers" "${cookie_header[@]}" "$@"
+	absorb_cookies "$jar" "$headers"
+}
+
+absorb_cookies() {
+	local jar="$1" headers="$2" entry name line merged="" sep=""
+	local -A value=()
+	local -a order=()
+
+	if [[ -s "$jar" ]]; then
+		local -a stored=()
+		IFS=';' read -ra stored <"$jar" || true
+		for entry in "${stored[@]}"; do
+			entry="${entry# }"
+			[[ "$entry" == *=* ]] || continue
+
+			name="${entry%%=*}"
+			order+=("$name")
+			value["$name"]="${entry#*=}"
+		done
+	fi
+
+	while IFS= read -r line; do
+		line="${line%$'\r'}"
+		[[ "${line,,}" == set-cookie:* ]] || continue
+		entry="${line#*:}"   # drop the header name
+		entry="${entry%%;*}" # keep the pair, drop Path/HttpOnly/…
+		entry="${entry# }"
+		[[ "$entry" == *=* ]] || continue
+
+		name="${entry%%=*}"
+		[[ -v value["$name"] ]] || order+=("$name")
+		value["$name"]="${entry#*=}"
+	done <"$headers"
+
+	for name in "${order[@]}"; do
+		[[ -n "${value[$name]}" ]] || continue
+		merged+="$sep$name=${value[$name]}"
+		sep="; "
+	done
+	printf '%s\n' "$merged" >"$jar"
+}
+
+wait_http() {
+	local url="$1" label="$2"
+	curl --silent --show-error --fail --output /dev/null \
+		--connect-timeout 2 --max-time 5 \
+		--retry "$WAIT_RETRIES" --retry-delay 1 \
+		--retry-connrefused --retry-all-errors \
+		"$url" || fail "$label never became ready at $url"
+	ok "$label ready"
+}
+
+lookup_identity() {
+	local email="$1" identity
 	identity=$(curl -sf -G "$KRATOS_ADMIN/admin/identities" \
 		--data-urlencode "credentials_identifier=$email" | jq -c '.[0] // empty')
 	[[ -n "$identity" ]] || return 1
-	id=$(jq -r '.id' <<<"$identity")
+	printf '%s' "$identity"
+}
 
+reset_password() {
+	local identity="$1" password="$2" id body
+	id=$(jq -r .id <<<"$identity")
 	body=$(jq -n --argjson idn "$identity" --arg pw "$password" \
 		'{schema_id: $idn.schema_id, state: "active", traits: $idn.traits,
       credentials: {password: {config: {password: $pw}}}}')
@@ -123,15 +186,24 @@ reset_password() {
 		-H "$H_CONTENT_TYPE" -d "$body" >/dev/null
 }
 
+flow_csrf() {
+	local jar="$1" kind="$2" flow="$3" resp csrf
+	resp=$(cookie_curl "$jar" -H "$H_ACCEPT" \
+		"$KRATOS_PUBLIC/self-service/$kind/flows?id=$flow")
+	csrf=$(jq -r '.ui.nodes[]? | select(.attributes.name=="csrf_token") | .attributes.value' \
+		<<<"$resp")
+	[[ -n "$csrf" ]] \
+		|| fail "$kind flow $flow carried no csrf token: $(jq -c '.error // .' <<<"$resp")"
+	printf '%s' "$csrf"
+}
+
 login_identity() {
 	local jar="$1" email="$2" password="$3" flow csrf resp
-	flow=$(curl -sc "$jar" -b "$jar" -H "$H_ACCEPT" \
+	flow=$(cookie_curl "$jar" -H "$H_ACCEPT" \
 		"$KRATOS_PUBLIC/self-service/login/browser" | jq -r .id)
 	[[ -n "$flow" && "$flow" != "null" ]] || return 1
-	csrf=$(curl -sc "$jar" -b "$jar" -H "$H_ACCEPT" \
-		"$KRATOS_PUBLIC/self-service/login/flows?id=$flow" \
-		| jq -r '.ui.nodes[] | select(.attributes.name=="csrf_token") | .attributes.value')
-	resp=$(curl -sc "$jar" -b "$jar" -H "$H_CONTENT_TYPE" -H "$H_ACCEPT" \
+	csrf=$(flow_csrf "$jar" login "$flow")
+	resp=$(cookie_curl "$jar" -H "$H_CONTENT_TYPE" -H "$H_ACCEPT" \
 		-X POST "$KRATOS_PUBLIC/self-service/login?flow=$flow" \
 		-d '{
       "method": "password",
@@ -142,19 +214,59 @@ login_identity() {
 	[[ -n "$(jq -r '.session.id // empty' <<<"$resp")" ]]
 }
 
-wait_for_members() {
-	local ids=("$@") expected=$# deadline in_list count
-	in_list=$(printf "'%s'," "${ids[@]}")
-	in_list="${in_list%,}"
-	deadline=$(($(date +%s) + MEMBERS_TIMEOUT))
+provision_identity() {
+	local jar="$1" email="$2" name="$3" password="$4" flow csrf resp identity
+	: >"$jar"
 
-	while :; do
-		count=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tA \
+	if identity=$(lookup_identity "$email"); then
+		reset_password "$identity" "$password" \
+			|| fail "could not reset existing identity $email"
+		login_identity "$jar" "$email" "$password" \
+			|| fail "login for existing identity $email failed"
+		IDENTITY_ID=$(cookie_curl "$jar" "$KANAE/members/me" | jq -r "$ID_FILTER")
+		[[ -n "$IDENTITY_ID" ]] || fail "login for $email did not resolve an identity"
+		return 0
+	fi
+
+	flow=$(cookie_curl "$jar" -H "$H_ACCEPT" \
+		"$KRATOS_PUBLIC/self-service/registration/browser" | jq -r .id)
+	[[ -n "$flow" && "$flow" != "null" ]] || fail "no registration flow id for $email"
+	csrf=$(flow_csrf "$jar" registration "$flow")
+
+	resp=$(cookie_curl "$jar" -H "$H_CONTENT_TYPE" -H "$H_ACCEPT" \
+		-X POST "$KRATOS_PUBLIC/self-service/registration?flow=$flow" \
+		-d '{
+      "method": "password",
+      "csrf_token": "'"$csrf"'",
+      "password":   "'"$password"'",
+      "traits": { "email": "'"$email"'", "name": "'"$name"'" }
+    }')
+	IDENTITY_ID=$(jq -r '.identity.id // empty' <<<"$resp")
+	[[ -n "$IDENTITY_ID" ]] && return 0
+
+	warn "registration for $email did not mint an identity; resetting password and logging in"
+	identity=$(lookup_identity "$email") \
+		|| fail "could not register or reset $email: $(jq -c '.ui.messages // .error // .' <<<"$resp")"
+	reset_password "$identity" "$password" \
+		|| fail "could not reset $email after a failed registration"
+	login_identity "$jar" "$email" "$password" \
+		|| fail "login for $email failed after password reset"
+	IDENTITY_ID=$(cookie_curl "$jar" "$KANAE/members/me" | jq -r "$ID_FILTER")
+	[[ -n "$IDENTITY_ID" ]] || fail "login for $email did not resolve an identity"
+}
+
+wait_for_members() {
+	local ids=("$@") expected=$# in_list count attempt
+	printf -v in_list "'%s'," "${ids[@]}"
+	in_list="${in_list%,}"
+
+	for ((attempt = 0; attempt < MEMBERS_ATTEMPTS; attempt++)); do
+		count=$(psql_query \
 			-c "SELECT count(*) FROM members WHERE id IN ($in_list);" 2>/dev/null || echo 0)
 		[[ "$count" == "$expected" ]] && return 0
-		(($(date +%s) >= deadline)) && return 1
-		sleep 0.2
+		sleep "$MEMBERS_INTERVAL"
 	done
+	return 1
 }
 
 grant_role() {
@@ -171,7 +283,7 @@ grant_role() {
 
 grant_sudo() {
 	local id="$1"
-	docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -q \
+	psql_query \
 		-c "INSERT INTO sudo_grants (member_id, expires_at, reason)
 		    VALUES ('$id', now() + interval '30 minutes', 'seed script')
 		    ON CONFLICT (member_id) DO UPDATE
@@ -182,28 +294,39 @@ grant_sudo() {
 }
 
 seed_from_json() {
-	local file="$1" endpoint="$2" jar="$3" label="$4" transform="${5:-.}"
-	local obj resp seeded=0 total
-	total=$(jq 'length' "$file")
+	local file="$1" endpoint="$2" jar="$3" label="$4" table="$5" transform="${6:-.}"
+	local obj resp total seeded=0
+	local -a rows=() pending=()
 
-	while IFS= read -r obj; do
-		resp=$(curl -s -X POST "$KANAE$endpoint" \
-			-b "$jar" -H "$H_CONTENT_TYPE" -d "$obj")
-		if [[ -n "$(jq -r "$ID_FILTER" <<<"$resp")" ]]; then
+	mapfile -t rows < <(jq -r --argjson seen "$(existing_values "$table" name)" \
+		"length, (.[] | select(.name as \$n | \$seen | index(\$n) | not) | $transform | @json)" \
+		"$file")
+	((${#rows[@]})) || fail "could not read ${label}s from $file"
+	total=${rows[0]}
+	pending=("${rows[@]:1}")
+
+	for obj in "${pending[@]}"; do
+		resp=$(cookie_curl "$jar" -X POST "$KANAE$endpoint" \
+			-H "$H_CONTENT_TYPE" -d "$obj")
+		if jq -e "$ID_FILTER" >/dev/null <<<"$resp"; then
 			seeded=$((seeded + 1))
 		else
 			warn "$label '$(jq -r '.name // .title // "?"' <<<"$obj")' not created: $(jq -c '.message // .detail // .' <<<"$resp")"
 		fi
-	done < <(jq -c ".[] | $transform" "$file")
+	done
 
-	ok "created $seeded/$total ${label}s"
+	ok "created $seeded/$total ${label}s ($((total - ${#pending[@]})) already present)"
 }
 
 step "0. preflight"
 require curl
 require jq
-require docker
 require openssl
+
+if ((HAS_PSQL == 0 || HAS_VALKEY_CLI == 0)); then
+	require docker
+	warn "psql/valkey-cli not on PATH; falling back to docker exec"
+fi
 
 PASSWORD="$(openssl rand -hex 16)"
 
@@ -213,20 +336,18 @@ for f in members tags projects events; do
 done
 ok "data files present and valid JSON"
 
-curl -sf "$KRATOS_PUBLIC/health/ready" >/dev/null || fail "kratos not ready at $KRATOS_PUBLIC"
-ok "kratos public ready"
-curl -sf "$KRATOS_ADMIN/health/ready" >/dev/null || fail "kratos admin not ready at $KRATOS_ADMIN"
-ok "kratos admin ready"
-curl -sf "$KETO_WRITE/health/ready" >/dev/null || fail "keto write not ready at $KETO_WRITE"
-ok "keto write ready"
-curl -sf -o /dev/null -w '' "$KANAE/" || fail "kanae not responding at $KANAE"
-ok "kanae responding"
+wait_http "$KRATOS_PUBLIC/health/ready" "kratos public"
+wait_http "$KRATOS_ADMIN/health/ready" "kratos admin"
+wait_http "$KETO_WRITE/health/ready" "keto write"
+wait_http "$KANAE/" "kanae"
 
 WORK="$(mktemp -d -t kanae-seed.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 ADMIN_JAR="$WORK/admin.jar"
+MEMBER_JAR="$WORK/member.jar"
 MANAGER_JAR="$WORK/manager.jar"
 LEAD_JAR="$WORK/lead.jar"
+ROSTER_JAR="$WORK/roster.jar"
 
 step "1. provision identities + roster (serial)"
 
@@ -237,23 +358,20 @@ while IFS=$'\t' read -r name email role; do
 	ROSTER_ROLES+=("$role")
 done < <(jq -r '.[] | [.name, .email, .role] | @tsv' "$DATA_DIR/members.json")
 
-provision_bg "$WORK/admin.id" "$ADMIN_JAR" "$ADMIN_EMAIL" "Seed Admin" "$PASSWORD"
-provision_bg "$WORK/member.id" "$WORK/member.jar" "$MEMBER_EMAIL" "Seed Member" "$PASSWORD"
-provision_bg "$WORK/manager.id" "$MANAGER_JAR" "$MANAGER_EMAIL" "Seed Manager" "$PASSWORD"
-provision_bg "$WORK/lead.id" "$LEAD_JAR" "$LEADS_EMAIL" "Seed Lead" "$PASSWORD"
+provision_identity "$ADMIN_JAR" "$ADMIN_EMAIL" "Seed Admin" "$PASSWORD"
+ADMIN_ID=$IDENTITY_ID
+provision_identity "$MEMBER_JAR" "$MEMBER_EMAIL" "Seed Member" "$PASSWORD"
+MEMBER_ID=$IDENTITY_ID
+provision_identity "$MANAGER_JAR" "$MANAGER_EMAIL" "Seed Manager" "$PASSWORD"
+MANAGER_ID=$IDENTITY_ID
+provision_identity "$LEAD_JAR" "$LEADS_EMAIL" "Seed Lead" "$PASSWORD"
+LEAD_ID=$IDENTITY_ID
 
 for i in "${!ROSTER_EMAILS[@]}"; do
 	ROSTER_PASSWORDS[i]="$(openssl rand -hex 16)"
-	provision_bg "$WORK/roster-$i.id" "$WORK/roster-$i.jar" \
+	provision_identity "$ROSTER_JAR" \
 		"${ROSTER_EMAILS[$i]}" "${ROSTER_NAMES[$i]}" "${ROSTER_PASSWORDS[$i]}"
-done
-
-ADMIN_ID=$(read_id "$WORK/admin.id" "$ADMIN_EMAIL")
-MEMBER_ID=$(read_id "$WORK/member.id" "$MEMBER_EMAIL")
-MANAGER_ID=$(read_id "$WORK/manager.id" "$MANAGER_EMAIL")
-LEAD_ID=$(read_id "$WORK/lead.id" "$LEADS_EMAIL")
-for i in "${!ROSTER_EMAILS[@]}"; do
-	ROSTER_IDS[i]=$(read_id "$WORK/roster-$i.id" "${ROSTER_EMAILS[$i]}")
+	ROSTER_IDS[i]=$IDENTITY_ID
 done
 ok "provisioned 4 named + ${#ROSTER_IDS[@]} roster identities"
 
@@ -278,23 +396,35 @@ for i in "${!ROSTER_ROLES[@]}"; do
 	esac
 done
 
-docker exec "$VALKEY_CONTAINER" valkey-cli FLUSHDB >/dev/null
+valkey_query FLUSHDB >/dev/null
 grant_sudo "$ADMIN_ID"
 ok "granted named + roster ($roster_admins admin, $roster_managers manager, $roster_leads leads) + admin sudo, valkey flushed"
 
 step "3. seed tags (bulk-create)"
-TAG_TOTAL=$(jq 'length' "$DATA_DIR/tags.json")
-tag_resp=$(curl -s -X POST "$KANAE/tags/bulk-create" \
-	-b "$ADMIN_JAR" -H "$H_CONTENT_TYPE" -d @"$DATA_DIR/tags.json")
-if tag_created=$(jq -e 'if type == "array" then length else empty end' <<<"$tag_resp"); then
-	ok "created $tag_created/$TAG_TOTAL tags"
+
+{
+	read -r TAG_TOTAL
+	read -r TAG_PENDING
+	read -r PENDING_TAGS
+} < <(jq -c --argjson seen "$(existing_values tags title)" \
+	'[.[] | select(.title as $t | $seen | index($t) | not)] as $pending
+	 | length, ($pending | length), $pending' "$DATA_DIR/tags.json")
+
+if ((TAG_PENDING == 0)); then
+	ok "all $TAG_TOTAL tags already present, skipping"
 else
-	warn "bulk tag create returned no list (tags may already exist): $(jq -c '.message // .detail // .' <<<"$tag_resp")"
+	tag_resp=$(cookie_curl "$ADMIN_JAR" -X POST "$KANAE/tags/bulk-create" \
+		-H "$H_CONTENT_TYPE" -d "$PENDING_TAGS")
+	if tag_created=$(jq -e 'if type == "array" then length else empty end' <<<"$tag_resp"); then
+		ok "created $tag_created/$TAG_TOTAL tags ($((TAG_TOTAL - TAG_PENDING)) already present)"
+	else
+		warn "bulk tag create returned no list: $(jq -c '.message // .detail // .' <<<"$tag_resp")"
+	fi
 fi
 
 step "4. seed projects + events (parallel)"
-seed_from_json "$DATA_DIR/projects.json" "/projects/create" "$MANAGER_JAR" "project" &
-seed_from_json "$DATA_DIR/events.json" "/events/create" "$LEAD_JAR" "event" \
+seed_from_json "$DATA_DIR/projects.json" "/projects/create" "$MANAGER_JAR" "project" "projects" &
+seed_from_json "$DATA_DIR/events.json" "/events/create" "$LEAD_JAR" "event" "events" \
 	". + {id: \"$ZERO_UUID\", creator_id: \"$ZERO_UUID\"}" &
 wait
 
