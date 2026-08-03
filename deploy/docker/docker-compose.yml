@@ -1,15 +1,15 @@
 name: kanae
 
 include:
-  - path: ory/docker-compose.yml
-  - project_directory: ory
-  
+  - path: ../../docker/ory/docker-compose.prod.yml
+    project_directory: ../../docker/ory
+
 services:
   kanae:
     container_name: kanae
-    image: ghcr.io/ucmercedacm/kanae:edge
+    image: ghcr.io/ucmercedacm/kanae:latest
     environment:
-      GRANIAN_WORKERS: ${KANAE_WORKERS:-1}
+      GRANIAN_WORKERS: ${KANAE_WORKERS:-4}
     volumes:
       # Do not edit the next line. If you want to change the path of the configuration file, please edit the CONFIG_LOCATION variable
       - ${CONFIG_LOCATION}:/kanae/config.yml
@@ -32,14 +32,9 @@ services:
       keto:
         condition: service_started
         restart: true
-      garage:
-        condition: service_healthy
-        restart: true
-      garage-init:
-        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
-    healthcheck: 
+    healthcheck:
       test: curl -fsS --max-time 2 http://127.0.0.1:8000
       interval: 3s
       timeout: 5s
@@ -49,7 +44,7 @@ services:
   database:
     container_name: kanae_postgres
     build:
-      context: ./ory
+      context: ../../docker/ory
       dockerfile_inline: |
         FROM postgres:18
         COPY init.sh /docker-entrypoint-initdb.d/init.sh
@@ -87,53 +82,6 @@ services:
       start_period: 10s
       start_interval: 3s
 
-  garage:
-    container_name: kanae_garage
-    image: dxflrs/garage:v2.3.0
-    ports:
-      - "3900:3900" # S3 API
-      - "3902:3902" # S3 web
-    environment:
-      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
-      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
-      GARAGE_METRICS_TOKEN: ${GARAGE_METRICS_TOKEN}
-    volumes:
-      - garage:/var/lib/garage/data
-      - garage:/var/lib/garage/meta
-      - ../garage.toml:/etc/garage.toml
-    restart: unless-stopped
-    healthcheck:
-      # As per Dockerfile: https://git.deuxfleurs.fr/Deuxfleurs/garage/src/branch/main-v2/Dockerfile
-      # There is no distro so we have to do this
-      test: ["CMD", "/garage", "status"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
-  garage-init:
-    container_name: kanae_garage_init
-    build:
-      dockerfile_inline: |
-        FROM alpine:latest
-        RUN apk add --no-cache bash aws-cli yq
-        COPY --from=dxflrs/garage:v2.3.0 /garage /usr/local/bin/garage
-    entrypoint: bash /garage-init.sh
-    environment:
-      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
-    volumes:
-      - ${CONFIG_LOCATION}:/kanae/config.yml:ro
-      - garage:/var/lib/garage/data
-      - garage:/var/lib/garage/meta
-      - ../garage.toml:/etc/garage.toml:ro
-      - ./garage-init.sh:/garage-init.sh:ro
-    network_mode: "service:garage"
-    depends_on:
-      garage:
-        condition: service_healthy
-    restart: "no"
-
-
   migrate:
     container_name: kanae_migrate
     image: arigaio/atlas:latest
@@ -150,35 +98,12 @@ services:
       database:
         condition: service_healthy
     volumes:
-      - ../src/schema.sql:/schema.sql 
+      - ../../src/schema.sql:/schema.sql
 
-  prometheus:
-    container_name: kanae_prometheus
-    ports:
-      - 9090:9090
-    image: prom/prometheus:latest
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus-data:/prometheus
-
-  # first login uses admin/admin
-  # add data source for http://prometheus:9090 to get started
-  grafana:
-    container_name: kanae_grafana
-    command: ['./run.sh', '-disable-reporting']
-    ports:
-      - 3000:3000
-    image: grafana/grafana-enterprise:latest-ubuntu
-    volumes:
-      - grafana-data:/var/lib/grafana
 
 volumes:
   database:
-  garage:
-  prometheus-data:
-  grafana-data:
 
 networks:
   db_bridge:
     driver: bridge
-
