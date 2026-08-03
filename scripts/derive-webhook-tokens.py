@@ -26,16 +26,11 @@ HOOKS: dict[str, bytes] = {
 _log = logging.getLogger(__name__)
 
 
-def kanae_config(value: str) -> Path:
-    config_path = Path(value).resolve()
-    if not config_path.is_relative_to(ROOT_PATH):
-        msg = f"config must live inside {ROOT_PATH}: {config_path}"
-        raise argparse.ArgumentTypeError(msg)
-
-    return config_path
-
-
 def main(config_path: Path) -> None:
+    config_path = config_path.resolve()
+    if not config_path.is_relative_to(ROOT_PATH):
+        sys.exit(f"error: config must live inside {ROOT_PATH}: {config_path}")
+
     if not config_path.exists():
         msg = f"Config could not be found: {config_path}"
         raise RuntimeError(msg)
@@ -66,7 +61,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config",
-        type=kanae_config,
+        type=Path,
         default=CONFIG_PATH,
         help=f"Path of the config file. Defaults to {CONFIG_PATH}",
     )
