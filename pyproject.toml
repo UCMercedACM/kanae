@@ -5,7 +5,7 @@ description = "Internal backend server for ACM @ UC Merced"
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
-    "aiobotocore~=3.8.0",
+    "aiobotocore~=3.9.0",
     "aiocache~=0.12.3",
     "aiohttp[speedups]~=3.14.0",
     "argon2-cffi~=25.1.0",
@@ -38,7 +38,7 @@ lint = [
     { include-group = "types" },
 ]
 types = [
-    "types-aiobotocore[s3]~=3.8.0",
+    "types-aiobotocore[s3]~=3.9.0",
     "types-boto3[s3]~=1.43.14",
 ]
 test = [
@@ -48,7 +48,7 @@ test = [
     "pytest~=9.1.0",
     "pytest-asyncio~=1.4.0",
     "testcontainers~=4.15.0",
-    "hypothesis~=6.164.0",
+    "hypothesis~=6.165.0",
     "schemathesis~=4.24.0",
 ]
 
