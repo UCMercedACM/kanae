@@ -5,14 +5,23 @@ dsn: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disab
 
 serve:
   public:
-    base_url: http://localhost:4433/
+    base_url: https://api.ucmacm.dev/auth
     cors:
       enabled: true
       allowed_origins:
-        - http://localhost:5173
+        - https://ucmacm.dev
       allowed_methods: [POST, GET, PUT, PATCH, DELETE]
-      allowed_headers: [Authorization, Cookie, Content-Type]
+      allowed_headers:
+        [
+          Authorization,
+          Cookie,
+          Content-Type,
+          X-CSRF-Token,
+          X-XSRF-TOKEN,
+          X-Session-Token,
+        ]
       exposed_headers: [Content-Type, Set-Cookie]
+      max_age: 3600
   admin:
     base_url: http://kratos:4434/
 
@@ -29,22 +38,20 @@ identity:
       url: file:///etc/config/identity.schema.json
 
 selfservice:
-  default_browser_return_url: http://localhost:5173/
+  default_browser_return_url: https://ucmacm.dev/
   allowed_return_urls:
-    - http://localhost:5173
+    - https://ucmacm.dev
 
   flows:
     registration:
       lifespan: 10m
-      ui_url: http://localhost:5173/registration
+      ui_url: https://ucmacm.dev/registration
       after:
         password:
           hooks:
             - hook: web_hook
               config:
-                # This is just to support accessing from localhost.
-                # Once containerized, replace this with http://kanae:8000
-                url: http://host.docker.internal:8000/member/webhooks/registration
+                url: http://kanae:8000/member/webhooks/registration
                 method: POST
                 body: file:///etc/config/hooks/payload.jsonnet
                 response:
@@ -56,13 +63,11 @@ selfservice:
                     name: X-Webhook-Token
                     value: ${KRATOS_WEBHOOK_TOKEN_REGISTRATION}
 
-            # Optionally sign the user in immediately after registration.
-            # Comment out if you want a verify-then-login flow.
             - hook: session
 
     settings:
       lifespan: 10m
-      ui_url: http://localhost:5173/settings
+      ui_url: https://ucmacm.dev/settings
       privileged_session_max_age: 15m
       required_aal: highest_available
       after:
@@ -70,7 +75,7 @@ selfservice:
           hooks:
             - hook: web_hook
               config:
-                url: http://host.docker.internal:8000/member/webhooks/settings
+                url: http://kanae:8000/member/webhooks/settings
                 method: POST
                 body: file:///etc/config/hooks/payload.jsonnet
                 response:
@@ -85,7 +90,7 @@ selfservice:
           hooks:
             - hook: web_hook
               config:
-                url: http://host.docker.internal:8000/member/webhooks/settings
+                url: http://kanae:8000/member/webhooks/settings
                 method: POST
                 body: file:///etc/config/hooks/payload.jsonnet
                 response:
@@ -99,25 +104,25 @@ selfservice:
 
     login:
       lifespan: 10m
-      ui_url: http://localhost:5173/login
+      ui_url: https://ucmacm.dev/login
 
     logout:
       after:
-        default_browser_return_url: http://localhost:5173/login
+        default_browser_return_url: https://ucmacm.dev/login
 
     error:
-      ui_url: http://localhost:5173/error
+      ui_url: https://ucmacm.dev/error
 
     verification:
       enabled: true
-      ui_url: http://localhost:5173/verification
+      ui_url: https://ucmacm.dev/verification
       lifespan: 1h
       after:
-        default_browser_return_url: http://localhost:5173/
+        default_browser_return_url: https://ucmacm.dev/
 
     recovery:
       enabled: true
-      ui_url: http://localhost:5173/recovery
+      ui_url: https://ucmacm.dev/recovery
       lifespan: 1h
 
   methods:
@@ -129,10 +134,6 @@ selfservice:
         min_password_length: 12
         identifier_similarity_check_enabled: true
 
-    # Second factor (AAL2). TOTP is the primary step-up authenticator used by
-    # the sudo/break-glass flow: ElevationError redirects to
-    # /self-service/login/browser?aal=aal2&refresh=true, which Kratos can only
-    # satisfy once a TOTP credential exists and this method is enabled.
     totp:
       enabled: true
       config:
@@ -141,9 +142,15 @@ selfservice:
     lookup_secret:
       enabled: true
 
+
+courier:
+  smtp:
+    from_address: noreply@ucmacm.dev
+    from_name: ACM @ UC Merced
+
 # Placeholders only. Kratos doesn't expand `${VAR}` inside YAML, so the real
 # values must come from env-path overrides set in docker-compose:
-#   SECRETS_COOKIE: <hex from `openssl rand -hex 64`>
+#   SECRETS_COOKIE: <hex from `openssl rand -hex 32`>
 #   SECRETS_CIPHER: <hex from `openssl rand -hex 16`>
 # The strings below exist solely to satisfy the schema's `minLength: 32`
 # requirement so this file validates standalone — they are never used at
@@ -172,3 +179,4 @@ hashers:
 log:
   level: info
   format: json
+  leak_sensitive_values: false

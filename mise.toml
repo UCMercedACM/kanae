@@ -25,8 +25,15 @@ DEV_DATABASE_URL = "postgres://{{env.DB_USERNAME}}:{{env.DB_PASSWORD}}@localhost
 [tasks."docker:preview"]
 depends = ["server:check-env"]
 description = "Runs the preview docker compose stack, i.e., runs the server with databases and other services for previewing the application"
-dir = "{{ config_root }}/docker"
-run = "docker compose pull && docker compose up -d"
+dir = "{{ config_root }}"
+run = """
+COMPOSE_FILE="docker/docker-compose.yml"
+ENV_FILE="docker/.env"
+
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build \
+    && docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" pull \
+    && docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
+"""
 
 [tasks."server:start"]
 alias = ["server:up", "server:dev"]
@@ -102,12 +109,48 @@ run = "atlas schema apply --auto-approve --env dev --var url=$DATABASE_URL --var
 [tasks."server:docker:up"]
 depends = ["server:check-env"]
 description = "Brings up the development databases through Docker Compose"
-run = "docker compose -f docker/docker-compose.dev.yml build && docker compose -f docker/docker-compose.dev.yml up -d"
+usage = '''
+arg "[environment]" help="Target docker compose" default="dev" {
+  choices "dev" "seed" "test"
+}
+'''
+run = """
+COMPOSE_FILE="docker/docker-compose.${usage_environment?}.yml"
+ENV_FILE="docker/.env"
+
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build \
+    && docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
+"""
 
 [tasks."server:docker:stop"]
 depends = ["server:check-env"]
 description = "Stops the development databases through Docker Compose"
-run = "docker compose -f docker/docker-compose.dev.yml stop"
+usage = '''
+arg "[environment]" help="Target docker compose" default="dev" {
+  choices "dev" "seed" "test"
+}
+'''
+run = """
+COMPOSE_FILE="docker/docker-compose.${usage_environment?}.yml"
+ENV_FILE="docker/.env"
+
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" stop
+"""
+
+[tasks."server:docker:down"]
+depends = ["server:check-env"]
+description = "Takes down the development databases through Docker Compose"
+usage = '''
+arg "[environment]" help="Target docker compose" default="dev" {
+  choices "dev" "seed" "test"
+}
+'''
+run = """
+COMPOSE_FILE="docker/docker-compose.${usage_environment?}.yml"
+ENV_FILE="docker/.env"
+
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down -v=True
+"""
 
 [tasks."garage:generate:keys"]
 description = "Generate Garage RPC/admin/metrics secrets into docker/.env. Appends — re-run to rotate."

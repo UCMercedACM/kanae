@@ -1,4 +1,4 @@
-name: ory
+name: ory_prod
 
 x-hardening: &hard
   read_only: true
@@ -15,9 +15,10 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+
       SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE}
       SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER}
-    command: migrate sql -c /etc/config/kratos.yml --read-from-env --yes
+    command: migrate sql -c /etc/config/kratos.prod.yml --read-from-env --yes
     networks:
       - default
       - db_bridge
@@ -37,7 +38,6 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
 
-
       SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE}
       SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER}
 
@@ -45,12 +45,10 @@ services:
       SELFSERVICE_FLOWS_SETTINGS_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
       SELFSERVICE_FLOWS_SETTINGS_AFTER_PROFILE_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
 
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    command: serve -c /etc/config/kratos.yml --watch-courier
+      COURIER_SMTP_CONNECTION_URI: ${KRATOS_SMTP_URI}
+    command: serve -c /etc/config/kratos.prod.yml --watch-courier
     ports:
-      - "4433:4433"
-      - "127.0.0.1:4434:4434"
+      - "127.0.0.1:4433:4433"
     networks:
       - default
       - db_bridge
@@ -59,6 +57,12 @@ services:
     depends_on:
       kratos-migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: wget -q --spider http://127.0.0.1:4433/health/ready || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   keto-migrate:
@@ -89,9 +93,6 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
     command: serve -c /etc/config/keto.yml
-    ports:
-      - "127.0.0.1:4466:4466"
-      - "127.0.0.1:4467:4467"
     networks:
       - default
       - db_bridge
@@ -100,4 +101,10 @@ services:
     depends_on:
       keto-migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: wget -q --spider http://127.0.0.1:4466/health/ready || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
