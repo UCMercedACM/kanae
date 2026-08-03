@@ -224,7 +224,8 @@ for INDEX in "${!ENV_LINES[@]}"; do
 done
 
 set_var() {
-	local key=$1 value=$2 index=${LINE_OF[$1]:-}
+	local key=$1 value=$2
+	local index=${LINE_OF[$key]:-}
 	VALUES[$key]=$value
 	if [[ -n $index ]]; then
 		ENV_LINES[index]="$key=$value"

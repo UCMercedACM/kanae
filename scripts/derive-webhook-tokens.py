@@ -8,7 +8,8 @@ import yaml
 from blake3 import blake3
 from dotenv import set_key
 
-ROOT_PATH = Path(__file__).parents[1]
+KEY_SIZE = 32
+ROOT_PATH = Path(__file__).resolve().parents[1]
 
 CONFIG_PATH = ROOT_PATH / "config.yml"
 DOCKER_ENV_PATH = ROOT_PATH / "docker" / ".env"
@@ -21,7 +22,17 @@ HOOKS: dict[str, bytes] = {
     "KRATOS_WEBHOOK_TOKEN_SETTINGS": b"kratos.settings.v1",
 }
 
+
 _log = logging.getLogger(__name__)
+
+
+def kanae_config(value: str) -> Path:
+    config_path = Path(value).resolve()
+    if not config_path.is_relative_to(ROOT_PATH):
+        msg = f"config must live inside {ROOT_PATH}: {config_path}"
+        raise argparse.ArgumentTypeError(msg)
+
+    return config_path
 
 
 def main(config_path: Path) -> None:
@@ -35,8 +46,11 @@ def main(config_path: Path) -> None:
 
     try:
         master_key = bytes.fromhex(_hex)
-    except ValueError:
+    except (TypeError, ValueError):
         sys.exit("error: ory.kratos_webhook_master_key must be hex-encoded")
+
+    if len(master_key) != KEY_SIZE:
+        sys.exit(f"error: ory.kratos_webhook_master_key must be {KEY_SIZE} bytes")
 
     for name, context in HOOKS.items():
         digest = blake3(context, key=master_key).hexdigest()
@@ -52,7 +66,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config",
-        type=Path,
+        type=kanae_config,
         default=CONFIG_PATH,
         help=f"Path of the config file. Defaults to {CONFIG_PATH}",
     )
