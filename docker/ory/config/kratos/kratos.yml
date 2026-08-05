@@ -141,6 +141,12 @@ selfservice:
     lookup_secret:
       enabled: true
 
+courier:
+  smtp:
+    connection_uri: smtp://mailpit:1025/?disable_starttls=true
+    from_address: noreply@kanae.test
+    from_name: ACM @ UC Merced (dev)
+
 # Placeholders only. Kratos doesn't expand `${VAR}` inside YAML, so the real
 # values must come from env-path overrides set in docker-compose:
 #   SECRETS_COOKIE: <hex from `openssl rand -hex 64`>
