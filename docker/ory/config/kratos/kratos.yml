@@ -82,8 +82,6 @@ selfservice:
                     name: X-Webhook-Token
                     value: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
 
-            # Sign out every other session of the identity once the password
-            # has been changed.
             - hook: revoke_active_sessions
         profile:
           hooks:
