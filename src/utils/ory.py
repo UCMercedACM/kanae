@@ -221,7 +221,7 @@ class OryClient:
             "GET", url, headers={"cookie": f"ory_kratos_session={cookie}"}
         )
 
-        if response.status == status.HTTP_401_UNAUTHORIZED:
+        if response.status in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN):
             await response.release()
 
             return None
