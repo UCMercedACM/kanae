@@ -36,7 +36,7 @@ selfservice:
   flows:
     registration:
       lifespan: 10m
-      ui_url: http://localhost:5173/registration
+      ui_url: http://localhost:5173/register
       after:
         password:
           hooks:
@@ -62,7 +62,7 @@ selfservice:
 
     settings:
       lifespan: 10m
-      ui_url: http://localhost:5173/settings
+      ui_url: http://localhost:5173/dashboard/settings
       privileged_session_max_age: 15m
       required_aal: highest_available
       after:
@@ -110,7 +110,7 @@ selfservice:
 
     verification:
       enabled: true
-      ui_url: http://localhost:5173/verification
+      ui_url: http://localhost:5173/verify
       lifespan: 1h
       after:
         default_browser_return_url: http://localhost:5173/
