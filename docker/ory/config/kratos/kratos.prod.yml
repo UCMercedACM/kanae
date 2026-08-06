@@ -73,7 +73,6 @@ selfservice:
       after:
         password:
           hooks:
-            - hook: revoke_active_sessions
             - hook: web_hook
               config:
                 url: http://kanae:8000/member/webhooks/settings
@@ -87,6 +86,10 @@ selfservice:
                     in: header
                     name: X-Webhook-Token
                     value: ${KRATOS_WEBHOOK_TOKEN_SETTINGS}
+
+            # Sign out every other session of the identity once the password
+            # has been changed.
+            - hook: revoke_active_sessions
         profile:
           hooks:
             - hook: web_hook
