@@ -73,6 +73,7 @@ selfservice:
       after:
         password:
           hooks:
+            - hook: revoke_active_sessions
             - hook: web_hook
               config:
                 url: http://kanae:8000/member/webhooks/settings
