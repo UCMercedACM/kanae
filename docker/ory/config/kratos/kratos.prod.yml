@@ -45,7 +45,7 @@ selfservice:
   flows:
     registration:
       lifespan: 10m
-      ui_url: https://ucmacm.dev/registration
+      ui_url: https://ucmacm.dev/register
       after:
         password:
           hooks:
@@ -67,7 +67,7 @@ selfservice:
 
     settings:
       lifespan: 10m
-      ui_url: https://ucmacm.dev/settings
+      ui_url: https://ucmacm.dev/dashboard/settings
       privileged_session_max_age: 15m
       required_aal: highest_available
       after:
@@ -115,7 +115,7 @@ selfservice:
 
     verification:
       enabled: true
-      ui_url: https://ucmacm.dev/verification
+      ui_url: https://ucmacm.dev/verify
       lifespan: 1h
       after:
         default_browser_return_url: https://ucmacm.dev/
