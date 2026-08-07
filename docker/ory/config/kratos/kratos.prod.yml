@@ -126,6 +126,7 @@ selfservice:
       enabled: true
       ui_url: https://ucmacm.dev/recovery
       lifespan: 1h
+      use: link
 
   methods:
     password:
@@ -135,6 +136,11 @@ selfservice:
         max_breaches: 0
         min_password_length: 12
         identifier_similarity_check_enabled: true
+
+    link:
+      enabled: true
+      config:
+        lifespan: 1h
 
     totp:
       enabled: true
@@ -149,6 +155,8 @@ courier:
   smtp:
     from_address: noreply@ucmacm.dev
     from_name: ACM @ UC Merced
+
+  template_override_path: /etc/config/templates
 
 # Placeholders only. Kratos doesn't expand `${VAR}` inside YAML, so the real
 # values must come from env-path overrides set in docker-compose:
