@@ -121,6 +121,7 @@ selfservice:
       enabled: true
       ui_url: http://localhost:5173/recovery
       lifespan: 1h
+      use: link
 
   methods:
     password:
@@ -130,6 +131,11 @@ selfservice:
         max_breaches: 0
         min_password_length: 12
         identifier_similarity_check_enabled: true
+
+    link:
+      enabled: true
+      config:
+        lifespan: 1h
 
     # Second factor (AAL2). TOTP is the primary step-up authenticator used by
     # the sudo/break-glass flow: ElevationError redirects to
@@ -148,6 +154,8 @@ courier:
     connection_uri: smtp://mailpit:1025/?disable_starttls=true
     from_address: noreply@kanae.test
     from_name: ACM @ UC Merced (dev)
+
+  template_override_path: /etc/config/templates
 
 # Placeholders only. Kratos doesn't expand `${VAR}` inside YAML, so the real
 # values must come from env-path overrides set in docker-compose:
