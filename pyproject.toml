@@ -13,7 +13,7 @@ dependencies = [
     "blake3~=1.0.8",
     "fastapi~=0.141.1",
     "fastapi-pagination~=0.15.16",
-    "granian~=2.7.4",
+    "granian~=2.8.1",
     "limits~=5.8.0",
     "orjson~=3.11.8",
     "prometheus-fastapi-instrumentator~=8.1.0",
@@ -34,7 +34,7 @@ dev = [
 ]
 lint = [
     "ruff~=0.16.0",
-    "ty==0.0.65",
+    "ty==0.0.69",
     { include-group = "types" },
 ]
 types = [
