@@ -1,0 +1,52 @@
+name: ucmacm
+
+include:
+  - path: docker-compose.yml
+    project_directory: .
+
+services:
+  chapter-website:
+    container_name: chapter_website
+    image: ghcr.io/ucmercedacm/chapter-website:edge
+    environment:
+      VITE_API_URL: http://kanae:8000
+      VITE_ORY_URL: http://kratos:4433
+    ports:
+      - 5173:8080
+    depends_on:
+      kanae:
+        condition: service_healthy
+        required: true
+    healthcheck:
+      test: curl -f http://127.0.0.1:8080/ || exit 1
+      interval: 5m
+      start_interval: 30s
+      start_period: 5m
+    restart: always
+
+  kanae-seed:
+    container_name: kanae_seed
+    build:
+      dockerfile_inline: |
+        FROM alpine:latest
+        RUN apk add --no-cache bash curl jq openssl postgresql18-client valkey-cli
+    entrypoint: bash /seed/init.sh
+    environment:
+      KRATOS_PUBLIC: http://kratos:4433
+      KRATOS_ADMIN: http://kratos:4434
+      KETO_WRITE: http://keto:4467
+      KANAE: http://kanae:8000
+      DB_HOST: database
+      DB_NAME: ${DB_DATABASE_NAME}
+      DB_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      VALKEY_HOST: valkey
+    volumes:
+      - ../scripts/seed:/seed:ro
+    networks:
+      - default
+      - db_bridge
+    depends_on:
+      kanae:
+        condition: service_healthy
+    restart: "no"

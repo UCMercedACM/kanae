@@ -35,6 +35,20 @@ docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build \
     && docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 """
 
+[tasks."docker:web"]
+alias = ["docker:ucmacm", "server:docker:web", "server:docker:ucmacm"]
+depends = ["server:check-env"]
+description = "Runs the full website stack, including all operations to set it up for a preview"
+dir = "{{ config_root }}"
+run = """
+COMPOSE_FILE="docker/docker-compose.web.yml"
+ENV_FILE="docker/.env"
+
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build \
+    && docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" pull \
+    && docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
+"""
+
 [tasks."server:start"]
 alias = ["server:up", "server:dev"]
 description = "Start backend development server. Save file(s) to see changes through reloading"
