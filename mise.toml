@@ -141,7 +141,7 @@ depends = ["server:check-env"]
 description = "Stops the development databases through Docker Compose"
 usage = '''
 arg "[environment]" help="Target docker compose" default="dev" {
-  choices "dev" "seed" "test"
+  choices "dev" "seed" "test" "web"
 }
 '''
 run = """
@@ -156,7 +156,7 @@ depends = ["server:check-env"]
 description = "Takes down the development databases through Docker Compose"
 usage = '''
 arg "[environment]" help="Target docker compose" default="dev" {
-  choices "dev" "seed" "test"
+  choices "dev" "seed" "test" "web"
 }
 '''
 run = """
