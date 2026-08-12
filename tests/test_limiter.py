@@ -17,8 +17,9 @@ from utils.limiter.extension import KanaeLimiter
 
 AppFactory = Callable[..., tuple[FastAPI, KanaeLimiter]]
 
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-@pytest.mark.asyncio
+
 async def test_single_decorator(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
@@ -37,7 +38,6 @@ async def test_single_decorator(build_fastapi_app: AppFactory) -> None:
             assert response.status_code == 200 if i < 5 else 429
 
 
-@pytest.mark.asyncio
 async def test_single_decorator_with_headers(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr, headers_enabled=True)
 
@@ -60,7 +60,6 @@ async def test_single_decorator_with_headers(build_fastapi_app: AppFactory) -> N
             assert response.headers.get("Retry-After") is not None if i < 5 else True
 
 
-@pytest.mark.asyncio
 async def test_single_decorator_not_response(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
@@ -79,7 +78,6 @@ async def test_single_decorator_not_response(build_fastapi_app: AppFactory) -> N
             assert response.status_code == 200 if i < 5 else 429
 
 
-@pytest.mark.asyncio
 async def test_single_decorator_not_response_with_headers(
     build_fastapi_app: AppFactory,
 ) -> None:
@@ -104,7 +102,6 @@ async def test_single_decorator_not_response_with_headers(
             assert response.headers.get("Retry-After") is not None if i < 5 else True
 
 
-@pytest.mark.asyncio
 async def test_multiple_decorators(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
@@ -140,7 +137,6 @@ async def test_multiple_decorators(build_fastapi_app: AppFactory) -> None:
             assert rep.status_code == 429
 
 
-@pytest.mark.asyncio
 async def test_multiple_decorators_not_response(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
@@ -173,7 +169,6 @@ async def test_multiple_decorators_not_response(build_fastapi_app: AppFactory) -
             ).status_code == 429
 
 
-@pytest.mark.asyncio
 async def test_multiple_decorators_not_response_with_headers(
     build_fastapi_app: AppFactory,
 ) -> None:
@@ -209,7 +204,6 @@ async def test_multiple_decorators_not_response_with_headers(
             assert resp.status_code == 429
 
 
-@pytest.mark.asyncio
 async def test_endpoint_missing_request_param(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
     with pytest.raises(ValueError) as exc_info:
@@ -222,7 +216,6 @@ async def test_endpoint_missing_request_param(build_fastapi_app: AppFactory) -> 
     assert exc_info.match(r"^Missing or invalid `request` argument specified on .*")
 
 
-@pytest.mark.asyncio
 async def test_endpoint_request_param_invalid(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
@@ -236,7 +229,6 @@ async def test_endpoint_request_param_invalid(build_fastapi_app: AppFactory) -> 
     assert exc_info.match(r"^Missing or invalid `request` argument specified on .*")
 
 
-@pytest.mark.asyncio
 async def test_dynamic_limit_provider_depending_on_key(
     build_fastapi_app: AppFactory,
 ) -> None:
@@ -271,7 +263,6 @@ async def test_dynamic_limit_provider_depending_on_key(
             assert response.status_code == 200 if i < 10 else 429
 
 
-@pytest.mark.asyncio
 async def test_disabled_limiter(build_fastapi_app: AppFactory) -> None:
     """
     Check that the limiter does nothing if disabled (both sync and async)
@@ -301,7 +292,6 @@ async def test_disabled_limiter(build_fastapi_app: AppFactory) -> None:
             assert response.status_code == 200
 
 
-@pytest.mark.asyncio
 async def test_cost(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
@@ -327,7 +317,6 @@ async def test_cost(build_fastapi_app: AppFactory) -> None:
 
 
 # @pytest.mark.skip("Weird edge-case, will not be used")
-@pytest.mark.asyncio
 async def test_callable_cost(build_fastapi_app: AppFactory) -> None:
     app, limiter = build_fastapi_app(key_func=get_ipaddr)
 
@@ -361,7 +350,6 @@ async def test_callable_cost(build_fastapi_app: AppFactory) -> None:
     "key_style",
     ["url", "endpoint"],
 )
-@pytest.mark.asyncio
 async def test_key_style(build_fastapi_app: AppFactory, key_style: str) -> None:
     app, limiter = build_fastapi_app(key_func=lambda: "mock", key_style=key_style)
 
