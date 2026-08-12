@@ -421,6 +421,7 @@ async def client(
 
 @pytest_asyncio.fixture(
     scope="function",
+    loop_scope="session",
     params=[
         (LimiterMiddleware, rate_limit_exceeded_handler),
         (LimiterASGIMiddleware, _async_rate_limit_exceeded_handler),
