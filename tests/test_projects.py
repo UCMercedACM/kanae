@@ -113,6 +113,24 @@ async def _insert_media(
     )
 
 
+async def _link_project_media(
+    pool: asyncpg.Pool,
+    *,
+    project_id: uuid.UUID,
+    media_hash: str,
+    position: int | None = None,
+) -> None:
+    await pool.execute(
+        """
+        INSERT INTO project_media (project_id, media_hash, position)
+        VALUES ($1, $2, $3)
+        """,
+        project_id,
+        media_hash,
+        position,
+    )
+
+
 async def _project_media_linked(
     pool: asyncpg.Pool, project_id: uuid.UUID, media_hash: str
 ) -> bool:
@@ -214,6 +232,11 @@ async def test_list_projects_returns_seeded_rows(
         kanae.pool, project_id=project_b, member_id=member_id, role="member"
     )
 
+    await _insert_media(kanae.pool, media_hash="a" * 64)
+    await _link_project_media(
+        kanae.pool, project_id=project_a, media_hash="a" * 64, position=0
+    )
+
     response = await client.client.get("/projects")
     assert response.status_code == 200
     body: dict[str, Any] = response.json()
@@ -270,20 +293,128 @@ async def test_get_project_returns_404_when_missing(client: KanaeTestClient) -> 
     assert response.status_code == 404
 
 
-async def test_get_project_returns_row(client: KanaeTestClient, kanae: Kanae) -> None:
+@pytest.mark.parametrize("media_count", [0, 3])
+async def test_get_project_returns_row(
+    client: KanaeTestClient, kanae: Kanae, media_count: int
+) -> None:
+    lead_id = uuid.uuid4()
     member_id = uuid.uuid4()
-    await _insert_member(kanae.pool, member_id=member_id)
+    await _insert_member(
+        kanae.pool, member_id=lead_id, name="Lead", email="lead@test.local"
+    )
+    await _insert_member(
+        kanae.pool, member_id=member_id, name="Member", email="member@test.local"
+    )
     project_id = await _insert_project(kanae.pool, name="solo")
     await _link_project_member(
-        kanae.pool, project_id=project_id, member_id=member_id, role="lead"
+        kanae.pool, project_id=project_id, member_id=lead_id, role="lead"
     )
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=member_id, role="member"
+    )
+
+    hashes = [f"{position:064x}" for position in range(media_count)]
+    for position, media_hash in enumerate(hashes):
+        await _insert_media(kanae.pool, media_hash=media_hash)
+        await _link_project_media(
+            kanae.pool,
+            project_id=project_id,
+            media_hash=media_hash,
+            position=position,
+        )
 
     response = await client.client.get(f"/projects/{project_id}")
     assert response.status_code == 200
     body: dict[str, Any] = response.json()
     assert body["id"] == str(project_id)
     assert body["name"] == "solo"
-    assert {m["id"] for m in body["members"]} == {str(member_id)}
+
+    assert len(body["members"]) == 2
+    assert {m["id"] for m in body["members"]} == {str(lead_id), str(member_id)}
+
+    assert isinstance(body["media"], list)
+    assert [entry["hash"] for entry in body["media"]] == hashes
+
+    for entry in body["media"]:
+        assert entry["content_type"] == "image/png"
+        assert entry["kind"] == "image"
+        assert entry["size"] == 1024
+        assert entry["created_at"]
+        assert entry["url"].startswith("http")
+        assert entry["hash"] in entry["url"]
+
+
+async def test_get_project_orders_media_by_position(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    member_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=member_id)
+    project_id = await _insert_project(kanae.pool, name="ordered-media")
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=member_id, role="lead"
+    )
+
+    seeded = [("c" * 64, 1), ("a" * 64, 0), ("b" * 64, None)]
+    for media_hash, position in seeded:
+        await _insert_media(kanae.pool, media_hash=media_hash)
+        await _link_project_media(
+            kanae.pool,
+            project_id=project_id,
+            media_hash=media_hash,
+            position=position,
+        )
+
+    response = await client.client.get(f"/projects/{project_id}")
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    assert [entry["hash"] for entry in body["media"]] == ["a" * 64, "c" * 64, "b" * 64]
+
+
+async def test_get_project_excludes_other_projects_media(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    member_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=member_id)
+    mine = await _insert_project(kanae.pool, name="mine")
+    theirs = await _insert_project(kanae.pool, name="theirs")
+    for project_id in (mine, theirs):
+        await _link_project_member(
+            kanae.pool, project_id=project_id, member_id=member_id, role="lead"
+        )
+
+    await _insert_media(kanae.pool, media_hash="a" * 64)
+    await _insert_media(kanae.pool, media_hash="b" * 64)
+    await _link_project_media(kanae.pool, project_id=mine, media_hash="a" * 64)
+    await _link_project_media(kanae.pool, project_id=theirs, media_hash="b" * 64)
+
+    response = await client.client.get(f"/projects/{mine}")
+    assert response.status_code == 200
+    # The subquery is correlated on projects.id, so the sibling row must not leak.
+    assert [entry["hash"] for entry in response.json()["media"]] == ["a" * 64]
+
+
+async def test_get_project_surfaces_video_media(
+    client: KanaeTestClient, kanae: Kanae
+) -> None:
+    member_id = uuid.uuid4()
+    await _insert_member(kanae.pool, member_id=member_id)
+    project_id = await _insert_project(kanae.pool, name="with-video")
+    await _link_project_member(
+        kanae.pool, project_id=project_id, member_id=member_id, role="lead"
+    )
+    await _insert_media(
+        kanae.pool, media_hash="a" * 64, content_type="video/mp4", size=2048
+    )
+    await _link_project_media(
+        kanae.pool, project_id=project_id, media_hash="a" * 64, position=0
+    )
+
+    response = await client.client.get(f"/projects/{project_id}")
+    assert response.status_code == 200
+    entry = response.json()["media"][0]
+    assert entry["kind"] == "video"
+    assert entry["content_type"] == "video/mp4"
+    assert entry["size"] == 2048
 
 
 async def test_get_project_rejects_non_uuid(client: KanaeTestClient) -> None:
@@ -481,6 +612,13 @@ async def test_get_project_surfaces_tags(client: KanaeTestClient, kanae: Kanae) 
     for title in ("rust", "python"):
         tag_id = await _insert_tag(kanae.pool, title=title)
         await _link_project_tag(kanae.pool, project_id=project_id, tag_id=tag_id)
+
+    # Linked media must not disturb the tags aggregate, which is its own subquery.
+    media_hash = f"{1:064x}"
+    await _insert_media(kanae.pool, media_hash=media_hash)
+    await _link_project_media(
+        kanae.pool, project_id=project_id, media_hash=media_hash, position=0
+    )
 
     response = await client.client.get(f"/projects/{project_id}")
     assert response.status_code == 200
