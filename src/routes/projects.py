@@ -90,6 +90,29 @@ class Projects(BaseModel, frozen=True):
     founded_at: datetime.datetime
 
 
+class ProjectDetails(BaseModel, frozen=True):
+    id: uuid.UUID
+    name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    description: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    link: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
+    thumbnail: Optional[ProjectThumbnail] = None
+    media: list[MediaRecord]
+    members: list[ProjectMember]
+    type: Literal[
+        "independent",
+        "sig_ai",
+        "sig_swe",
+        "sig_cyber",
+        "sig_data",
+        "sig_arch",
+        "sig_graph",
+    ]
+    tags: Optional[list[Annotated[str, Field(pattern=_NO_NULL_REGEX)]]] = None
+    active: bool
+    join_policy: Literal["open", "request", "closed"]
+    founded_at: datetime.datetime
+
+
 class FullProjects(BaseModel, frozen=True):
     id: uuid.UUID
     name: Annotated[str, Field(pattern=_NO_NULL_REGEX)]
@@ -261,9 +284,9 @@ async def list_all_project_invites(
 
 @router.get(
     "/projects/{project_id}",
-    responses={200: {"model": FullProjects}, 404: {"model": NotFoundResponse}},
+    responses={200: {"model": ProjectDetails}, 404: {"model": NotFoundResponse}},
 )
-async def get_project(request: RouteRequest, project_id: uuid.UUID) -> FullProjects:
+async def get_project(request: RouteRequest, project_id: uuid.UUID) -> ProjectDetails:
     """Retrieve project details via ID"""
     query = """
     SELECT
@@ -276,6 +299,21 @@ async def get_project(request: RouteRequest, project_id: uuid.UUID) -> FullProje
             JOIN tags ON tags.id = project_tags.tag_id
             WHERE project_tags.project_id = projects.id
         ) AS tags,
+        COALESCE((
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'hash', media.hash,
+                    'content_type', media.content_type,
+                    'kind', media.kind,
+                    'size', media.size,
+                    'created_at', media.created_at
+                )
+                ORDER BY project_media.position NULLS LAST, project_media.created_at
+            )
+            FROM project_media
+            JOIN media ON media.hash = project_media.media_hash
+            WHERE project_media.project_id = projects.id
+        ), '[]'::jsonb) AS project_media,
         CASE WHEN projects.thumbnail_hash IS NOT NULL THEN
             jsonb_build_object(
                 'hash', projects.thumbnail_hash,
@@ -294,7 +332,28 @@ async def get_project(request: RouteRequest, project_id: uuid.UUID) -> FullProje
     )
     if not rows:
         raise NotFoundError
-    return FullProjects(**dict(rows))
+
+    urls = await asyncio.gather(
+        *(
+            request.app.storage.get_url(row["hash"], row["content_type"])
+            for row in rows["project_media"]
+        )
+    )
+
+    return ProjectDetails(
+        **dict(rows),
+        media=[
+            MediaRecord(
+                hash=row["hash"],
+                content_type=row["content_type"],
+                kind=row["kind"],
+                size=row["size"],
+                created_at=row["created_at"],
+                url=url,
+            )
+            for row, url in zip(rows["project_media"], urls, strict=True)
+        ],
+    )
 
 
 class ModifiedProject(BaseModel, frozen=True):
