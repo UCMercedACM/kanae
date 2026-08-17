@@ -15,7 +15,7 @@ dependencies = [
     "fastapi-pagination~=0.15.16",
     "granian~=2.8.1",
     "limits~=5.8.0",
-    "orjson~=3.11.8",
+    "orjson~=3.12.0",
     "prometheus-fastapi-instrumentator~=8.1.0",
     "pybase62~=1.0.0",
     "python-dateutil~=2.9.0.post0",
@@ -34,7 +34,7 @@ dev = [
 ]
 lint = [
     "ruff~=0.16.0",
-    "ty==0.0.69",
+    "ty==0.0.72",
     { include-group = "types" },
 ]
 types = [
