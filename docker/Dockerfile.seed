@@ -1,0 +1,25 @@
+# Runner for scripts/seed/init.sh.
+#
+# docker-compose.web.yml builds this inline via dockerfile_inline. Kubernetes
+# cannot build, so the Helm chart needs a real image — this is the same package
+# set, kept in a file both can point at.
+#
+# scripts/seed/init.sh prefers psql and valkey-cli on PATH and only falls back
+# to `docker exec` when they are missing, so having them here is what lets the
+# seed Job work inside a cluster with no Docker socket.
+FROM alpine:latest
+
+RUN apk add --no-cache \
+    bash \
+    curl \
+    jq \
+    openssl \
+    postgresql18-client \
+    valkey-cli
+
+ENTRYPOINT ["bash"]
+
+LABEL org.opencontainers.image.title="Kanae seed"
+LABEL org.opencontainers.image.description="Seeds Kratos identities, Keto tuples and Kanae data for preview environments"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.source="https://github.com/UCMercedACM/kanae"

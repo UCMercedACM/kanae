@@ -47,9 +47,12 @@ seed:
   # Not an init container: it curls kanae's HTTP API, so gating kanae on it
   # deadlocks. Identities are @seed.test.local — preview data.
   enabled: false
-  # Needs bash, curl, jq, openssl, psql, valkey-cli. compose builds this inline
-  # in docker-compose.web.yml; Kubernetes cannot build, so publish an image.
-  image: ghcr.io/ucmercedacm/kanae-seed:latest
+  # Built from docker/Dockerfile.seed — bash, curl, jq, openssl, psql,
+  # valkey-cli. compose builds the equivalent inline in docker-compose.web.yml;
+  # Kubernetes cannot build, so this has to be an image that exists.
+  # Locally: mise run seed:image, then set pullPolicy to Never.
+  image: ghcr.io/ucmercedacm/kanae-seed:edge
+  pullPolicy: Always
 
 backup:
   # Optional component on/off, same shape as seed.enabled — not a branch around

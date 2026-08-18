@@ -58,6 +58,7 @@ spec:
           # this inline in docker-compose.web.yml; k8s cannot build, so publish
           # an image and point seed.image at it.
           image: {{ .Values.seed.image }}
+          imagePullPolicy: {{ .Values.seed.pullPolicy }}
           command: ["bash", "/seed/init.sh"]
           env:
             - name: KRATOS_PUBLIC

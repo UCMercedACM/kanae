@@ -51,17 +51,53 @@ field name or a bad type.
 # 1. cluster
 k3d cluster create kanae
 
-# 2. secrets — -l fills the R2/SMTP values with throwaway placeholders
+# 2. seed image — no published kanae-seed exists, so build and import it
+mise run seed:image
+
+# 3. secrets — -l fills the R2/SMTP values with throwaway placeholders
 ./deploy/helm/seed-k8s.sh -l
 
-# 3. install — pulls ghcr.io/ucmercedacm/kanae:edge, no local build needed
+# 4. install — pulls ghcr.io/ucmercedacm/kanae:edge, no local build needed
 helm install kanae ./deploy/helm/kanae \
   -n kanae --create-namespace \
   -f deploy/helm/values-local.yaml
 
-# 4. watch it come up
+# 5. watch it come up
 k9s -n kanae
 ```
+
+### Seeding
+
+`values-local.yaml` enables seeding, because watching the parts wire together is
+most of the reason to run this locally. The `kanae-seed` Job runs
+`scripts/seed/init.sh`, which creates Kratos identities, logs them in through
+the self-service flows, writes Keto relation tuples and posts events, projects
+and tags into kanae. That path exercises the Kratos→kanae registration webhook,
+which nothing else in a local run touches.
+
+Ordering is handled by hook weights, so it happens on its own:
+
+```
+main release      Deployments and StatefulSet created; kanae's init container
+                  waits for the schema
+post-install  0   kanae-migrate, kratos-migrate, keto-migrate (concurrent)
+                  → schema appears, kanae starts
+post-install  9   kanae-seed ConfigMap
+post-install 10   kanae-seed Job — waits for kanae to serve, then seeds
+```
+
+Watch it:
+
+```bash
+kubectl -n kanae logs job/kanae-seed -f
+```
+
+Seeded accounts are `admin@`, `member@`, `manager@` and `leads@seed.test.local`
+— see `scripts/seed/vars.env`. Being obviously fake test data, seeding stays off
+in the production values.
+
+`post-install` only, so a `helm upgrade` will not re-seed. To re-run it, delete
+the Job and reinstall, or run the script by hand against a port-forward.
 
 Then reach it:
 

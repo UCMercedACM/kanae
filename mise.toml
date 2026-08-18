@@ -301,3 +301,19 @@ run = """
   helm template kanae deploy/helm/kanae -f deploy/helm/values-local.yaml \
     | kubeconform -strict -summary -kubernetes-version 1.31.0 -
 """
+
+[tasks."seed:image"]
+description = "Build the kanae-seed image from docker/Dockerfile.seed and import it into the local k3d cluster. Needed because seeding is enabled for local runs and Kubernetes cannot build images the way docker-compose.web.yml does."
+dir = "{{ config_root }}"
+run = """
+  set -e
+  IMAGE=${SEED_IMAGE:-ghcr.io/ucmercedacm/kanae-seed:dev}
+  CLUSTER=${K3D_CLUSTER:-kanae}
+  docker build -f docker/Dockerfile.seed -t "$IMAGE" .
+  if k3d cluster list "$CLUSTER" >/dev/null 2>&1; then
+    k3d image import "$IMAGE" -c "$CLUSTER"
+    echo "Imported $IMAGE into k3d cluster '$CLUSTER'."
+  else
+    echo "k3d cluster '$CLUSTER' not found — built $IMAGE but did not import it."
+  fi
+"""

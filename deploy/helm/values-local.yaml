@@ -49,4 +49,13 @@ ingress:
   enabled: false
 
 seed:
-  enabled: false                  # needs a published kanae-seed image
+  # On for local runs — seeding Kratos identities, Keto tuples and Kanae data is
+  # most of the point of standing the stack up, and it exercises the webhook
+  # path between Kratos and kanae that nothing else does.
+  #
+  # There is no published kanae-seed image, so build and import it first:
+  #   mise run seed:image
+  # which builds ghcr.io/ucmercedacm/kanae-seed:dev and k3d-imports it.
+  enabled: true
+  image: ghcr.io/ucmercedacm/kanae-seed:dev
+  pullPolicy: Never
