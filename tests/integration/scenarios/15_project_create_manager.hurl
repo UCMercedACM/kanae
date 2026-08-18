@@ -42,8 +42,10 @@ jsonpath "$.type" == "sig_swe"
 jsonpath "$.active" == true
 jsonpath "$.founded_at" isIsoDate
 
-# Cross-component check: /projects/{id} returns FullProjects which
-# includes the auto-inserted lead row in `members`.
+# Cross-component check: /projects/{id} returns ProjectDetails, which
+# includes the auto-inserted lead row in `members` plus the project's
+# resolved `media`. Nothing has been uploaded here, so the COALESCE
+# fallback in the media subquery yields an empty collection, not null.
 GET {{KANAE_URL}}/projects/{{project_id}}
 HTTP 200
 [Asserts]
@@ -52,6 +54,8 @@ jsonpath "$.members" isCollection
 jsonpath "$.members" count == 1
 jsonpath "$.members[0].id" == "{{MANAGER_ID}}"
 jsonpath "$.members[0].name" isString
+jsonpath "$.media" isCollection
+jsonpath "$.media" count == 0
 
 # /members/me/projects reflects the auto-membership.
 GET {{KANAE_URL}}/members/me/projects
@@ -60,9 +64,12 @@ HTTP 200
 jsonpath "$" isCollection
 body contains "{{project_id}}"
 
-# Visible in the listing.
+# Visible in the listing. list_projects returns FullProjects, a model
+# distinct from ProjectDetails: resolving media costs a presigned URL per
+# entry, so the list endpoint deliberately carries no `media` key at all.
 GET {{KANAE_URL}}/projects?page=1&size=100
 HTTP 200
 [Asserts]
 jsonpath "$.data" isCollection
 body contains "{{project_id}}"
+jsonpath "$.data[0].media" not exists

@@ -45,6 +45,8 @@ HTTP 200
 [Asserts]
 jsonpath "$.data" isCollection
 body contains "{{project_id}}"
+# FullProjects (list) vs ProjectDetails (single fetch): no `media` here.
+jsonpath "$.data[0].media" not exists
 
 # Grant Project.edit + Project.own BEFORE the first mutation, so no
 # cached False sits on either tuple in Kanae's permission cache.
@@ -82,6 +84,10 @@ jsonpath "$.name" == "scenario18-renamed"
 jsonpath "$.description" == "edited"
 # Freshly-created project has no tags yet.
 jsonpath "$.tags" == null
+# `media` comes from its own correlated subquery, so it is unaffected by the
+# edit and stays an empty collection (COALESCE fallback) rather than null.
+jsonpath "$.media" isCollection
+jsonpath "$.media" count == 0
 
 # Overwrite the tag set (Project.edit) with the tags bulk-created in
 # scenario 08. Sent out of order with a duplicate; the response echoes the
@@ -97,12 +103,14 @@ jsonpath "$.tags[0]" == "scenario09-alpha"
 jsonpath "$.tags[1]" == "scenario09-beta"
 jsonpath "$.tags[2]" == "scenario09-gamma"
 
-# GET surfaces them, alphabetically (array_agg ORDER BY title).
+# GET surfaces them, alphabetically (array_agg ORDER BY title). The media
+# subquery sits alongside the tags one without disturbing it.
 GET {{KANAE_URL}}/projects/{{project_id}}
 HTTP 200
 [Asserts]
 jsonpath "$.tags" count == 3
 jsonpath "$.tags" contains "scenario09-gamma"
+jsonpath "$.media" count == 0
 
 # Partial removal rides on the overwrite: resend only the survivors.
 PUT {{KANAE_URL}}/projects/{{project_id}}/tags
