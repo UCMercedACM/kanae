@@ -1,35 +1,29 @@
-{{- if .Values.ingress.enabled }}
 {{/*
-  TWO Ingress objects on the same host, deliberately.
+  Host routing only. TLS is NOT configured here.
 
-  HAProxy ingress annotations are per-Ingress, not per-path. A single Ingress
-  carrying `haproxy.org/path-rewrite` would apply that rewrite to EVERY path in
-  it, including the kanae backend, which must not be rewritten. nginx let you
-  scope this with capture groups in one object; HAProxy does not. So: one
-  Ingress for /auth (rewritten), one for / (untouched).
+  Certificates are issued with certbot/letsencrypt and assembled into the
+  combined cert+key PEM that HAProxy wants, then referenced from the HAProxy
+  config that ships alongside this chart. There is therefore no cert-manager
+  annotation and no spec.tls block — adding either would have Kubernetes try to
+  manage certificates that HAProxy already owns.
+
+  Two Ingress objects rather than one because haproxy.org/path-rewrite applies
+  to every path in the object it is attached to, and only the Kratos backend
+  may have /auth stripped.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: kanae-auth
   annotations:
-    {{- if .Values.ingress.tls.enabled }}
-    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
-    haproxy.org/ssl-redirect: "true"
-    {{- end }}
     # kratos.prod.yml sets serve.public.base_url = https://api.ucmacm.dev/auth.
-    # Kratos GENERATES urls with that prefix but SERVES its routes at the root
-    # (/self-service/..., /sessions/whoami), so /auth must be stripped here or
-    # every flow 404s. `/?` so bare /auth matches as well as /auth/...
-    # Single-quoted: YAML must not eat the backreference backslash.
+    # Kratos generates URLs with that prefix but serves its routes at the root
+    # (/self-service/..., /sessions/whoami), so /auth must be stripped or every
+    # flow 404s. `/?` matches bare /auth as well as /auth/... Single-quoted so
+    # YAML does not eat the backreference.
     haproxy.org/path-rewrite: '/auth/?(.*) /\1'
 spec:
   ingressClassName: {{ .Values.ingress.className }}
-  {{- if .Values.ingress.tls.enabled }}
-  tls:
-    - hosts: [{{ .Values.ingress.host | quote }}]
-      secretName: kanae-tls
-  {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
       http:
@@ -45,19 +39,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: kanae-api
-  annotations:
-    {{- if .Values.ingress.tls.enabled }}
-    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
-    haproxy.org/ssl-redirect: "true"
-    {{- end }}
-    # no path-rewrite: kanae serves at the root
+  # no path-rewrite: kanae serves at the root
 spec:
   ingressClassName: {{ .Values.ingress.className }}
-  {{- if .Values.ingress.tls.enabled }}
-  tls:
-    - hosts: [{{ .Values.ingress.host | quote }}]
-      secretName: kanae-tls
-  {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
       http:
@@ -68,25 +52,9 @@ spec:
               service:
                 name: kanae
                 port: { number: 8000 }
-{{- end }}
 
 {{/*
-  Controller: haproxytech/kubernetes-ingress (the vendor-maintained one).
-  Install separately, it is not part of this chart:
-
-    helm repo add haproxytech https://haproxytech.github.io/helm-charts
-    helm install haproxy-ingress haproxytech/kubernetes-ingress \
-      --namespace haproxy-controller --create-namespace \
-      --set controller.ingressClass=haproxy \
-      --set controller.service.type=NodePort      # see cost note
-
-  Create the Kapsule cluster with ingress: none so it does not also install
-  nginx or traefik.
-
-  COST: controller.service.type=LoadBalancer makes the Scaleway CCM provision a
-  paid LB. To hold the free-control-plane price, use NodePort (or hostNetwork)
-  on the node's public IP with Cloudflare in front.
-
-  Deliberately NOT exposed — ClusterIP only:
+  Never exposed — ClusterIP only:
     kratos:4434  admin API      keto:4466/4467/4468      kanae:9555  metrics
+  The SPA at ucmacm.dev is on Cloudflare Pages, not in this cluster.
 */}}

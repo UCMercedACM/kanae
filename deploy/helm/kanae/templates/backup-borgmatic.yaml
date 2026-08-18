@@ -1,52 +1,16 @@
 {{/*
-  IMPORTANT: this backs up LOGICAL DUMPS, not the PVC filesystem.
-  Never point Borg at the Postgres data directory while the server is running —
-  you get torn pages and a backup that restores to a corrupt cluster.
-  borgmatic's postgresql_databases hook streams pg_dump straight into the
-  archive, so there is no dump file on disk and no scratch PVC needed.
-*/}}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: borgmatic-config
-data:
-  borgmatic.yaml: |
-    repositories:
-      - path: {{ .Values.backup.repository | quote }}
-        label: kanae
+  borgmatic's own configuration is NOT defined here. It lives in its own config
+  with values injected, and is supplied to the cluster as a ConfigMap named by
+  backup.configMap. This template only schedules it.
 
-    postgresql_databases:
-      - name: {{ .Values.backup.databases.kanae | default "kanae" }}
-        hostname: database
-        port: 5432
-        username: ${DB_USERNAME}
-        password: ${DB_PASSWORD}
-        format: custom
-      - name: kratos
-        hostname: database
-        port: 5432
-        username: ${DB_USERNAME}
-        password: ${DB_PASSWORD}
-        format: custom
-      - name: keto
-        hostname: database
-        port: 5432
-        username: ${DB_USERNAME}
-        password: ${DB_PASSWORD}
-        format: custom
+  What that config must do: back up LOGICAL DUMPS via the postgresql_databases
+  hook (kanae, kratos, keto against host `database`), never the PVC filesystem.
+  Borg pointed at a running Postgres data directory gives torn pages and an
+  archive that restores to a corrupt cluster.
 
-    keep_daily: {{ .Values.backup.retention.daily }}
-    keep_weekly: {{ .Values.backup.retention.weekly }}
-    keep_monthly: {{ .Values.backup.retention.monthly }}
-
-    checks:
-      - name: repository
-        frequency: 2 weeks
----
-{{/*
-  Scheduled backup. concurrencyPolicy: Forbid and activeDeadlineSeconds are not
-  optional — Borg takes an exclusive repository lock, and an overrunning job
-  leaves the repo locked so every later run fails until you `borg break-lock`.
+  concurrencyPolicy: Forbid and activeDeadlineSeconds are load-bearing. Borg
+  takes an exclusive repository lock; an overrunning job leaves it held and
+  every later run fails until someone runs `borg break-lock`.
 */}}
 apiVersion: batch/v1
 kind: CronJob
@@ -69,33 +33,31 @@ spec:
               image: {{ .Values.backup.image }}
               args: ["borgmatic", "create", "prune", "compact", "--stats"]
               envFrom:
-                - secretRef: { name: {{ .Values.existingEnvSecret }} }   # DB_USERNAME / DB_PASSWORD
-                - secretRef: { name: {{ .Values.backup.existingSecret }} } # BORG_PASSPHRASE + backend creds
+                - secretRef: { name: {{ .Values.existingEnvSecret }} }    # DB_USERNAME / DB_PASSWORD
+                - secretRef: { name: {{ .Values.backup.existingSecret }} } # BORG_PASSPHRASE + repo creds
               volumeMounts:
-                - { name: config, mountPath: /etc/borgmatic.d }
+                - { name: config, mountPath: /etc/borgmatic.d, readOnly: true }
                 - { name: cache,  mountPath: /root/.cache/borg }
                 - { name: tmp,    mountPath: /tmp }
-              resources:
-                requests: { cpu: 50m, memory: 128Mi }
-                limits:   { memory: 384Mi }
           volumes:
             - name: config
-              configMap: { name: borgmatic-config }
+              configMap: { name: {{ .Values.backup.configMap }} }
             - name: cache
-              emptyDir: {}      # see note: a PVC here makes repeat runs much faster
+              emptyDir: {}      # a PVC here makes repeat runs much faster
             - name: tmp
               emptyDir: {}
 ---
 {{/*
-  Pre-upgrade safety net. atlas `schema apply --auto-approve` is a declarative
-  diff that can drop columns; this guarantees an archive taken moments before it
+  Pre-upgrade archive. atlas `schema apply --auto-approve` is a declarative diff
+  that can drop columns, so this guarantees an archive taken moments before it
   runs. Ordering on `helm upgrade`:
       weight -5  this backup (pre-upgrade)
       ...        release resources updated
       weight  0  kanae-migrate / kratos-migrate / keto-migrate (post-upgrade)
-  Not a pre-install hook: there is nothing to back up on a fresh install.
+  Not pre-install: there is nothing to back up on a fresh install.
+  backoffLimit 1 on purpose — if the pre-migration backup fails, the upgrade
+  should fail with it.
 */}}
-{{- if .Values.backup.preUpgrade }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -106,7 +68,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   activeDeadlineSeconds: 1800
-  backoffLimit: 1          # if the pre-migration backup fails, FAIL the upgrade
+  backoffLimit: 1
   template:
     spec:
       restartPolicy: Never
@@ -118,11 +80,10 @@ spec:
             - secretRef: { name: {{ .Values.existingEnvSecret }} }
             - secretRef: { name: {{ .Values.backup.existingSecret }} }
           volumeMounts:
-            - { name: config, mountPath: /etc/borgmatic.d }
+            - { name: config, mountPath: /etc/borgmatic.d, readOnly: true }
             - { name: tmp,    mountPath: /tmp }
       volumes:
         - name: config
-          configMap: { name: borgmatic-config }
+          configMap: { name: {{ .Values.backup.configMap }} }
         - name: tmp
           emptyDir: {}
-{{- end }}

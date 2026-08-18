@@ -1,20 +1,29 @@
 {{/*
-  Compose expressed ordering with:
-    migrate:        depends_on database (service_healthy)
-    kratos-migrate: depends_on database (service_healthy)
-    keto-migrate:   depends_on database (service_healthy)
-    kanae:          depends_on migrate  (service_completed_successfully)
+  Three plain Jobs. They were previously one `define` block called three times
+  with dict(...) arguments — clever, unreadable, and it made the rendered output
+  impossible to reason about. Repetition is the better trade here.
 
-  Helm hooks run OUTSIDE the normal release, so a pre-install hook cannot depend
-  on a StatefulSet that does not exist yet. Hence: post-install/post-upgrade
-  hooks + an initContainer that polls Postgres. The three migrations are
-  mutually independent, so they share hook-weight 0 and run concurrently.
+  post-install,post-upgrade rather than pre-install: Helm hooks run outside the
+  normal release, so a pre-install hook cannot wait on a StatefulSet that does
+  not exist yet. All three only need Postgres, so they share weight 0 and run
+  concurrently.
 */}}
-{{- define "kanae.migrateJob" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kanae-schema
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  schema.sql: |
+{{ .Files.Get "files/schema.sql" | indent 4 }}
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .name }}
+  name: kanae-migrate
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "0"
@@ -25,52 +34,108 @@ spec:
     spec:
       restartPolicy: OnFailure
       initContainers:
-        # Single-shot, same reasoning as the Deployment gates: restartPolicy is
-        # OnFailure, so kubelet restarts this container in place with
-        # exponential backoff, and backoffLimit below bounds the total. An
-        # `until` loop here was strictly worse — unbounded, so a Postgres that
-        # never arrives hung the Job forever without ever tripping
-        # backoffLimit, blocking the whole helm upgrade on the hook.
-        - name: wait-for-postgres
-          image: {{ .root.Values.postgres.image }}
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: atlas
+          image: {{ .Values.migrate.atlasImage }}
           envFrom:
-            - secretRef: { name: {{ .root.Values.existingEnvSecret }} }
-          command: ["pg_isready", "-h", "database", "-U", "$(DB_USERNAME)"]
-          resources:
-            requests: { cpu: 10m, memory: 32Mi }
-            limits:   { memory: 64Mi }
-      containers: {{- toYaml .containers | nindent 8 }}
-      volumes: {{- toYaml .volumes | nindent 8 }}
-{{- end -}}
+            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+          command: ["sh", "-c"]
+          args:
+            - >-
+              atlas schema apply --auto-approve
+              --to "file:///schema/schema.sql"
+              --url "postgres://$DB_USERNAME:$DB_PASSWORD@database:5432/$DB_DATABASE_NAME?search_path=public&sslmode=disable"
+              --dev-url "postgres://$DB_USERNAME:$DB_PASSWORD@database:5432/postgres?search_path=public&sslmode=disable"
+          volumeMounts:
+            - { name: schema, mountPath: /schema, readOnly: true }
+      volumes:
+        - name: schema
+          configMap: { name: kanae-schema }
 ---
-# Atlas: applies src/schema.sql to the kanae database.
-{{ include "kanae.migrateJob" (dict "root" . "name" "kanae-migrate"
-   "containers" (list (dict
-     "name" "atlas"
-     "image" .Values.migrate.atlasImage
-     "args" (list "schema" "apply"
-                  (ternary "--auto-approve" "--dry-run" .Values.migrate.autoApprove)
-                  "--to" "file:///schema/schema.sql"
-                  "--url"     "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/$(DB_DATABASE_NAME)?search_path=public&sslmode=disable"
-                  "--dev-url" "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/postgres?search_path=public&sslmode=disable")
-     "envFrom" (list (dict "secretRef" (dict "name" .Values.existingEnvSecret)))
-     "volumeMounts" (list (dict "name" "schema" "mountPath" "/schema"))))
-   "volumes" (list (dict "name" "schema" "configMap" (dict "name" "kanae-schema")))) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kratos-migrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: kratos-migrate
+          image: {{ .Values.ory.kratosImage }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4"
+            - name: SECRETS_COOKIE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_COOKIE } }
+            - name: SECRETS_CIPHER
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_CIPHER } }
+          args: ["migrate", "sql", "-c", "/etc/config/kratos.prod.yml", "--read-from-env", "--yes"]
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+      volumes:
+        - name: config
+          configMap:
+            name: kratos-config
+            items:
+              - { key: kratos.prod.yml,      path: kratos.prod.yml }
+              - { key: identity.schema.json, path: identity.schema.json }
 ---
-{{ include "kanae.migrateJob" (dict "root" . "name" "kratos-migrate"
-   "containers" (list (dict
-     "name" "kratos-migrate"
-     "image" .Values.ory.kratosImage
-     "args" (list "migrate" "sql" "-c" "/etc/config/kratos.prod.yml" "--read-from-env" "--yes")
-     "envFrom" (list (dict "secretRef" (dict "name" .Values.existingEnvSecret)))
-     "volumeMounts" (list (dict "name" "config" "mountPath" "/etc/config" "readOnly" true))))
-   "volumes" (list (dict "name" "config" "configMap" (dict "name" "kratos-config")))) }}
----
-{{ include "kanae.migrateJob" (dict "root" . "name" "keto-migrate"
-   "containers" (list (dict
-     "name" "keto-migrate"
-     "image" .Values.ory.ketoImage
-     "args" (list "migrate" "up" "-c" "/etc/config/keto.yml" "--yes")
-     "envFrom" (list (dict "secretRef" (dict "name" .Values.existingEnvSecret)))
-     "volumeMounts" (list (dict "name" "config" "mountPath" "/etc/config" "readOnly" true))))
-   "volumes" (list (dict "name" "config" "configMap" (dict "name" "keto-config")))) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keto-migrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: keto-migrate
+          image: {{ .Values.ory.ketoImage }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4"
+          args: ["migrate", "up", "-c", "/etc/config/keto.yml", "--yes"]
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: keto-config }

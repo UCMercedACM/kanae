@@ -9,15 +9,56 @@ spec:
   ports:
     - { name: postgres, port: 5432, targetPort: 5432 }
 ---
+{{/*
+  This is the init.sh the compose stack bakes into a custom image with:
+      build:
+        dockerfile_inline: |
+          FROM postgres:18
+          COPY init.sh /docker-entrypoint-initdb.d/init.sh
+  Kubernetes cannot build images, so the same file is mounted instead. It is
+  still required — it CREATEs the kratos and keto databases and the pg_trgm
+  extension, and nothing else does that. Runs only on an empty data directory.
+*/}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgres-initdb
 data:
-  # Replaces the compose `dockerfile_inline` that COPY'd init.sh into the image.
-  # Runs ONLY on an empty data directory.
   init.sh: |
 {{ .Files.Get "files/init.sh" | indent 4 }}
+---
+{{/*
+  Standalone PVC rather than a volumeClaimTemplate: replicas is pinned at 1, so
+  per-ordinal volumes buy nothing, and resource-policy: keep means Helm will
+  never delete it.
+
+  storageClassName must name a Retain-policy class. Stock scw-bssd is
+  reclaimPolicy: Delete, so create the Retain variant ONCE per cluster, out of
+  band — it is cluster-scoped infrastructure, not part of this release:
+
+    kubectl apply -f - <<'EOF'
+    apiVersion: storage.k8s.io/v1
+    kind: StorageClass
+    metadata: { name: scw-bssd-retain }
+    provisioner: csi.scaleway.com
+    reclaimPolicy: Retain
+    allowVolumeExpansion: true
+    volumeBindingMode: WaitForFirstConsumer
+    parameters: { type: bssd }
+    EOF
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-data
+  annotations:
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.postgres.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storage }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -25,8 +66,7 @@ metadata:
   name: database
 spec:
   serviceName: database
-  replicas: 1             # exactly 1. No replication configured; 2 would be two
-                          # independent databases fighting over one volume.
+  replicas: 1
   selector:
     matchLabels: { app: database }
   template:
@@ -38,40 +78,43 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
-          envFrom:
-            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+          # Exactly the four the compose service sets — no envFrom, so none of
+          # the Kratos secrets or the SMTP URI leak into the database container.
           env:
-            - name: POSTGRES_USER
-              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
             - name: POSTGRES_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
             - name: POSTGRES_DB
               valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_DATABASE_NAME } }
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
             - name: POSTGRES_INITDB_ARGS
-              value: "--data-checksums"
+              value: '--data-checksums'
           ports:
             - { name: postgres, containerPort: 5432 }
           volumeMounts:
             - { name: data, mountPath: {{ .Values.postgres.dataDir }} }
             - { name: initdb, mountPath: /docker-entrypoint-initdb.d }
+          # Verbatim from the compose healthcheck, including the checksum-failure
+          # query. $$ escapes a literal $ in both compose and Kubernetes, so the
+          # command below reads the same as the one in docker-compose.yml.
           readinessProbe:
             exec:
-              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+              command:
+                - sh
+                - -c
+                - |
+                  pg_isready --dbname="$POSTGRES_DB" --username="$POSTGRES_USER" || exit 1
+                  Chksum="$$(psql --dbname="$POSTGRES_DB" --username="$POSTGRES_USER" --tuples-only --no-align --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database')"
+                  echo "checksum failure count is $$Chksum"
+                  [ "$$Chksum" = '0' ] || exit 1
             initialDelaySeconds: 10
-            periodSeconds: 5
-          livenessProbe:
-            exec:
-              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
-            initialDelaySeconds: 60
             periodSeconds: 30
-          resources: {{- toYaml .Values.postgres.resources | nindent 12 }}
+            timeoutSeconds: 10
       volumes:
         - name: initdb
           configMap:
             name: postgres-initdb
             defaultMode: 0755
-        # Static PVC from postgres-pvc.yaml, NOT a volumeClaimTemplate.
-        # Lifecycle is decoupled from this StatefulSet and from Helm.
         - name: data
           persistentVolumeClaim:
             claimName: database-data

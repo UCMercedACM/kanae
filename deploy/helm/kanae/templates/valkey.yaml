@@ -8,15 +8,11 @@ spec:
     - { name: valkey, port: 6379, targetPort: 6379 }
 ---
 {{/*
-  Deployment, not StatefulSet, and no PVC.
-
-  Valkey here is a pure cache: the only things stored are the media:get-url
-  presign cache (TTL 270s, regenerable) and the limiter counters, which
-  config.yml already backs with limiter.in_memory_fallback. Compose runs it with
-  --maxmemory-policy volatile-ttl and no AOF/RDB, i.e. it is designed to evict.
-  A restart costs a brief rate-limit reset and a few extra presign calls.
-
-  Giving it a PVC would pin the pod to one node in exchange for nothing.
+  Deployment, not StatefulSet, and no PVC. Valkey here is a pure cache: the
+  media:get-url presign cache (270s TTL, regenerable) and the limiter counters,
+  which config.yml already backs with limiter.in_memory_fallback. compose runs
+  it with volatile-ttl eviction and no AOF/RDB — it is designed to evict. A PVC
+  would pin the pod to a node in exchange for nothing.
 */}}
 apiVersion: apps/v1
 kind: Deployment
@@ -35,33 +31,23 @@ spec:
       containers:
         - name: valkey
           image: {{ .Values.valkey.image }}
-          # compose: valkey-server --maxmemory 256mb --maxmemory-policy volatile-ttl
-          args:
-            - valkey-server
-            - --maxmemory
-            - {{ .Values.valkey.maxmemory | quote }}
-            - --maxmemory-policy
-            - volatile-ttl
+          args: ["valkey-server", "--maxmemory", {{ .Values.valkey.maxmemory | quote }}, "--maxmemory-policy", "volatile-ttl"]
           ports:
             - { name: valkey, containerPort: 6379 }
-          # compose healthcheck: valkey-cli PING || exit 1
+          # Verbatim from the compose healthcheck.
           readinessProbe:
-            exec: { command: ["valkey-cli", "ping"] }
+            exec:
+              command: ["sh", "-c", "valkey-cli PING || exit 1"]
+            initialDelaySeconds: 10
             periodSeconds: 10
-            timeoutSeconds: 3
-          livenessProbe:
-            exec: { command: ["valkey-cli", "ping"] }
-            initialDelaySeconds: 30
-            periodSeconds: 30
             timeoutSeconds: 3
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
           volumeMounts:
-            # valkey still writes a dump on shutdown even with persistence off;
-            # give it somewhere ephemeral rather than fighting it.
+            # valkey still writes a dump on shutdown with persistence off; give
+            # it somewhere ephemeral rather than fighting it.
             - { name: data, mountPath: /data }
-          resources: {{- toYaml .Values.valkey.resources | nindent 12 }}
       volumes:
         - name: data
           emptyDir: {}

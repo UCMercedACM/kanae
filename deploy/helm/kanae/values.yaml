@@ -1,10 +1,9 @@
 # NOTE: Service names are deliberately fixed (kanae, database, valkey, kratos,
 # keto) to match the compose service names hardcoded in kratos.prod.yml,
 # keto.yml and config.yml. Do not templatize them.
-
-global:
-  # Scaleway Block SSD. Kapsule installs this CSI driver by default.
-  storageClass: scw-bssd
+#
+# No resource requests/limits anywhere in this chart yet. Add them once there
+# are real numbers from a running deployment, not guesses.
 
 image:
   repository: ghcr.io/ucmercedacm/kanae
@@ -14,95 +13,54 @@ image:
 kanae:
   replicas: 1
   granianWorkers: 2      # NOT 8 as in deploy.dist.env
-  resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits:   { memory: 640Mi }   # limit set so pyvips spikes kill kanae, not Postgres
 
 postgres:
   image: postgres:18
-  # postgres:18 image defaults PGDATA to /var/lib/postgresql/18/docker
+  # postgres:18 defaults PGDATA to /var/lib/postgresql/18/docker, which is what
+  # the compose volume mounts.
   dataDir: /var/lib/postgresql/18/docker
   storage: 20Gi
-  # Retain-policy class so deleting the PVC does not destroy the Scaleway volume.
-  # Stock scw-bssd is reclaimPolicy: Delete — do not use it for this.
+  # MUST be a Retain-policy class — stock scw-bssd is reclaimPolicy: Delete, so
+  # deleting the PVC would destroy the volume. Create the Retain variant once
+  # per cluster; see the comment in templates/postgres.yaml.
   storageClass: scw-bssd-retain
-  createRetainStorageClass: true
-  resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits:   { memory: 512Mi }
 
 valkey:
   image: valkey/valkey:9-alpine
-  maxmemory: 128mb        # pure cache: no PVC, no persistence
-  resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits:   { memory: 224Mi }
+  maxmemory: 256mb        # as compose; pure cache, no PVC
 
 ory:
   kratosImage: oryd/kratos:v26.2.0
   ketoImage: oryd/keto:v26.2.0
-  # Compose uses max_conns=20 per service. With Kratos + Keto + kanae's asyncpg
-  # pool that is up to 50 backends against a Postgres sized for a 4 GB node,
-  # each costing several MB. Neither Ory service needs anything close to 20.
-  # These override the DSN in kratos.prod.yml / keto.yml via the DSN env var.
-  dbMaxConns: 5
-  dbMaxIdleConns: 2
-  resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits:   { memory: 160Mi }
+
+migrate:
+  atlasImage: arigaio/atlas:latest
 
 seed:
-  # scripts/seed/init.sh, as a post-install Job (weight 10, after migrations).
-  # NOT an init container: it curls kanae's HTTP API, so gating kanae on it
-  # deadlocks. Identities are @seed.test.local — this is preview data.
+  # scripts/seed/init.sh as a post-install Job (weight 10, after migrations).
+  # Not an init container: it curls kanae's HTTP API, so gating kanae on it
+  # deadlocks. Identities are @seed.test.local — preview data.
   enabled: false
   # Needs bash, curl, jq, openssl, psql, valkey-cli. compose builds this inline
   # in docker-compose.web.yml; Kubernetes cannot build, so publish an image.
   image: ghcr.io/ucmercedacm/kanae-seed:latest
 
-migrate:
-  atlasImage: arigaio/atlas:latest
-  # Declarative diff — can drop columns. Enabled per your call, backed by the
-  # pre-upgrade borgmatic hook (backup.preUpgrade) which archives all three
-  # databases immediately before this runs and fails the upgrade if it can't.
-  autoApprove: true
-
 backup:
-  enabled: true
-  # borgmatic + borg. Note borg 1.x CANNOT write to S3/R2 — only borg 2.x can
-  # (borgstore backends: s3:, b2:, sftp:, rclone:). Check which your image ships.
   image: ghcr.io/borgmatic-collective/borgmatic:latest
   schedule: "17 9 * * *"          # 09:17 UTC daily
-  preUpgrade: true                # archive before every atlas apply
-  existingSecret: kanae-borg      # BORG_PASSPHRASE + repo backend credentials
-
-  # Pick ONE, matching your borg major version:
-  #   borg 2.x -> "s3:https://<account>.r2.cloudflarestorage.com/kanae-backups"
-  #   borg 2.x -> "rclone:r2:kanae-backups"
-  #   borg 1.x -> "ssh://<user>@<host>:22/./repo"   (BorgBase, rsync.net, Storage Box)
-  repository: "s3:https://<account_id>.r2.cloudflarestorage.com/kanae-backups"
-
-  databases:
-    kanae: kanae                  # kratos + keto are hardcoded in the ConfigMap
-  retention:
-    daily: 7
-    weekly: 4
-    monthly: 6
+  # borgmatic's own config is maintained separately and supplied as a ConfigMap
+  # with the values already injected — this chart only schedules it.
+  configMap: borgmatic-config
+  existingSecret: kanae-borg      # BORG_PASSPHRASE + repository backend creds
 
 ingress:
-  enabled: true
   # haproxytech/kubernetes-ingress, installed separately. Create the Kapsule
-  # cluster with ingress: none so it doesn't also deploy nginx/traefik.
+  # cluster with ingress: none so it does not also deploy nginx/traefik.
+  # TLS is handled by the HAProxy config (certbot/letsencrypt), not here.
   className: haproxy
   host: api.ucmacm.dev
-  tls:
-    enabled: true
-    clusterIssuer: letsencrypt-prod
-  # Kratos serve.public.base_url is https://api.ucmacm.dev/auth, so /auth must
-  # be stripped before proxying to kratos:4433. See ingress.yaml.
 
-# TODO(sops): these two still point at pre-created Secrets. Per the SOPS + age
-# decision, they are to be replaced by a templates/secrets.yaml that renders
-# both Secrets from .Values.secrets.* supplied by secrets-prod.enc.yaml.
+# TODO(sops): replaced by a templates/secrets.yaml rendering both Secrets from
+# .Values.secrets.* supplied by secrets-prod.enc.yaml.
 existingSecret: kanae-config      # key: config.yml
-existingEnvSecret: kanae-env      # DB_*, KRATOS_SECRETS_*, KRATOS_WEBHOOK_TOKEN_*
+existingEnvSecret: kanae-env      # DB_*, KRATOS_SECRETS_*, KRATOS_WEBHOOK_TOKEN_*, KRATOS_SMTP_URI
