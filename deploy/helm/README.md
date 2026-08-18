@@ -51,19 +51,15 @@ field name or a bad type.
 # 1. cluster
 k3d cluster create kanae
 
-# 2. image — built locally, never pulled (values-local sets pullPolicy: Never)
-docker build -f docker/Dockerfile -t ghcr.io/ucmercedacm/kanae:dev .
-k3d image import ghcr.io/ucmercedacm/kanae:dev -c kanae
-
-# 3. secrets — -l fills the R2/SMTP values with throwaway placeholders
+# 2. secrets — -l fills the R2/SMTP values with throwaway placeholders
 ./deploy/helm/seed-k8s.sh -l
 
-# 4. install
+# 3. install — pulls ghcr.io/ucmercedacm/kanae:edge, no local build needed
 helm install kanae ./deploy/helm/kanae \
   -n kanae --create-namespace \
   -f deploy/helm/values-local.yaml
 
-# 5. watch it come up
+# 4. watch it come up
 k9s -n kanae
 ```
 
@@ -79,12 +75,29 @@ k3d's `local-path` provisioner. The production default is `scw-bssd-retain`,
 which does not exist locally — without the override the PVC sits `Pending`
 forever.
 
-### Iterating
+### Images
+
+`edge` is pushed from `main` by `.github/workflows/docker.yml` and is the tag
+that gets exercised, so both the production and local values default to it.
+Because it is a moving tag, `pullPolicy` is `Always` — with `IfNotPresent` the
+node would keep whatever it pulled first and never see a new push. Pin `tag` to
+a semver (`0.3.1`, `0.3`, `0`) and switch back to `IfNotPresent` for a
+reproducible deploy.
+
+To pick up a newer `edge`:
+
+```bash
+kubectl -n kanae rollout restart deploy/kanae
+```
+
+To test uncommitted local changes instead of `edge`:
 
 ```bash
 docker build -f docker/Dockerfile -t ghcr.io/ucmercedacm/kanae:dev .
 k3d image import ghcr.io/ucmercedacm/kanae:dev -c kanae
-kubectl -n kanae rollout restart deploy/kanae
+helm upgrade kanae ./deploy/helm/kanae -n kanae \
+  -f deploy/helm/values-local.yaml \
+  --set image.tag=dev --set image.pullPolicy=Never
 ```
 
 `helm upgrade` re-runs the three migration Jobs (they are

@@ -6,10 +6,14 @@
 # No secrets in this file — keep it in git.
 
 image:
-  # built locally + `k3d image import`, so never try to pull it
+  # Default to pulling the published `edge` tag — no local build needed just to
+  # see the stack run. To test uncommitted changes instead:
+  #   docker build -f docker/Dockerfile -t ghcr.io/ucmercedacm/kanae:dev .
+  #   k3d image import ghcr.io/ucmercedacm/kanae:dev -c kanae
+  # then set tag: dev and pullPolicy: Never.
   repository: ghcr.io/ucmercedacm/kanae
-  tag: dev
-  pullPolicy: Never
+  tag: edge
+  pullPolicy: Always
 
 kanae:
   replicas: 1
