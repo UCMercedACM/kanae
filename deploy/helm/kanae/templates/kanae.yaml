@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kanae            # fixed: kratos.prod.yml posts webhooks to http://kanae:8000
+spec:
+  selector: { app: kanae }
+  ports:
+    - { name: http,    port: 8000, targetPort: 8000 }
+    - { name: metrics, port: 9555, targetPort: 9555 }   # ClusterIP only, never in Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kanae
+spec:
+  replicas: {{ .Values.kanae.replicas }}
+  selector:
+    matchLabels: { app: kanae }
+  template:
+    metadata:
+      labels: { app: kanae }
+      # TODO(sops): re-add a checksum/config annotation that hashes the RENDERED
+      # config.yml once secrets.yaml exists. Hashing the Secret *name* (as this
+      # previously did) never changes, so it never triggers a roll.
+    spec:
+      {{- /*
+        Kubernetes has no cross-pod `depends_on`, by explicit design:
+          "Pods in general are not intended to support DAG workflows."
+          "Complex ordering and failure will not be supported."
+          -- design-proposals-archive/node/container-init.md
+        Init containers order only WITHIN a pod. There is nothing to port the
+        compose depends_on block onto directly.
+
+        We also do not need to. Most of that block is already enforced by
+        kanae's own startup (src/core.py lifespan) plus kubelet restart backoff:
+
+          database  asyncpg.create_pool() connects eagerly -> lifespan raises
+                    -> pod crashes -> kubelet backs off and retries. Free.
+          valkey    GlideClient.create() likewise (no lazy_connect). Free.
+          kratos    OryClient only holds an aiohttp session; nothing connects at
+          keto      startup. Requests 503 until they are up, which is the
+                    convergence behaviour k8s intends. Nothing to gate.
+
+        Only ONE dependency does not fail fast: the atlas migration. The pool
+        connects happily to an empty database, kanae reports READY, then 500s
+        on every query. That is the case worth an init container.
+
+        The loop is short on purpose. Per the init-containers docs, "if a Pod's
+        init container fails, the kubelet repeatedly restarts that init
+        container until it succeeds" -- kubelet already owns retry-with-backoff,
+        so a long internal loop just reimplements it worse and inflates worst-
+        case pod startup. 15 * 2s covers the normal case in-process; anything
+        slower becomes Init:CrashLoopBackOff with a readable log.
+      */}}
+      initContainers:
+        # depends_on: migrate — condition: service_completed_successfully
+        # Gates on the EFFECT of the atlas Job (schema present) rather than the
+        # Job object's status. Level-triggered, so it is correct on a fresh
+        # install, on an upgrade, and on a pod restart long after the Job was
+        # garbage-collected — and it needs no RBAC to read Job status.
+        # `members` is the first table in src/schema.sql.
+        - name: wait-for-schema
+          image: {{ .Values.postgres.image }}
+          envFrom:
+            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+          env:
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+          command:
+            - sh
+            - -c
+            - |
+              for i in $(seq 1 15); do
+                ok=$(psql -h database -U "$DB_USERNAME" -d "$DB_DATABASE_NAME" \
+                     -tAc "SELECT to_regclass('public.members') IS NOT NULL" 2>/dev/null)
+                [ "$ok" = "t" ] && exit 0
+                sleep 2
+              done
+              echo "schema not present yet; deferring to kubelet restart" >&2; exit 1
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 64Mi }
+
+      containers:
+        - name: kanae
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GRANIAN_WORKERS
+              value: {{ .Values.kanae.granianWorkers | quote }}
+            # REQUIRED under containerd. src/core.py:166 _is_docker() checks for
+            # /.dockerenv and "docker" in /proc/self/cgroup — neither is true on
+            # Kapsule, so rotating_handler() returns AppRotatingHandler, which
+            # mkdir()s logs/ against a read-only rootfs and kills the pod.
+            # This env var requires the core.py change; without it, set
+            # readOnlyRootFilesystem: false and accept uncollected disk logs.
+            - name: KANAE_DISABLE_FILE_LOGGING
+              value: "1"
+          ports:
+            - { name: http,    containerPort: 8000 }
+            - { name: metrics, containerPort: 9555 }
+          volumeMounts:
+            - name: config
+              mountPath: /kanae/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp          # Dockerfile sets HOME=/tmp
+          securityContext:             # compose x-hardening anchor, 1:1
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 999             # Dockerfile: USER kanae (uid 999)
+            capabilities: { drop: ["ALL"] }
+          # compose healthcheck: curl -fsS --max-time 2 http://127.0.0.1:8000
+          startupProbe:
+            httpGet: { path: /, port: http }
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          resources: {{- toYaml .Values.kanae.resources | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ .Values.existingSecret }}   # holds postgres_uri, storage keys, webhook master key
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 64Mi }

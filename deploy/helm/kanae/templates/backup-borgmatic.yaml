@@ -1,0 +1,128 @@
+{{/*
+  IMPORTANT: this backs up LOGICAL DUMPS, not the PVC filesystem.
+  Never point Borg at the Postgres data directory while the server is running —
+  you get torn pages and a backup that restores to a corrupt cluster.
+  borgmatic's postgresql_databases hook streams pg_dump straight into the
+  archive, so there is no dump file on disk and no scratch PVC needed.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: borgmatic-config
+data:
+  borgmatic.yaml: |
+    repositories:
+      - path: {{ .Values.backup.repository | quote }}
+        label: kanae
+
+    postgresql_databases:
+      - name: {{ .Values.backup.databases.kanae | default "kanae" }}
+        hostname: database
+        port: 5432
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
+        format: custom
+      - name: kratos
+        hostname: database
+        port: 5432
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
+        format: custom
+      - name: keto
+        hostname: database
+        port: 5432
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
+        format: custom
+
+    keep_daily: {{ .Values.backup.retention.daily }}
+    keep_weekly: {{ .Values.backup.retention.weekly }}
+    keep_monthly: {{ .Values.backup.retention.monthly }}
+
+    checks:
+      - name: repository
+        frequency: 2 weeks
+---
+{{/*
+  Scheduled backup. concurrencyPolicy: Forbid and activeDeadlineSeconds are not
+  optional — Borg takes an exclusive repository lock, and an overrunning job
+  leaves the repo locked so every later run fails until you `borg break-lock`.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kanae-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: borgmatic
+              image: {{ .Values.backup.image }}
+              args: ["borgmatic", "create", "prune", "compact", "--stats"]
+              envFrom:
+                - secretRef: { name: {{ .Values.existingEnvSecret }} }   # DB_USERNAME / DB_PASSWORD
+                - secretRef: { name: {{ .Values.backup.existingSecret }} } # BORG_PASSPHRASE + backend creds
+              volumeMounts:
+                - { name: config, mountPath: /etc/borgmatic.d }
+                - { name: cache,  mountPath: /root/.cache/borg }
+                - { name: tmp,    mountPath: /tmp }
+              resources:
+                requests: { cpu: 50m, memory: 128Mi }
+                limits:   { memory: 384Mi }
+          volumes:
+            - name: config
+              configMap: { name: borgmatic-config }
+            - name: cache
+              emptyDir: {}      # see note: a PVC here makes repeat runs much faster
+            - name: tmp
+              emptyDir: {}
+---
+{{/*
+  Pre-upgrade safety net. atlas `schema apply --auto-approve` is a declarative
+  diff that can drop columns; this guarantees an archive taken moments before it
+  runs. Ordering on `helm upgrade`:
+      weight -5  this backup (pre-upgrade)
+      ...        release resources updated
+      weight  0  kanae-migrate / kratos-migrate / keto-migrate (post-upgrade)
+  Not a pre-install hook: there is nothing to back up on a fresh install.
+*/}}
+{{- if .Values.backup.preUpgrade }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kanae-backup-preupgrade
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  activeDeadlineSeconds: 1800
+  backoffLimit: 1          # if the pre-migration backup fails, FAIL the upgrade
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: borgmatic
+          image: {{ .Values.backup.image }}
+          args: ["borgmatic", "create", "--stats"]
+          envFrom:
+            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+            - secretRef: { name: {{ .Values.backup.existingSecret }} }
+          volumeMounts:
+            - { name: config, mountPath: /etc/borgmatic.d }
+            - { name: tmp,    mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap: { name: borgmatic-config }
+        - name: tmp
+          emptyDir: {}
+{{- end }}
