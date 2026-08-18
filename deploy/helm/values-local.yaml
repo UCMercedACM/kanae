@@ -1,18 +1,9 @@
-# Local overrides: helm install kanae ./kanae -f values-local.yaml
+# Local k3d overrides.
+#   helm install kanae ./deploy/helm/kanae -n kanae --create-namespace \
+#     -f deploy/helm/values-local.yaml
 #
 # Everything here exists because the chart's defaults assume Kapsule.
-# Keep this file in git — it has no secrets in it.
-
-global:
-  storageClass: local-path        # k3d ships rancher local-path-provisioner
-
-postgres:
-  storageClass: local-path
-  createRetainStorageClass: false # csi.scaleway.com does not exist locally
-  storage: 2Gi
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits:   { memory: 512Mi }
+# No secrets in this file — keep it in git.
 
 image:
   # built locally + `k3d image import`, so never try to pull it
@@ -24,29 +15,34 @@ kanae:
   replicas: 1
   granianWorkers: 1               # laptop
 
+postgres:
+  # k3d ships rancher local-path-provisioner. csi.scaleway.com does not exist
+  # here, so the scw-bssd-retain default would leave the PVC Pending forever.
+  storageClass: local-path
+  storage: 2Gi
+
 valkey:
   maxmemory: 64mb
 
-migrate:
-  autoApprove: true               # local db is disposable
-
 backup:
-  enabled: false                  # no borg repo locally
-  preUpgrade: false               # ...so don't gate upgrades on it either
+  # No borg repository locally. Leaving this on also breaks iteration: the
+  # pre-upgrade hook has backoffLimit 1, so a failing backup fails the upgrade.
+  enabled: false
 
 ingress:
-  enabled: false
-  # Skip the ingress entirely locally and port-forward instead:
-  #   kubectl port-forward svc/kanae 8000:8000
-  #   kubectl port-forward svc/kratos 4433:4433
+  # Needs the HAProxy controller. Port-forward instead:
+  #   kubectl -n kanae port-forward svc/kanae 8000:8000
+  #   kubectl -n kanae port-forward svc/kratos 4433:4433
   #
-  # If you DO want to exercise the HAProxy /auth path-rewrite (worth doing at
-  # least once — it is the most breakable part of the chart):
-  #   1. k3d cluster create kanae --port "8080:80@loadbalancer"
-  #   2. helm install haproxytech/kubernetes-ingress --set controller.service.type=NodePort
-  #   3. set ingress.enabled=true, ingress.host=api.kanae.localhost
-  #   4. ingress.tls.enabled=false  (no cert-manager locally)
-  # then browse http://api.kanae.localhost:8080/auth/self-service/login/browser
+  # To exercise the /auth path-rewrite for real — worth doing once, it is the
+  # most breakable part of the chart:
+  #   k3d cluster create kanae --port "8080:80@loadbalancer"
+  #   helm install haproxy-ingress haproxytech/kubernetes-ingress \
+  #     -n haproxy-controller --create-namespace \
+  #     --set controller.ingressClass=haproxy
+  #   then set enabled: true and host: api.kanae.localhost
+  #   and browse http://api.kanae.localhost:8080/auth/self-service/login/browser
+  enabled: false
 
-existingSecret: kanae-config
-existingEnvSecret: kanae-env
+seed:
+  enabled: false                  # needs a published kanae-seed image

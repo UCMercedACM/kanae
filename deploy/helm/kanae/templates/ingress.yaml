@@ -1,3 +1,4 @@
+{{- if .Values.ingress.enabled }}
 {{/*
   Host routing only. TLS is NOT configured here.
 
@@ -58,3 +59,4 @@ spec:
     kratos:4434  admin API      keto:4466/4467/4468      kanae:9555  metrics
   The SPA at ucmacm.dev is on Cloudflare Pages, not in this cluster.
 */}}
+{{- end }}

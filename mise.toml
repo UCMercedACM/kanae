@@ -10,6 +10,14 @@ shfmt = "3.13.1"
 yq = "4.53.3"
 hurl = "8.0.1"
 
+# Kubernetes / Helm. Versions left at "latest" deliberately — pin them once
+# you have run the stack and know what works, rather than trusting a guess.
+helm = "latest"
+kubectl = "latest"
+k3d = "latest"          # local cluster
+k9s = "latest"          # TUI for watching pods/logs/events
+kubeconform = "latest"  # validates rendered manifests against k8s schemas
+
 
 [settings]
 experimental = true
@@ -271,4 +279,18 @@ run = """
     exit 1
   fi
   echo "Chart files are in sync."
+"""
+
+[tasks."helm:lint"]
+description = "Lint the Helm chart and validate the rendered manifests against Kubernetes schemas. helm lint alone only checks chart structure — kubeconform is what catches invalid Kubernetes."
+dir = "{{ config_root }}"
+run = """
+  set -e
+  helm lint deploy/helm/kanae
+  echo "Rendering with production values..."
+  helm template kanae deploy/helm/kanae \
+    | kubeconform -strict -summary -kubernetes-version 1.31.0 -
+  echo "Rendering with local values..."
+  helm template kanae deploy/helm/kanae -f deploy/helm/values-local.yaml \
+    | kubeconform -strict -summary -kubernetes-version 1.31.0 -
 """

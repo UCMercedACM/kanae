@@ -46,6 +46,10 @@ seed:
   image: ghcr.io/ucmercedacm/kanae-seed:latest
 
 backup:
+  # Optional component on/off, same shape as seed.enabled — not a branch around
+  # how to do something. Must be false locally: there is no borg repo, and the
+  # pre-upgrade hook has backoffLimit 1, so it would fail every helm upgrade.
+  enabled: true
   image: ghcr.io/borgmatic-collective/borgmatic:latest
   schedule: "17 9 * * *"          # 09:17 UTC daily
   # borgmatic's own config is maintained separately and supplied as a ConfigMap
@@ -54,6 +58,8 @@ backup:
   existingSecret: kanae-borg      # BORG_PASSPHRASE + repository backend creds
 
 ingress:
+  # Optional component on/off. False locally — needs the HAProxy controller.
+  enabled: true
   # haproxytech/kubernetes-ingress, installed separately. Create the Kapsule
   # cluster with ingress: none so it does not also deploy nginx/traefik.
   # TLS is handled by the HAProxy config (certbot/letsencrypt), not here.

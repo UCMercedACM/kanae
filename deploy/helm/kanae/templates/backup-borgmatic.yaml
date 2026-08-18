@@ -1,3 +1,4 @@
+{{- if .Values.backup.enabled }}
 {{/*
   borgmatic's own configuration is NOT defined here. It lives in its own config
   with values injected, and is supplied to the cluster as a ConfigMap named by
@@ -87,3 +88,4 @@ spec:
           configMap: { name: {{ .Values.backup.configMap }} }
         - name: tmp
           emptyDir: {}
+{{- end }}
