@@ -45,7 +45,10 @@ metadata:
     "helm.sh/hook-weight": "10"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
-  backoffLimit: 3
+  # Raised from 3: with a single-shot gate, kubelet's backoff is what waits for
+  # kanae to finish migrating and start serving, so the Job needs enough
+  # retries to cover that. activeDeadlineSeconds is the real ceiling.
+  backoffLimit: 10
   activeDeadlineSeconds: 900
   template:
     spec:
@@ -58,10 +61,9 @@ spec:
           # kanae's own image: its Dockerfile apt-installs curl, and the compose
           # healthcheck uses the same command. postgres:18 has no curl.
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          command:
-            - sh
-            - -c
-            - 'for i in $(seq 1 15); do curl -fsS --max-time 2 http://kanae:8000 >/dev/null && exit 0; sleep 2; done; exit 1'
+          # Single-shot. curl -f exits non-zero on both connection failure and
+          # HTTP error, so the exit code is the check; kubelet retries.
+          command: ["curl", "-fsS", "--max-time", "5", "-o", "/dev/null", "http://kanae:8000"]
           resources:
             requests: { cpu: 10m, memory: 32Mi }
             limits:   { memory: 64Mi }

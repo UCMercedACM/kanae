@@ -25,11 +25,20 @@ spec:
     spec:
       restartPolicy: OnFailure
       initContainers:
+        # Single-shot, same reasoning as the Deployment gates: restartPolicy is
+        # OnFailure, so kubelet restarts this container in place with
+        # exponential backoff, and backoffLimit below bounds the total. An
+        # `until` loop here was strictly worse — unbounded, so a Postgres that
+        # never arrives hung the Job forever without ever tripping
+        # backoffLimit, blocking the whole helm upgrade on the hook.
         - name: wait-for-postgres
           image: {{ .root.Values.postgres.image }}
-          command: ["sh", "-c", 'until pg_isready -h database -U "$DB_USERNAME"; do sleep 2; done']
           envFrom:
             - secretRef: { name: {{ .root.Values.existingEnvSecret }} }
+          command: ["pg_isready", "-h", "database", "-U", "$(DB_USERNAME)"]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 64Mi }
       containers: {{- toYaml .containers | nindent 8 }}
       volumes: {{- toYaml .volumes | nindent 8 }}
 {{- end -}}
