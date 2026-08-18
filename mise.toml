@@ -18,6 +18,13 @@ k3d = "latest"          # local cluster
 k9s = "latest"          # TUI for watching pods/logs/events
 kubeconform = "latest"  # validates rendered manifests against k8s schemas
 
+# Secrets. SOPS has age support compiled in, so the age binary is only needed
+# for age-keygen and for passphrase-wrapping the break-glass key. rage is a
+# drop-in alternative if you prefer the Rust toolchain — the keys are the same
+# X25519 format either way.
+sops = "latest"
+age = "latest"
+
 
 [settings]
 experimental = true
