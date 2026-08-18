@@ -54,14 +54,6 @@ spec:
           env:
             - name: GRANIAN_WORKERS
               value: {{ .Values.kanae.granianWorkers | quote }}
-            # REQUIRED under containerd. src/core.py:166 _is_docker() looks for
-            # /.dockerenv and "docker" in /proc/self/cgroup -- neither is true
-            # here, so rotating_handler() returns AppRotatingHandler, which
-            # mkdir()s logs/ against a read-only rootfs and kills the pod.
-            # Needs the matching core.py change; until then either add it or
-            # drop readOnlyRootFilesystem below.
-            - name: KANAE_DISABLE_FILE_LOGGING
-              value: "1"
           ports:
             - { name: http,    containerPort: 8000 }
             - { name: metrics, containerPort: 9555 }
@@ -72,6 +64,16 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp          # Dockerfile sets HOME=/tmp
+            # src/core.py _is_docker() checks /.dockerenv and "docker" in
+            # /proc/self/cgroup, neither of which holds under containerd, so
+            # rotating_handler() returns AppRotatingHandler and kanae writes
+            # logs/kanae.log + logs/access.log relative to WORKDIR /kanae.
+            # Giving it a writable dir there is cheaper than changing the code
+            # and keeps readOnlyRootFilesystem on. The logs are ephemeral and
+            # duplicate stdout/stderr, which is what Alloy actually collects.
+            # sizeLimit covers MAX_BYTES 32MB x BACKUP_COUNT 10 x 2 files.
+            - name: logs
+              mountPath: /kanae/logs
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
@@ -92,3 +94,5 @@ spec:
             secretName: {{ .Values.existingSecret }}   # postgres_uri, storage keys, webhook master key
         - name: tmp
           emptyDir: { medium: Memory, sizeLimit: 64Mi }
+        - name: logs
+          emptyDir: { sizeLimit: 1Gi }
