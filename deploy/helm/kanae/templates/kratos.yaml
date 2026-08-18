@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kratos           # fixed: kratos.prod.yml admin base_url is http://kratos:4434/
+spec:
+  selector: { app: kratos }
+  ports:
+    - { name: public, port: 4433, targetPort: 4433 }
+    - { name: admin,  port: 4434, targetPort: 4434 }   # ClusterIP only, never in Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kratos
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kratos }
+  template:
+    metadata:
+      labels: { app: kratos }
+      annotations:
+        checksum/config: {{ .Files.Get "files/kratos/kratos.prod.yml" | sha256sum }}
+    spec:
+      initContainers:
+        # Single-shot: pg_isready exits 0 when Postgres accepts connections and
+        # non-zero otherwise. No loop — kubelet restarts a failed init container
+        # with exponential backoff, so writing our own retry just duplicates it.
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          envFrom:
+            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+          command: ["pg_isready", "-h", "database", "-U", "$(DB_USERNAME)"]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 64Mi }
+      containers:
+        - name: kratos
+          image: {{ .Values.ory.kratosImage }}
+          # compose: serve -c /etc/config/kratos.prod.yml --watch-courier
+          args: ["serve", "-c", "/etc/config/kratos.prod.yml", "--watch-courier"]
+          env:
+            # Ordered first so the DSN below can expand them. Kubernetes expands
+            # $(VAR) in env values against vars declared earlier in this list.
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            # Overrides `dsn` in kratos.prod.yml. max_conns lowered from the
+            # compose value of 20 — see values.yaml ory.dbMaxConns.
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/kratos?sslmode=disable&max_conns={{ .Values.ory.dbMaxConns }}&max_idle_conns={{ .Values.ory.dbMaxIdleConns }}"
+            - name: SECRETS_COOKIE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_COOKIE } }
+            - name: SECRETS_CIPHER
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_CIPHER } }
+            - name: COURIER_SMTP_CONNECTION_URI
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SMTP_URI } }
+            # Ory overrides config paths via env. These three replace the
+            # ${KRATOS_WEBHOOK_TOKEN_*} placeholders in kratos.prod.yml.
+            # Values are blake3(context, key=master) — derived, never hand-set.
+            - name: SELFSERVICE_FLOWS_REGISTRATION_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_WEBHOOK_TOKEN_REGISTRATION } }
+            - name: SELFSERVICE_FLOWS_SETTINGS_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_WEBHOOK_TOKEN_SETTINGS } }
+            - name: SELFSERVICE_FLOWS_SETTINGS_AFTER_PROFILE_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_WEBHOOK_TOKEN_SETTINGS } }
+          ports:
+            - { name: public, containerPort: 4433 }
+            - { name: admin,  containerPort: 4434 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+            - { name: tmp,    mountPath: /tmp }
+          securityContext:          # compose x-hardening anchor, 1:1
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          # compose healthcheck: wget -q --spider http://127.0.0.1:4433/health/ready
+          startupProbe:
+            httpGet: { path: /health/ready, port: public }
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: { path: /health/ready, port: public }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/alive, port: public }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources: {{- toYaml .Values.ory.resources | nindent 12 }}
+      volumes:
+        # One ConfigMap, subdirectories built with items[].path — ConfigMap keys
+        # cannot contain "/", but the mount path for each key can.
+        - name: config
+          configMap:
+            name: kratos-config
+            items:
+              - { key: kratos.prod.yml,                 path: kratos.prod.yml }
+              - { key: identity.schema.json,            path: identity.schema.json }
+              - { key: payload.jsonnet,                 path: hooks/payload.jsonnet }
+              - { key: email.body.gotmpl,               path: templates/recovery/valid/email.body.gotmpl }
+              - { key: email.subject.gotmpl,            path: templates/recovery/valid/email.subject.gotmpl }
+              - { key: email.body.plaintext.gotmpl,     path: templates/recovery/valid/email.body.plaintext.gotmpl }
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 32Mi }   # compose tmpfs /tmp size=32m

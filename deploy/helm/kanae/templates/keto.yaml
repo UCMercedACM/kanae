@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: keto             # fixed: config.yml keto_read_url / keto_write_url point here
+spec:
+  selector: { app: keto }
+  ports:
+    - { name: read,    port: 4466, targetPort: 4466 }
+    - { name: write,   port: 4467, targetPort: 4467 }
+    - { name: metrics, port: 4468, targetPort: 4468 }   # all ClusterIP only
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keto
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: keto }
+  template:
+    metadata:
+      labels: { app: keto }
+      annotations:
+        checksum/config: {{ (print (.Files.Get "files/keto/keto.yml") (.Files.Get "files/keto/namespaces.keto.ts")) | sha256sum }}
+    spec:
+      initContainers:
+        # Single-shot; kubelet owns the retry. See kratos.yaml.
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          envFrom:
+            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+          command: ["pg_isready", "-h", "database", "-U", "$(DB_USERNAME)"]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 64Mi }
+      containers:
+        - name: keto
+          image: {{ .Values.ory.ketoImage }}
+          # compose: serve -c /etc/config/keto.yml
+          args: ["serve", "-c", "/etc/config/keto.yml"]
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/keto?sslmode=disable&max_conns={{ .Values.ory.dbMaxConns }}&max_idle_conns={{ .Values.ory.dbMaxIdleConns }}"
+          ports:
+            - { name: read,    containerPort: 4466 }
+            - { name: write,   containerPort: 4467 }
+            - { name: metrics, containerPort: 4468 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+            - { name: tmp,    mountPath: /tmp }
+          securityContext:          # compose x-hardening anchor, 1:1
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          # compose healthcheck: wget -q --spider http://127.0.0.1:4466/health/ready
+          startupProbe:
+            httpGet: { path: /health/ready, port: read }
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: { path: /health/ready, port: read }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/alive, port: read }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources: {{- toYaml .Values.ory.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: keto-config
+            # keto.yml sets namespaces.location: file:///etc/config/namespaces.keto.ts
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 32Mi }

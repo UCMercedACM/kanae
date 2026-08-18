@@ -1,0 +1,111 @@
+{{- if .Values.seed.enabled }}
+{{/*
+  Seeding is a Job, NOT an init container on kanae.
+
+  scripts/seed/init.sh curls $KANAE/... and $KRATOS_PUBLIC/self-service/... —
+  it needs kanae already serving HTTP. As a kanae init container that
+  deadlocks: kanae will not start until the init container exits, and the init
+  container cannot exit until kanae is serving. docker-compose.web.yml gets
+  this right too (depends_on: kanae: service_healthy).
+
+  post-install ONLY, and hook-weight 10 so it lands after the migration Jobs
+  (weight 0). Adding post-upgrade would re-seed on every deploy.
+
+  NOTE the seed identities are @seed.test.local — this is preview/dev data.
+  Default is disabled; turn it on deliberately.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kanae-seed
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "9"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  init.sh: |
+{{ .Files.Get "files/seed/init.sh" | indent 4 }}
+  vars.env: |
+{{ .Files.Get "files/seed/vars.env" | indent 4 }}
+  events.json: |
+{{ .Files.Get "files/seed/data/events.json" | indent 4 }}
+  members.json: |
+{{ .Files.Get "files/seed/data/members.json" | indent 4 }}
+  projects.json: |
+{{ .Files.Get "files/seed/data/projects.json" | indent 4 }}
+  tags.json: |
+{{ .Files.Get "files/seed/data/tags.json" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kanae-seed
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        # Unlike the other gates this one MUST wait for an app to be serving,
+        # not merely reachable, so it polls kanae's health endpoint. Bounded
+        # short; kubelet retries beyond that.
+        - name: wait-for-kanae
+          # kanae's own image: its Dockerfile apt-installs curl, and the compose
+          # healthcheck uses the same command. postgres:18 has no curl.
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command:
+            - sh
+            - -c
+            - 'for i in $(seq 1 15); do curl -fsS --max-time 2 http://kanae:8000 >/dev/null && exit 0; sleep 2; done; exit 1'
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 64Mi }
+      containers:
+        - name: seed
+          # Needs bash, curl, jq, openssl, psql and valkey-cli. compose builds
+          # this inline (docker-compose.web.yml); k8s cannot, so publish an
+          # image and set seed.image. See mise task helm:seed-image.
+          image: {{ .Values.seed.image }}
+          command: ["bash", "/seed/init.sh"]
+          env:
+            - name: KRATOS_PUBLIC
+              value: http://kratos:4433
+            - name: KRATOS_ADMIN
+              value: http://kratos:4434
+            - name: KETO_WRITE
+              value: http://keto:4467
+            - name: KANAE
+              value: http://kanae:8000
+            - name: DB_HOST
+              value: database
+            - name: VALKEY_HOST
+              value: valkey
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_DATABASE_NAME } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+          volumeMounts:
+            - { name: seed, mountPath: /seed, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { memory: 192Mi }
+      volumes:
+        - name: seed
+          configMap:
+            name: kanae-seed
+            defaultMode: 0755
+            items:
+              - { key: init.sh,      path: init.sh }
+              - { key: vars.env,     path: vars.env }
+              - { key: events.json,  path: data/events.json }
+              - { key: members.json, path: data/members.json }
+              - { key: projects.json, path: data/projects.json }
+              - { key: tags.json,    path: data/tags.json }
+{{- end }}

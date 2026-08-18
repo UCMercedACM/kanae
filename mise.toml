@@ -240,3 +240,35 @@ run = """
     --region garage
   echo "Garage setup complete."
 """
+
+[tasks."helm:sync"]
+description = "Copy the canonical Ory configs, schema and seed scripts into the Helm chart's files/ directory. Helm can only read files inside the chart, so these are copies — re-run after editing the originals."
+dir = "{{ config_root }}"
+run = """
+  set -e
+  CHART=deploy/helm/kanae/files
+  mkdir -p "$CHART"/kratos/hooks "$CHART"/kratos/templates/recovery/valid "$CHART"/keto "$CHART"/seed/data
+  cp docker/ory/init.sh "$CHART"/init.sh
+  cp src/schema.sql "$CHART"/schema.sql
+  cp docker/ory/config/kratos/kratos.prod.yml docker/ory/config/kratos/identity.schema.json "$CHART"/kratos/
+  cp docker/ory/config/kratos/hooks/payload.jsonnet "$CHART"/kratos/hooks/
+  cp docker/ory/config/kratos/templates/recovery/valid/*.gotmpl "$CHART"/kratos/templates/recovery/valid/
+  cp docker/ory/config/keto/keto.yml docker/ory/config/keto/namespaces.keto.ts "$CHART"/keto/
+  cp scripts/seed/init.sh scripts/seed/vars.env "$CHART"/seed/
+  cp scripts/seed/data/*.json "$CHART"/seed/data/
+  echo "Chart files synced."
+"""
+
+[tasks."helm:check"]
+description = "Fail if the Helm chart's files/ copies have drifted from their canonical sources. Run in CI."
+depends = ["helm:sync"]
+dir = "{{ config_root }}"
+run = """
+  if ! git diff --quiet -- deploy/helm/kanae/files; then
+    echo "error: deploy/helm/kanae/files is out of date with its sources" >&2
+    git diff --stat -- deploy/helm/kanae/files >&2
+    echo "run 'mise run helm:sync' and commit the result" >&2
+    exit 1
+  fi
+  echo "Chart files are in sync."
+"""

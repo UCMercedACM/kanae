@@ -45,12 +45,11 @@ spec:
         connects happily to an empty database, kanae reports READY, then 500s
         on every query. That is the case worth an init container.
 
-        The loop is short on purpose. Per the init-containers docs, "if a Pod's
-        init container fails, the kubelet repeatedly restarts that init
-        container until it succeeds" -- kubelet already owns retry-with-backoff,
-        so a long internal loop just reimplements it worse and inflates worst-
-        case pod startup. 15 * 2s covers the normal case in-process; anything
-        slower becomes Init:CrashLoopBackOff with a readable log.
+        It is single-shot, with no retry loop. Per the init-containers docs,
+        "if a Pod's init container fails, the kubelet repeatedly restarts that
+        init container until it succeeds" -- kubelet already owns retry with
+        exponential backoff, so an in-container loop only duplicates it worse
+        and inflates worst-case pod startup. psql's exit code is the check.
       */}}
       initContainers:
         # depends_on: migrate — condition: service_completed_successfully
@@ -66,17 +65,21 @@ spec:
           env:
             - name: PGPASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
-          command:
-            - sh
-            - -c
-            - |
-              for i in $(seq 1 15); do
-                ok=$(psql -h database -U "$DB_USERNAME" -d "$DB_DATABASE_NAME" \
-                     -tAc "SELECT to_regclass('public.members') IS NOT NULL" 2>/dev/null)
-                [ "$ok" = "t" ] && exit 0
-                sleep 2
-              done
-              echo "schema not present yet; deferring to kubelet restart" >&2; exit 1
+          # Single-shot, no loop and no shell. psql exits non-zero when the
+          # relation does not exist, which is exactly the signal we want, so the
+          # exit code IS the check. kubelet supplies the retry.
+          command: ["psql"]
+          args:
+            - "-v"
+            - "ON_ERROR_STOP=1"
+            - "-h"
+            - "database"
+            - "-U"
+            - "$(DB_USERNAME)"
+            - "-d"
+            - "$(DB_DATABASE_NAME)"
+            - "-c"
+            - "SELECT 1 FROM members LIMIT 0"
           resources:
             requests: { cpu: 10m, memory: 32Mi }
             limits:   { memory: 64Mi }

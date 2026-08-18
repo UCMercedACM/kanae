@@ -41,9 +41,24 @@ valkey:
 ory:
   kratosImage: oryd/kratos:v26.2.0
   ketoImage: oryd/keto:v26.2.0
+  # Compose uses max_conns=20 per service. With Kratos + Keto + kanae's asyncpg
+  # pool that is up to 50 backends against a Postgres sized for a 4 GB node,
+  # each costing several MB. Neither Ory service needs anything close to 20.
+  # These override the DSN in kratos.prod.yml / keto.yml via the DSN env var.
+  dbMaxConns: 5
+  dbMaxIdleConns: 2
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits:   { memory: 160Mi }
+
+seed:
+  # scripts/seed/init.sh, as a post-install Job (weight 10, after migrations).
+  # NOT an init container: it curls kanae's HTTP API, so gating kanae on it
+  # deadlocks. Identities are @seed.test.local — this is preview data.
+  enabled: false
+  # Needs bash, curl, jq, openssl, psql, valkey-cli. compose builds this inline
+  # in docker-compose.web.yml; Kubernetes cannot build, so publish an image.
+  image: ghcr.io/ucmercedacm/kanae-seed:latest
 
 migrate:
   atlasImage: arigaio/atlas:latest
