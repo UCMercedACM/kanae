@@ -38,6 +38,12 @@ valkey:
 ory:
   kratosImage: oryd/kratos:v26.2.0
   ketoImage: oryd/keto:v26.2.0
+  # Issue the CSRF and session cookies without the Secure flag. FALSE IN
+  # PRODUCTION, always — api.ucmacm.dev is HTTPS and Secure cookies are the
+  # point. Exists because a local run serves Kratos over plain http, where a
+  # Secure cookie is silently dropped and every browser self-service flow fails
+  # its CSRF check. See the comment in templates/kratos.yaml.
+  insecureCookies: false
 
 migrate:
   atlasImage: arigaio/atlas:latest

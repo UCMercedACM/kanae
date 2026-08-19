@@ -94,9 +94,17 @@ spec:
           volumeMounts:
             - { name: data, mountPath: {{ .Values.postgres.dataDir }} }
             - { name: initdb, mountPath: /docker-entrypoint-initdb.d }
-          # Verbatim from the compose healthcheck, including the checksum-failure
-          # query. $$ escapes a literal $ in both compose and Kubernetes, so the
-          # command below reads the same as the one in docker-compose.yml.
+          # Same checks as the compose healthcheck, including the checksum-failure
+          # query — but with SINGLE $, not the $$ compose uses. Do not "restore"
+          # the $$: compose interpolates the file itself and collapses $$ to $
+          # before the shell ever sees it, whereas kubelet expands nothing in an
+          # exec probe (the $(VAR) expansion Kubernetes does perform is applied
+          # only to a container's command/args, never to probes). A literal $$
+          # therefore reaches sh, which expands it to its own PID, so Chksum gets
+          # "<pid>(psql ...)" instead of running psql and the probe can never
+          # pass. Postgres would stay NotReady forever, and because `database` is
+          # headless that also means no DNS record — the whole stack fails to
+          # resolve database:5432.
           readinessProbe:
             exec:
               command:
@@ -104,9 +112,9 @@ spec:
                 - -c
                 - |
                   pg_isready --dbname="$POSTGRES_DB" --username="$POSTGRES_USER" || exit 1
-                  Chksum="$$(psql --dbname="$POSTGRES_DB" --username="$POSTGRES_USER" --tuples-only --no-align --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database')"
-                  echo "checksum failure count is $$Chksum"
-                  [ "$$Chksum" = '0' ] || exit 1
+                  Chksum="$(psql --dbname="$POSTGRES_DB" --username="$POSTGRES_USER" --tuples-only --no-align --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database')"
+                  echo "checksum failure count is $Chksum"
+                  [ "$Chksum" = '0' ] || exit 1
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 10

@@ -78,6 +78,25 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_WEBHOOK_TOKEN_SETTINGS } }
             - name: COURIER_SMTP_CONNECTION_URI
               valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SMTP_URI } }
+            {{- if .Values.ory.insecureCookies }}
+            # Local, plain-HTTP runs only — never set this for Kapsule.
+            #
+            # The v26.2.0 config schema says of both cookies.secure and
+            # session.cookie.secure: "If unset, defaults to !dev mode." Kratos is
+            # not started with --dev here, so both cookies are issued Secure, and
+            # a Secure cookie is never sent back over http:// to a non-localhost
+            # host. scripts/seed/init.sh drives the *browser* self-service flows
+            # (/self-service/registration/browser), which are double-submit CSRF
+            # protected: it reads the csrf_token out of the flow body but the
+            # matching cookie never returns, so the POST is rejected and seeding
+            # fails before it ever reaches the kanae webhook.
+            #
+            # Note curl special-cases 127.0.0.1 as a secure context, so a
+            # port-forwarded probe from a laptop can succeed while the in-cluster
+            # seed Job talking to http://kratos:4433 fails.
+            - { name: COOKIES_SECURE,       value: "false" }
+            - { name: SESSION_COOKIE_SECURE, value: "false" }
+            {{- end }}
           ports:
             - { name: public, containerPort: 4433 }
             - { name: admin,  containerPort: 4434 }

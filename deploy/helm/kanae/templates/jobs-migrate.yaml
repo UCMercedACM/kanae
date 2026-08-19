@@ -43,15 +43,30 @@ spec:
       containers:
         - name: atlas
           image: {{ .Values.migrate.atlasImage }}
-          envFrom:
-            - secretRef: { name: {{ .Values.existingEnvSecret }} }
-          command: ["sh", "-c"]
+          # No `command:` override and no shell. The compose service passes these
+          # same words as `command:` to the image's atlas entrypoint, so args
+          # alone reproduces it exactly — and nothing here depends on the atlas
+          # image shipping /bin/sh, which is not something this chart can check.
+          # The DSNs are assembled by Kubernetes' own $(VAR) expansion, the same
+          # mechanism kratos/keto use below; DB_* must be declared before the
+          # values that reference them.
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DB_DATABASE_NAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_DATABASE_NAME } }
           args:
-            - >-
-              atlas schema apply --auto-approve
-              --to "file:///schema/schema.sql"
-              --url "postgres://$DB_USERNAME:$DB_PASSWORD@database:5432/$DB_DATABASE_NAME?search_path=public&sslmode=disable"
-              --dev-url "postgres://$DB_USERNAME:$DB_PASSWORD@database:5432/postgres?search_path=public&sslmode=disable"
+            - schema
+            - apply
+            - --auto-approve
+            - --to
+            - file:///schema/schema.sql
+            - --url
+            - postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/$(DB_DATABASE_NAME)?search_path=public&sslmode=disable
+            - --dev-url
+            - postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/postgres?search_path=public&sslmode=disable
           volumeMounts:
             - { name: schema, mountPath: /schema, readOnly: true }
       volumes:

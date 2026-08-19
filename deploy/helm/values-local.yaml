@@ -28,6 +28,13 @@ postgres:
 valkey:
   maxmemory: 64mb
 
+ory:
+  # Nothing here is served over TLS, and Kratos issues Secure cookies unless
+  # told otherwise. curl drops a Secure cookie on an http:// request to a
+  # non-localhost host, so the seed Job's browser self-service flows would fail
+  # CSRF against http://kratos:4433 with this off.
+  insecureCookies: true
+
 backup:
   # No borg repository locally. Leaving this on also breaks iteration: the
   # pre-upgrade hook has backoffLimit 1, so a failing backup fails the upgrade.

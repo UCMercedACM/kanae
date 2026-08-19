@@ -39,9 +39,15 @@ spec:
       initContainers:
         - name: wait-for-schema
           image: {{ .Values.postgres.image }}
-          envFrom:
-            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+          # Named keys rather than envFrom: this container needs three values,
+          # and envFrom would also hand it the Kratos cipher secret, the webhook
+          # tokens, the storage keys and the SMTP URI. Same reasoning as the
+          # database container in postgres.yaml.
           env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_DATABASE_NAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_DATABASE_NAME } }
             - name: PGPASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
           # Single-shot: psql exits non-zero when the relation is missing, so the
