@@ -301,6 +301,13 @@ run = """
   echo "Rendering with local values..."
   helm template kanae deploy/helm/kanae -f deploy/helm/values-local.yaml \
     | kubeconform -strict -summary -kubernetes-version 1.31.0 -
+  # The example secrets file is committed, carries every key and sets
+  # secrets.create, so it is the only way to exercise templates/secrets.yaml
+  # without a decryption key. Without this the production install path — the
+  # one that renders three more Secrets — is the one path CI never renders.
+  echo "Rendering the secrets path (secrets-prod.example.yaml)..."
+  helm template kanae deploy/helm/kanae -f deploy/helm/secrets-prod.example.yaml \
+    | kubeconform -strict -summary -kubernetes-version 1.31.0 -
 """
 
 [tasks."seed:image"]
