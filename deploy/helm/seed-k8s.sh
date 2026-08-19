@@ -76,7 +76,10 @@ while getopts ':lrn:o:h' OPT; do
 	esac
 done
 shift "$((OPTIND - 1))"
-[[ $# -eq 0 ]] || { usage >&2; abort "unexpected argument: $1"; }
+[[ $# -eq 0 ]] || {
+	usage >&2
+	abort "unexpected argument: $1"
+}
 
 for cmd in uv yq openssl; do
 	command -v "$cmd" >/dev/null 2>&1 || abort "$cmd is required but was not found on PATH"
@@ -133,7 +136,20 @@ prompt_secret() {
 		return
 	fi
 	if [[ $LOCAL == true ]]; then
-		printf 'local-dev-%s' "$(printf '%s' "$key" | tr 'A-Z_' 'a-z-')"
+		# Not every placeholder can be an arbitrary string. Kratos validates
+		# courier.smtp.connection_uri against "^smtps?://.*" at startup and
+		# refuses to boot if it does not match, so a generic local-dev-* value
+		# here crashloops Kratos and takes the whole local stack with it — the
+		# failure shows up as a config validation error, nowhere near this script.
+		# Nothing delivers mail locally; this only has to parse.
+		case $key in
+			KRATOS_SMTP_URI)
+				printf 'smtp://seed:seed@localhost:1025/?disable_starttls=true'
+				;;
+			*)
+				printf 'local-dev-%s' "$(printf '%s' "$key" | tr 'A-Z_' 'a-z-')"
+				;;
+		esac
 		return
 	fi
 	local value=''
@@ -205,24 +221,34 @@ log "rendering config.yml from ${CONFIG_DIST##*/}"
 # different config.yml is how you get a bug that only appears on one of them.
 if [[ $LOCAL == true ]]; then
 	ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+	# Off locally, because the local stack exists to run scripts/seed/init.sh
+	# against it and the two cannot coexist. Seeding provisions 15 members
+	# serially and calls GET /members/me once per member; that route carries
+	# @router.limiter.limit("10/minute"), so member 11 onward gets a 429, the
+	# script reads no .id out of it and dies with "did not resolve an identity"
+	# — a message that says nothing about rate limiting. Deterministic, not flaky.
+	LIMITER_ENABLED=${LIMITER_ENABLED:-false}
 else
 	ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://ucmacm.dev}
+	LIMITER_ENABLED=${LIMITER_ENABLED:-true}
 fi
 
 CONFIG_YML=$(
 	ALLOWED_ORIGINS=$ALLOWED_ORIGINS \
-	DB_PASSWORD=$DB_PASSWORD \
-	DB_USERNAME=$DB_USERNAME \
-	DB_DATABASE_NAME=$DB_DATABASE_NAME \
-	MASTER_KEY=$KRATOS_WEBHOOK_MASTER_KEY \
-	KEY_ID=$STORAGE_KEY_ID \
-	SECRET_KEY=$STORAGE_SECRET_KEY \
-	S3_URL=${S3_URL:-https://s3.example.r2.cloudflarestorage.com} \
-	S3_PUBLIC_URL=${S3_PUBLIC_URL:-https://media.ucmacm.dev} \
+	LIMITER_ENABLED=$LIMITER_ENABLED \
+		DB_PASSWORD=$DB_PASSWORD \
+		DB_USERNAME=$DB_USERNAME \
+		DB_DATABASE_NAME=$DB_DATABASE_NAME \
+		MASTER_KEY=$KRATOS_WEBHOOK_MASTER_KEY \
+		KEY_ID=$STORAGE_KEY_ID \
+		SECRET_KEY=$STORAGE_SECRET_KEY \
+		S3_URL=${S3_URL:-https://s3.example.r2.cloudflarestorage.com} \
+		S3_PUBLIC_URL=${S3_PUBLIC_URL:-https://media.ucmacm.dev} \
 		yq '
 		.kanae.host = "0.0.0.0" |
 		.kanae.dev_mode = false |
 		.kanae.allowed_origins = (strenv(ALLOWED_ORIGINS) | split(",")) |
+		.kanae.limiter.enabled = (strenv(LIMITER_ENABLED) == "true") |
 		.kanae.prometheus.enabled = true |
 		.kanae.prometheus.host = "0.0.0.0" |
 		.kanae.limiter.storage_uri = "valkey://valkey:6379/" |

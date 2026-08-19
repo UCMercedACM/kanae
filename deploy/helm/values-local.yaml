@@ -6,18 +6,31 @@
 # No secrets in this file — keep it in git.
 
 image:
-  # Default to pulling the published `edge` tag — no local build needed just to
-  # see the stack run. To test uncommitted changes instead:
-  #   docker build -f docker/Dockerfile -t ghcr.io/ucmercedacm/kanae:dev .
-  #   k3d image import ghcr.io/ucmercedacm/kanae:dev -c kanae
-  # then set tag: dev and pullPolicy: Never.
-  repository: ghcr.io/ucmercedacm/kanae
-  tag: edge
-  pullPolicy: Always
+  # Local-only tag, built and imported by `mise run k3d:images`. It is NOT
+  # ghcr.io/ucmercedacm/kanae:edge, which reads like the obvious choice and is a
+  # private package: a k3d node has no registry credentials, so pulling it fails
+  # with "failed to fetch anonymous token: 401 Unauthorized" and both the kanae
+  # Deployment and the seed Job's wait-for-kanae init container sit in
+  # ImagePullBackOff. A `docker pull` on the host can still succeed, because the
+  # host daemon has ghcr credentials the cluster does not — do not let that
+  # mislead you.
+  repository: kanae
+  tag: dev
+  # Never, not Always: the image only exists because k3d image import put it
+  # there. Always would send the kubelet to a registry that has no such tag.
+  pullPolicy: Never
 
 kanae:
   replicas: 1
   granianWorkers: 1               # laptop
+  # Off, because the local stack exists to run the seed script against it and
+  # the two cannot coexist. Seeding provisions the 15 members in
+  # scripts/seed/data/members.json serially and calls GET /members/me once per
+  # member; that route carries @router.limiter.limit("10/minute"), so member 11
+  # onward gets a 429, the script reads no .id out of it and fails with "did not
+  # resolve an identity" — a message that points nowhere near rate limiting.
+  # Deterministic, not flaky: it fails at the same place every run.
+  limiterEnabled: false
 
 postgres:
   # k3d ships rancher local-path-provisioner. csi.scaleway.com does not exist
@@ -60,9 +73,9 @@ seed:
   # most of the point of standing the stack up, and it exercises the webhook
   # path between Kratos and kanae that nothing else does.
   #
-  # There is no published kanae-seed image, so build and import it first:
-  #   mise run seed:image
-  # which builds ghcr.io/ucmercedacm/kanae-seed:dev and k3d-imports it.
+  # Built and imported by `mise run k3d:images`, same as the app image above.
+  # Nothing publishes a kanae-seed image anywhere, so this tag is local or it is
+  # nothing.
   enabled: true
-  image: ghcr.io/ucmercedacm/kanae-seed:dev
+  image: kanae-seed:dev
   pullPolicy: Never

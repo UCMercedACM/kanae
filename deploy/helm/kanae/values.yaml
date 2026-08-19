@@ -26,6 +26,10 @@ kanae:
   # this key, so a config.yml produced by that path still needs it fixed by hand.
   allowedOrigins:
     - "https://ucmacm.dev"
+  # Kanae's own rate limiters. On everywhere except a local seeded run — see the
+  # comment in values-local.yaml. Mirrors $LIMITER_ENABLED in seed-k8s.sh, which
+  # renders the same config.yml by the other route.
+  limiterEnabled: true
 
 # Non-secret half of the storage config; the key id and secret live in
 # secrets.*. Buckets and URLs are deployment-specific, not credentials.

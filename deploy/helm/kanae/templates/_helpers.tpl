@@ -26,7 +26,9 @@
         "dev_mode" false
         "allowed_origins" .Values.kanae.allowedOrigins
         "prometheus" (dict "enabled" true "host" "0.0.0.0")
-        "limiter" (dict "storage_uri" "valkey://valkey:6379/"))
+        "limiter" (dict
+          "storage_uri" "valkey://valkey:6379/"
+          "enabled" .Values.kanae.limiterEnabled))
       "ory" (dict
         "kratos_public_url" "http://kratos:4433"
         "kratos_admin_url"  "http://kratos:4434"

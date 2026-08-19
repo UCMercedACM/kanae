@@ -28,6 +28,8 @@ spec:
     metadata:
       labels: { app: valkey }
     spec:
+      securityContext:
+        fsGroup: 1000              # so the /data emptyDir is writable as valkey
       containers:
         - name: valkey
           image: {{ .Values.valkey.image }}
@@ -44,6 +46,15 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+            # Start as the image's own valkey user rather than root. The
+            # entrypoint chowns /data only when it is running as uid 0, and with
+            # ALL capabilities dropped that chown fails with "Operation not
+            # permitted" and the container crashloops before valkey ever starts.
+            # Running as 999 skips that branch entirely. compose never hit this:
+            # its x-hardening anchor is applied to the Ory services, not valkey.
+            runAsUser: 999             # valkey
+            runAsGroup: 1000           # valkey
+            runAsNonRoot: true
           volumeMounts:
             # valkey still writes a dump on shutdown with persistence off; give
             # it somewhere ephemeral rather than fighting it.

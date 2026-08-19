@@ -310,18 +310,27 @@ run = """
     | kubeconform -strict -summary -kubernetes-version 1.31.0 -
 """
 
-[tasks."seed:image"]
-description = "Build the kanae-seed image from docker/Dockerfile.seed and import it into the local k3d cluster. Needed because seeding is enabled for local runs and Kubernetes cannot build images the way docker-compose.web.yml does."
+[tasks."k3d:images"]
+alias = ["seed:image"]
+description = "Build the kanae and kanae-seed images and import them into the local k3d cluster. Both are LOCAL-ONLY tags: ghcr.io/ucmercedacm/kanae is a private package a k3d node cannot pull, and no kanae-seed image is published at all."
 dir = "{{ config_root }}"
 run = """
   set -e
-  IMAGE=${SEED_IMAGE:-ghcr.io/ucmercedacm/kanae-seed:dev}
   CLUSTER=${K3D_CLUSTER:-kanae}
-  docker build -f docker/Dockerfile.seed -t "$IMAGE" .
+  APP_IMAGE=${APP_IMAGE:-kanae:dev}
+  SEED_IMAGE=${SEED_IMAGE:-kanae-seed:dev}
+
+  # Unqualified names on purpose. A tag like ghcr.io/ucmercedacm/kanae-seed:dev
+  # reads as something you could pull and cannot be: nothing publishes it. These
+  # only ever exist in the local daemon and in the k3d node, and values-local.yaml
+  # pairs them with pullPolicy: Never so the kubelet never reaches for a registry.
+  docker build -f docker/Dockerfile -t "$APP_IMAGE" .
+  docker build -f docker/Dockerfile.seed -t "$SEED_IMAGE" .
+
   if k3d cluster list "$CLUSTER" >/dev/null 2>&1; then
-    k3d image import "$IMAGE" -c "$CLUSTER"
-    echo "Imported $IMAGE into k3d cluster '$CLUSTER'."
+    k3d image import "$APP_IMAGE" "$SEED_IMAGE" -c "$CLUSTER"
+    echo "Imported $APP_IMAGE and $SEED_IMAGE into k3d cluster '$CLUSTER'."
   else
-    echo "k3d cluster '$CLUSTER' not found — built $IMAGE but did not import it."
+    echo "k3d cluster '$CLUSTER' not found — built the images but did not import them."
   fi
 """
