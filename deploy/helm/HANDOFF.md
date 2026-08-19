@@ -15,8 +15,9 @@ IPv4). Nothing has been deployed anywhere yet.
 deploy/helm/
 ├── kanae/
 │   ├── values.yaml            production defaults
-│   ├── files/                 copies of Ory configs, schema.sql, seed scripts
-│   └── templates/             9 templates
+│   ├── files/                 copies of Ory configs, schema.sql, config.dist.yml,
+│   │                          seed scripts
+│   └── templates/             10 manifests + _helpers.tpl
 ├── values-local.yaml          k3d overrides (seeding on, backup/ingress off)
 ├── secrets-prod.example.yaml  documents the SOPS secrets file
 ├── seed-k8s.sh                creates the kanae-env / kanae-config Secrets
@@ -103,50 +104,111 @@ nothing collects them. **If you later fix `_is_docker()`, remove this mount.**
 **No resource requests or limits anywhere**, deliberately, pending real numbers
 from a running deployment.
 
+**Secrets have two paths that produce identical output.** `secrets.create false`
+(the default) mounts Secrets somebody else created — `seed-k8s.sh` without `-o`,
+which is the local flow. `secrets.create true`, set by the SOPS file itself,
+renders them from `.Values.secrets.*`. Both produce the same names
+(`kanae-env`, `kanae-config`, `kanae-borg`), so no workload knows which path ran.
+False is the default because it is the failure-safe one: an install that forgets
+the secrets file mounts what is already in the cluster rather than overwriting it
+with blanks. Every value is wrapped in `required`, so a half-filled file fails at
+render naming the key instead of installing an empty password.
+
+**`config.yml` is an overlay, not a second copy.** `_helpers.tpl` merges the
+deployment's values onto `files/config.dist.yml` rather than maintaining a
+`config.tpl.yml`, so a key added to `config.dist.yml` arrives with its documented
+default and `helm:check` catches the copy going stale. It is a named template
+because the kanae Deployment hashes the same bytes into `checksum/config` — a
+checksum computed from anything other than the real output stops matching the
+moment the overlay grows a key. The overlay mirrors the yq expression in
+`seed-k8s.sh`; keep them in step.
+
+**Webhook tokens are stored, not derived, in the chart.** Sprig has no blake3.
+`seed-k8s.sh` recomputes both from the master key on every run, which is what
+stops them drifting.
+
 **`files/` holds copies.** Helm cannot read outside the chart directory, so the
-Ory configs, `schema.sql` and the seed scripts are duplicated there.
+Ory configs, `schema.sql`, `config.dist.yml` and the seed scripts are duplicated
+there.
 `mise run helm:sync` refreshes them; `mise run helm:check` fails CI on drift.
 Source of truth remains `docker/ory/config/**`, `src/schema.sql`,
 `scripts/seed/**`.
 
+## What has now been verified
+
+**The chart renders.** `helm lint` is clean and
+`helm template | kubeconform -strict -kubernetes-version 1.31.0` passes over all
+three value sets: production (22 resources), `values-local.yaml` (20), and a
+filled secrets file (25, the three Secrets being the extra).
+
+That pass found nothing by itself — the real bugs were in what the rendered
+commands *do*, which no schema check can see. Fixed since:
+
+- The **Postgres readiness probe could never have passed**, and because
+  `database` is headless, a never-Ready Postgres means no DNS record and
+  nothing in the release resolves `database:5432`. `$$` was copied from the
+  compose healthcheck; compose collapses it to `$` before the shell sees it,
+  but **kubelet expands nothing in an exec probe** — the `$(VAR)` expansion
+  Kubernetes does perform applies to a container's command/args, never to
+  probes. `sh` got a literal `$$` and substituted its own PID.
+- The **atlas Job assumed the image ships `/bin/sh`**, which the chart cannot
+  check. It now passes args to the image's entrypoint the way compose does, and
+  lets Kubernetes' `$(VAR)` expansion build the DSNs.
+- **Kratos issues Secure cookies**, which breaks local seeding — see below.
+
+**`seed-k8s.sh -o` runs end to end** and its output feeds `helm template`
+directly. The blake3 tokens still match `scripts/derive-webhook-tokens.py`, and
+the `config.yml` it renders with yq is now **key-for-key identical** to the one
+the chart renders from the same values — that was checked by diffing them, and
+it is an invariant worth re-checking if either side changes.
+
 ## Not verified
 
-**The chart has never been rendered.** No helm binary was available in the
-session that wrote it and the egress proxy blocked the download. Validation was
-YAML-structure only — template actions stripped, then parsed — which catches
-indentation but not template logic, value references, or whether the output is
-valid Kubernetes.
+**Nothing has been deployed.** Not to Kapsule, not to k3d, and the environment
+this was written in could not do it: the egress policy blocks
+`production.cloudfront.docker.com` (where Docker Hub serves every blob),
+`registry.k8s.io` and `quay.io`, so no image can be pulled and no k3d cluster
+can start. helm, kubeconform and mikefarah yq were built from source through
+the Go module proxy, which is reachable. Anyone with normal network access
+should start by doing what could not be done here.
 
-**Run `mise run helm:lint` first.** It does `helm lint` plus
-`helm template | kubeconform -strict` over both value sets. Expect it to find
-something.
+**`seed-k8s.sh`'s `kubectl apply` path has still never run against a cluster.**
 
-**`seed-k8s.sh` has only been exercised in `-o` mode.** The blake3 derivation is
-verified to match `scripts/derive-webhook-tokens.py` byte-for-byte, and the
-generated value lengths are correct, but the `kubectl apply` path has never run
-against a cluster.
-
-**Nothing has been deployed.** Not to Kapsule, not to k3d.
+**The borg Secret's env var names are a guess.** `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY` are what rclone, borgstore's `s3:` backend and boto all
+read, but confirm against the image in `backup.image` before trusting a backup.
 
 ## Open work
 
-1. **SOPS migration.** The chart reads pre-created Secrets via
-   `existingSecret` / `existingEnvSecret` (`TODO(sops)` in `values.yaml`). To
-   make `helm secrets install` work it needs `templates/secrets.yaml` rendering
-   both Secrets from `.Values.secrets.*`, plus `files/config.tpl.yml` so
-   `postgres_uri` and the env Secret share one `dbPassword`. `.sops.yaml` and
-   `secrets-prod.example.yaml` already document the layout. Note Sprig has no
-   blake3, so the webhook tokens cannot be derived in a template — `seed-k8s.sh`
-   recomputes them, which is why they are stored despite being derived values.
-2. **First real deploy**, local then Kapsule.
-3. **borgmatic config.** The chart schedules it and expects a ConfigMap named by
+1. **First real deploy**, local then Kapsule. Everything below is downstream of
+   actually running it once.
+
+   The first thing to watch on a local run is **Kratos cookies**. The v26.2.0
+   config schema says of `cookies.secure` and `session.cookie.secure`: "If unset,
+   defaults to !dev mode." Kratos is not started with `--dev`, so both are
+   Secure, and curl drops a Secure cookie on an `http://` request to a
+   non-localhost host (verified locally; note curl special-cases `127.0.0.1` as
+   a secure context, so a port-forwarded probe can succeed while the in-cluster
+   seed Job against `http://kratos:4433` fails). `scripts/seed/init.sh` drives
+   the *browser* self-service flows, which are double-submit CSRF protected: it
+   reads `csrf_token` out of the flow body, but the matching cookie never comes
+   back, so the POST is rejected. `ory.insecureCookies` in `values-local.yaml`
+   exists for this and is off in production. It is reasoned from the schema, not
+   observed — if seeding still fails CSRF, that is the first place to look.
+
+   Also note the chart mounts `kratos.prod.yml` while compose seeds against
+   `kratos.yml`, so a local run exercises a config combination the compose stack
+   never has.
+2. **borgmatic config.** The chart schedules it and expects a ConfigMap named by
    `backup.configMap`; the config itself is maintained separately. Borg 1.x
    cannot write to S3/R2 — only Borg 2.x can, via `borgstore` (`s3:`, `b2:`,
-   `rclone:`). Check which the image ships before setting `backup.repository`.
-4. **Publish `kanae-seed`.** `docker/Dockerfile.seed` exists and
+   `rclone:`). Check which the image ships before setting `backup.repository`,
+   and confirm the credential env var names against the Secret the chart now
+   renders.
+3. **Publish `kanae-seed`.** `docker/Dockerfile.seed` exists and
    `mise run seed:image` builds it for k3d, but nothing pushes it to ghcr.
-5. **Resource requests/limits**, once there are numbers.
-6. **Ory pool sizing.** DSNs use the compose value of `max_conns=20` per service.
+4. **Resource requests/limits**, once there are numbers.
+5. **Ory pool sizing.** DSNs use the compose value of `max_conns=20` per service.
    With Kratos + Keto + kanae's asyncpg pool that is up to ~50 backends against a
    Postgres sized for a 4 GB node. Lowering to 5 was recommended and deliberately
    left as a separate decision.

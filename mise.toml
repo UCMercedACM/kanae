@@ -265,6 +265,7 @@ run = """
   mkdir -p "$CHART"/kratos/hooks "$CHART"/kratos/templates/recovery/valid "$CHART"/keto "$CHART"/seed/data
   cp docker/ory/init.sh "$CHART"/init.sh
   cp src/schema.sql "$CHART"/schema.sql
+  cp config.dist.yml "$CHART"/config.dist.yml
   cp docker/ory/config/kratos/kratos.prod.yml docker/ory/config/kratos/identity.schema.json "$CHART"/kratos/
   cp docker/ory/config/kratos/hooks/payload.jsonnet "$CHART"/kratos/hooks/
   cp docker/ory/config/kratos/templates/recovery/valid/*.gotmpl "$CHART"/kratos/templates/recovery/valid/

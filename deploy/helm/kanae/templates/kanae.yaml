@@ -19,8 +19,15 @@ spec:
   template:
     metadata:
       labels: { app: kanae }
-      # TODO(sops): add a checksum/config annotation hashing the RENDERED
-      # config.yml once secrets.yaml exists.
+      {{- if .Values.secrets.create }}
+      annotations:
+        # Rolls the pods when the rendered config.yml changes — a rotated
+        # dbPassword, a new storage URL. Only when the chart renders that Secret:
+        # with secrets.create false its contents live in the cluster, where a
+        # template cannot see them, and a hash of the empty values.secrets would
+        # be a constant pretending to be a checksum.
+        checksum/config: {{ include "kanae.configYml" . | sha256sum }}
+      {{- end }}
     spec:
       {{- /*
         compose depends_on for kanae is database/valkey (service_healthy),

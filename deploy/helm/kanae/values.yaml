@@ -19,6 +19,23 @@ image:
 kanae:
   replicas: 1
   granianWorkers: 2      # NOT 8 as in deploy.dist.env
+  # CORS origins written into the rendered config.yml. config.dist.yml ships
+  # the Vite dev server here, which is right for a laptop and wrong for a
+  # deployment — the SPA is on Cloudflare Pages at ucmacm.dev, and with the dist
+  # default every browser request from it is refused. seed-k8s.sh does not patch
+  # this key, so a config.yml produced by that path still needs it fixed by hand.
+  allowedOrigins:
+    - "https://ucmacm.dev"
+
+# Non-secret half of the storage config; the key id and secret live in
+# secrets.*. Buckets and URLs are deployment-specific, not credentials.
+storage:
+  url: "https://s3.example.r2.cloudflarestorage.com"   # how kanae reaches R2
+  presignUrl: "https://s3.example.r2.cloudflarestorage.com"  # host baked into presigned URLs
+  region: auto                                          # R2 is always "auto"
+  bucket: kanae-media
+  publicBucket: kanae-public
+  publicUrl: "https://media.ucmacm.dev"
 
 postgres:
   image: postgres:18
@@ -81,7 +98,40 @@ ingress:
   className: haproxy
   host: api.ucmacm.dev
 
-# TODO(sops): replaced by a templates/secrets.yaml rendering both Secrets from
-# .Values.secrets.* supplied by secrets-prod.enc.yaml.
+# The two Secret names every workload in the chart mounts. They are the same
+# whether templates/secrets.yaml renders them or seed-k8s.sh created them in the
+# cluster beforehand — that is deliberate, so nothing else has to care which.
 existingSecret: kanae-config      # key: config.yml
 existingEnvSecret: kanae-env      # DB_*, KRATOS_SECRETS_*, KRATOS_WEBHOOK_TOKEN_*, KRATOS_SMTP_URI
+
+secrets:
+  # false: mount Secrets somebody else created (seed-k8s.sh without -o). This is
+  #   the default because it is the failure-safe one — a `helm install` that
+  #   forgets the secrets file mounts what is already in the cluster instead of
+  #   overwriting it with empties.
+  # true:  the chart renders them from the values below. Turned on by
+  #   secrets-prod.enc.yaml itself, so
+  #       helm secrets install kanae ./deploy/helm/kanae -n kanae \
+  #         -f deploy/helm/secrets-prod.enc.yaml
+  #   is the whole install and no extra --set is needed.
+  create: false
+
+  # Every value below is empty on purpose. They come from the SOPS-encrypted
+  # file; `required` in templates/secrets.yaml fails the render, naming the key,
+  # if one is missing. Generate them with `./deploy/helm/seed-k8s.sh -o`.
+  # See secrets-prod.example.yaml for what each one is.
+  dbUsername: ""
+  dbDatabaseName: ""
+  dbPassword: ""
+  kratosSecretsCookie: ""
+  kratosSecretsCipher: ""
+  kratosWebhookMasterKey: ""
+  kratosWebhookTokenRegistration: ""
+  kratosWebhookTokenSettings: ""
+  storageKeyId: ""
+  storageSecretKey: ""
+  kratosSmtpUri: ""
+  # Only read when backup.enabled.
+  borgPassphrase: ""
+  borgS3AccessKey: ""
+  borgS3SecretKey: ""

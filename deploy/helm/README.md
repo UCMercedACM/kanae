@@ -172,6 +172,7 @@ curl http://api.kanae.localhost:8080/auth/self-service/login/browser
 | --- | --- |
 | `kanae-env` | `DB_*`, `KRATOS_SECRETS_*`, `KRATOS_WEBHOOK_TOKEN_*`, `STORAGE_*`, `KRATOS_SMTP_URI` |
 | `kanae-config` | `config.yml`, rendered from `config.dist.yml` |
+| `kanae-borg` | `BORG_PASSPHRASE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — only used when `backup.enabled` |
 
 It is **idempotent** — existing values are read back out of the cluster and
 kept, so re-running changes nothing. `-r` rotates the generated ones.
@@ -194,15 +195,35 @@ age-keygen -o ~/.config/sops/age/keys.txt        # each officer; share the publi
 ./deploy/helm/seed-k8s.sh -o deploy/helm/secrets-prod.enc.yaml
 sops -e -i deploy/helm/secrets-prod.enc.yaml
 git add deploy/helm/secrets-prod.enc.yaml && git commit
+
+helm secrets install kanae ./deploy/helm/kanae \
+  -n kanae --create-namespace \
+  -f deploy/helm/secrets-prod.enc.yaml
 ```
 
 Recipients live in `.sops.yaml` at the repo root. Adding or removing an officer
 is `sops updatekeys deploy/helm/secrets-prod.enc.yaml` after editing that file.
 
-> **Not wired up yet.** The chart still reads pre-created Secrets via
-> `existingSecret` / `existingEnvSecret` (`TODO(sops)` in `values.yaml`).
-> Rendering them from `.Values.secrets.*` so `helm secrets install` works is
-> outstanding. Until then, `seed-k8s.sh` without `-o` is the path that works.
+The secrets file carries `secrets.create: true`, which is what switches the
+chart from mounting pre-created Secrets to rendering `kanae-env`,
+`kanae-config` and `kanae-borg` itself. Supplying the file is therefore the
+whole switch — there is no flag to forget. Leaving it out is the safe failure:
+the chart falls back to whatever `seed-k8s.sh` already put in the cluster
+instead of overwriting it with blanks.
+
+`config.yml` is rendered by overlaying the deployment's values onto a copy of
+`config.dist.yml`, so `postgres_uri` and the `DB_PASSWORD` in `kanae-env` are
+built from one `dbPassword` and cannot disagree. A key added to
+`config.dist.yml` shows up automatically with its documented default. The kanae
+Deployment carries a `checksum/config` annotation over those rendered bytes, so
+rotating a secret rolls the pods.
+
+**Editing an existing secrets file is `sops deploy/helm/secrets-prod.enc.yaml`,
+never `seed-k8s.sh -o` again.** `-o` does not read the cluster, so it cannot
+keep existing values the way the apply path does — it mints a completely new
+set, including a new `KRATOS_SECRETS_CIPHER`, and every identity encrypted
+under the old one becomes unreadable. The script refuses to overwrite a file
+that already exists for exactly this reason.
 
 ### What you cannot afford to lose
 
