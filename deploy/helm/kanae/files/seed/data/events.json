@@ -1,0 +1,182 @@
+[
+  {
+    "name": "Fall Kickoff",
+    "description": "Welcome mixer for new and returning members",
+    "start_at": "2026-01-15T18:00:00Z",
+    "end_at": "2026-01-15T20:00:00Z",
+    "location": "Student Union Ballroom",
+    "type": "general",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Intro to Git",
+    "description": "Hands-on version control workshop",
+    "start_at": "2026-01-29T18:00:00Z",
+    "end_at": "2026-01-29T20:00:00Z",
+    "location": "COB2 140",
+    "type": "sig_swe",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "ML Study Jam",
+    "description": "Guided walkthrough of a training pipeline",
+    "start_at": "2026-02-12T18:00:00Z",
+    "end_at": "2026-02-12T20:00:00Z",
+    "location": "SSM 320",
+    "type": "sig_ai",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Data Viz Workshop",
+    "description": "Building dashboards from raw data",
+    "start_at": "2026-03-05T18:00:00Z",
+    "end_at": "2026-03-05T20:00:00Z",
+    "location": "Kolligian Library 232",
+    "type": "sig_data",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Shader Bootcamp",
+    "description": "Fragment shaders from scratch",
+    "start_at": "2026-03-19T18:00:00Z",
+    "end_at": "2026-03-19T20:00:00Z",
+    "location": "COB1 267",
+    "type": "sig_graph",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Hardware Hack",
+    "description": "Solder and program a sensor board",
+    "start_at": "2026-04-02T18:00:00Z",
+    "end_at": "2026-04-02T20:00:00Z",
+    "location": "Castle Lab A",
+    "type": "sig_arch",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Game Jam",
+    "description": "48-hour game building marathon",
+    "start_at": "2026-04-25T09:00:00Z",
+    "end_at": "2026-04-27T09:00:00Z",
+    "location": "COB1 Atrium",
+    "type": "sig_graph",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Cloud 101",
+    "description": "Deploy your first container",
+    "start_at": "2026-05-07T18:00:00Z",
+    "end_at": "2026-05-07T20:00:00Z",
+    "location": "SE2 210",
+    "type": "sig_swe",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Cyber Panel",
+    "description": "Industry security professionals Q&A",
+    "start_at": "2026-05-21T18:00:00Z",
+    "end_at": "2026-05-21T20:00:00Z",
+    "location": "Lakireddy Auditorium",
+    "type": "sig_cyber",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "AI Ethics Talk",
+    "description": "Discussion on responsible AI",
+    "start_at": "2026-06-04T18:00:00Z",
+    "end_at": "2026-06-04T20:00:00Z",
+    "location": "SSM 100",
+    "type": "sig_ai",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Networking Social",
+    "description": "Casual meet-and-greet with alumni",
+    "start_at": "2026-07-02T18:00:00Z",
+    "end_at": "2026-07-02T20:00:00Z",
+    "location": "The Grove",
+    "type": "social",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "React Workshop",
+    "description": "Building a component library",
+    "start_at": "2026-07-23T18:00:00Z",
+    "end_at": "2026-07-23T20:00:00Z",
+    "location": "COB2 140",
+    "type": "sig_swe",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Robotics Demo",
+    "description": "Showcase of member-built robots",
+    "start_at": "2026-08-06T18:00:00Z",
+    "end_at": "2026-08-06T20:00:00Z",
+    "location": "Castle Lab B",
+    "type": "misc",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Open Source Day",
+    "description": "First pull request together",
+    "start_at": "2026-08-20T18:00:00Z",
+    "end_at": "2026-08-20T20:00:00Z",
+    "location": "Kolligian Library 297",
+    "type": "general",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Mobile Dev Intro",
+    "description": "Ship a simple app",
+    "start_at": "2026-09-03T18:00:00Z",
+    "end_at": "2026-09-03T20:00:00Z",
+    "location": "SE1 138",
+    "type": "sig_swe",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Threat Modeling",
+    "description": "Design-time security thinking",
+    "start_at": "2026-09-17T18:00:00Z",
+    "end_at": "2026-09-17T20:00:00Z",
+    "location": "SE1 100",
+    "type": "sig_cyber",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Data Ethics Forum",
+    "description": "Privacy and responsible data use",
+    "start_at": "2026-10-01T18:00:00Z",
+    "end_at": "2026-10-01T20:00:00Z",
+    "location": "SSM 320",
+    "type": "sig_data",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Winter Social",
+    "description": "End-of-semester celebration",
+    "start_at": "2026-10-15T18:00:00Z",
+    "end_at": "2026-10-15T20:00:00Z",
+    "location": "Student Union Ballroom",
+    "type": "social",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "UI/UX Critique",
+    "description": "Portfolio and design feedback",
+    "start_at": "2026-11-12T18:00:00Z",
+    "end_at": "2026-11-12T20:00:00Z",
+    "location": "COB1 267",
+    "type": "general",
+    "timezone": "America/Los_Angeles"
+  },
+  {
+    "name": "Spring Showcase",
+    "description": "Demo day for all SIG projects",
+    "start_at": "2026-12-03T18:00:00Z",
+    "end_at": "2026-12-03T20:00:00Z",
+    "location": "Student Union Ballroom",
+    "type": "general",
+    "timezone": "America/Los_Angeles"
+  }
+]

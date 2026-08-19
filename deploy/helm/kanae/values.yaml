@@ -1,0 +1,141 @@
+# NOTE: Service names are deliberately fixed (kanae, database, valkey, kratos,
+# keto) to match the compose service names hardcoded in kratos.prod.yml,
+# keto.yml and config.yml. Do not templatize them.
+#
+# No resource requests/limits anywhere in this chart yet. Add them once there
+# are real numbers from a running deployment, not guesses.
+
+image:
+  repository: ghcr.io/ucmercedacm/kanae
+  # `edge` is pushed from main by .github/workflows/docker.yml and is the tag
+  # that is actually exercised. Semver tags (0.3.1, 0.3, 0) exist too and can be
+  # pinned here for a reproducible deploy.
+  tag: edge
+  # Always, not IfNotPresent: `edge` is a moving tag, so IfNotPresent would keep
+  # whatever the node pulled first and never pick up a new push. Switch to
+  # IfNotPresent if you pin tag to a semver above.
+  pullPolicy: Always
+
+kanae:
+  replicas: 1
+  granianWorkers: 2      # NOT 8 as in deploy.dist.env
+  # CORS origins written into the rendered config.yml. config.dist.yml ships
+  # the Vite dev server here, which is right for a laptop and wrong for a
+  # deployment — the SPA is on Cloudflare Pages at ucmacm.dev, and with the dist
+  # default every browser request from it is refused. seed-k8s.sh does not patch
+  # this key, so a config.yml produced by that path still needs it fixed by hand.
+  allowedOrigins:
+    - "https://ucmacm.dev"
+  # Kanae's own rate limiters. On everywhere except a local seeded run — see the
+  # comment in values-local.yaml. Mirrors $LIMITER_ENABLED in seed-k8s.sh, which
+  # renders the same config.yml by the other route.
+  limiterEnabled: true
+
+# Non-secret half of the storage config; the key id and secret live in
+# secrets.*. Buckets and URLs are deployment-specific, not credentials.
+storage:
+  url: "https://s3.example.r2.cloudflarestorage.com"   # how kanae reaches R2
+  presignUrl: "https://s3.example.r2.cloudflarestorage.com"  # host baked into presigned URLs
+  region: auto                                          # R2 is always "auto"
+  bucket: kanae-media
+  publicBucket: kanae-public
+  publicUrl: "https://media.ucmacm.dev"
+
+postgres:
+  image: postgres:18
+  # postgres:18 defaults PGDATA to /var/lib/postgresql/18/docker, which is what
+  # the compose volume mounts.
+  dataDir: /var/lib/postgresql/18/docker
+  storage: 20Gi
+  # MUST be a Retain-policy class — stock scw-bssd is reclaimPolicy: Delete, so
+  # deleting the PVC would destroy the volume. Create the Retain variant once
+  # per cluster; see the comment in templates/postgres.yaml.
+  storageClass: scw-bssd-retain
+
+valkey:
+  image: valkey/valkey:9-alpine
+  maxmemory: 256mb        # as compose; pure cache, no PVC
+
+ory:
+  kratosImage: oryd/kratos:v26.2.0
+  ketoImage: oryd/keto:v26.2.0
+  # Issue the CSRF and session cookies without the Secure flag. FALSE IN
+  # PRODUCTION, always — api.ucmacm.dev is HTTPS and Secure cookies are the
+  # point. Exists because a local run serves Kratos over plain http, where a
+  # Secure cookie is silently dropped and every browser self-service flow fails
+  # its CSRF check. See the comment in templates/kratos.yaml.
+  insecureCookies: false
+
+migrate:
+  atlasImage: arigaio/atlas:latest
+
+seed:
+  # scripts/seed/init.sh as a post-install Job (weight 10, after migrations).
+  # Not an init container: it curls kanae's HTTP API, so gating kanae on it
+  # deadlocks. Identities are @seed.test.local — preview data.
+  enabled: false
+  # Built from docker/Dockerfile.seed — bash, curl, jq, openssl, psql,
+  # valkey-cli. compose builds the equivalent inline in docker-compose.web.yml;
+  # Kubernetes cannot build, so this has to be an image that exists.
+  # Locally: mise run seed:image, then set pullPolicy to Never.
+  image: ghcr.io/ucmercedacm/kanae-seed:edge
+  pullPolicy: Always
+
+backup:
+  # Optional component on/off, same shape as seed.enabled — not a branch around
+  # how to do something. Must be false locally: there is no borg repo, and the
+  # pre-upgrade hook has backoffLimit 1, so it would fail every helm upgrade.
+  enabled: true
+  image: ghcr.io/borgmatic-collective/borgmatic:latest
+  schedule: "17 9 * * *"          # 09:17 UTC daily
+  # borgmatic's own config is maintained separately and supplied as a ConfigMap
+  # with the values already injected — this chart only schedules it.
+  configMap: borgmatic-config
+  existingSecret: kanae-borg      # BORG_PASSPHRASE + repository backend creds
+
+ingress:
+  # Optional component on/off. False locally — needs the HAProxy controller.
+  enabled: true
+  # haproxytech/kubernetes-ingress, installed separately. Create the Kapsule
+  # cluster with ingress: none so it does not also deploy nginx/traefik.
+  # TLS is handled by the HAProxy config (certbot/letsencrypt), not here.
+  className: haproxy
+  host: api.ucmacm.dev
+
+# The two Secret names every workload in the chart mounts. They are the same
+# whether templates/secrets.yaml renders them or seed-k8s.sh created them in the
+# cluster beforehand — that is deliberate, so nothing else has to care which.
+existingSecret: kanae-config      # key: config.yml
+existingEnvSecret: kanae-env      # DB_*, KRATOS_SECRETS_*, KRATOS_WEBHOOK_TOKEN_*, KRATOS_SMTP_URI
+
+secrets:
+  # false: mount Secrets somebody else created (seed-k8s.sh without -o). This is
+  #   the default because it is the failure-safe one — a `helm install` that
+  #   forgets the secrets file mounts what is already in the cluster instead of
+  #   overwriting it with empties.
+  # true:  the chart renders them from the values below. Turned on by
+  #   secrets-prod.enc.yaml itself, so
+  #       helm secrets install kanae ./deploy/helm/kanae -n kanae \
+  #         -f deploy/helm/secrets-prod.enc.yaml
+  #   is the whole install and no extra --set is needed.
+  create: false
+
+  # Every value below is empty on purpose. They come from the SOPS-encrypted
+  # file; `required` in templates/secrets.yaml fails the render, naming the key,
+  # if one is missing. Generate them with `./deploy/helm/seed-k8s.sh -o`.
+  # See secrets-prod.example.yaml for what each one is.
+  dbUsername: ""
+  dbDatabaseName: ""
+  dbPassword: ""
+  kratosSecretsCookie: ""
+  kratosSecretsCipher: ""
+  kratosWebhookMasterKey: ""
+  kratosWebhookTokenRegistration: ""
+  kratosWebhookTokenSettings: ""
+  storageKeyId: ""
+  storageSecretKey: ""
+  kratosSmtpUri: ""
+  # Only read when backup.enabled.
+  borgPassphrase: ""
+  borgS3AccessKey: ""
+  borgS3SecretKey: ""

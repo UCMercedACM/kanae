@@ -1,0 +1,212 @@
+CREATE TYPE event_type AS ENUM (
+    'general',
+    'sig_ai',
+    'sig_swe',
+    'sig_cyber',
+    'sig_data',
+    'sig_arch',
+    'sig_graph',
+    'social',
+    'misc'
+);
+
+CREATE TYPE project_role AS ENUM (
+    'unaffiliated',
+    'member',
+    'former',
+    'lead',
+    'manager'
+);
+
+CREATE TYPE media_type AS ENUM ('image', 'video');
+
+CREATE TYPE project_join_policy AS ENUM ('open', 'request', 'closed');
+CREATE TYPE invite_kind AS ENUM ('invite', 'request');
+
+CREATE TYPE invite_status AS ENUM (
+    'pending',
+    'accepted',
+    'declined',
+    'revoked',
+    'expired'
+);
+
+CREATE TABLE IF NOT EXISTS members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT,
+    display_name TEXT,
+    email TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+CREATE INDEX IF NOT EXISTS members_name_trgm_idx ON members USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS members_email_trgm_idx ON members USING gin (email gin_trgm_ops);
+
+-- This table basically covers workshops and events all at once
+CREATE TABLE IF NOT EXISTS events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT,
+    start_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+    end_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+    location TEXT,
+    type event_type DEFAULT 'misc',
+    creator_id UUID REFERENCES members (id) ON DELETE SET NULL ON UPDATE NO ACTION,
+    timezone TEXT DEFAULT 'UTC',
+    thumbnail_hash TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+
+-- This would allow for faster lookups for events
+-- Separate table for attendance verification to enforce 3NF
+-- (attendance_hash is derived from attendance_code, creating a transitive dependency)
+CREATE TABLE IF NOT EXISTS event_attendance_codes (
+    event_id UUID PRIMARY KEY REFERENCES events (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    attendance_hash TEXT NOT NULL,
+    attendance_code TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS events_name_idx ON events (name);
+CREATE INDEX IF NOT EXISTS events_name_lower_idx ON events (LOWER(name));
+CREATE INDEX IF NOT EXISTS events_creator_idx ON events (creator_id);
+CREATE INDEX IF NOT EXISTS events_name_trgm_idx ON events USING gin (name gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS events_members (
+    event_id UUID REFERENCES events (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    member_id UUID REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    planned BOOLEAN DEFAULT NULL,
+    attended BOOLEAN DEFAULT FALSE,
+    PRIMARY KEY (event_id, member_id)
+);
+
+CREATE TYPE project_type AS ENUM (
+    'independent',
+    'sig_ai',
+    'sig_swe',
+    'sig_cyber',
+    'sig_data',
+    'sig_arch',
+    'sig_graph'
+);
+
+-- Projects by themselves, are basically the same type of relationship compared to events
+-- They are many-to-many
+-- Ex. A member can be in multiples projects (e.g. Website, UniFoodi, Fishtank, etc), and a project can have multiple members
+CREATE TABLE IF NOT EXISTS projects (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT,
+    link TEXT,
+    type project_type DEFAULT 'independent',
+    active BOOL DEFAULT TRUE,
+    join_policy project_join_policy NOT NULL DEFAULT 'open',
+    thumbnail_hash TEXT,
+    founded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+CREATE TABLE IF NOT EXISTS project_invites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    member_id UUID NOT NULL REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    invited_by UUID REFERENCES members (id) ON DELETE SET NULL ON UPDATE NO ACTION,
+    kind invite_kind NOT NULL,
+    status invite_status NOT NULL DEFAULT 'pending',
+    message TEXT,
+    responded_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS project_invites_pending ON project_invites (project_id, member_id) WHERE status = 'pending';
+
+-- Inbox (member's handshakes) and project-side (lead's pending list) lookups
+CREATE INDEX IF NOT EXISTS project_invites_member_idx ON project_invites (member_id, status);
+CREATE INDEX IF NOT EXISTS project_invites_project_idx ON project_invites (project_id, status);
+
+-- Backs the `projects.name % $1` similarity search in routes/projects.py
+CREATE INDEX IF NOT EXISTS projects_name_trgm_idx ON projects USING gin (name gin_trgm_ops);
+
+-- A project also is associated with a set of "tags"
+-- Meaning that many projects can have many tags
+-- This basically implies that we need bridge tables to overcome the gap.
+CREATE TABLE IF NOT EXISTS tags (
+    id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    title TEXT NOT NULL,
+    description TEXT
+);
+
+-- Entirely overkill index for "performance reasons"
+-- Realistically, given the scale of the data now, it doesn't matter
+CREATE INDEX IF NOT EXISTS tags_title_idx ON tags (title);
+CREATE INDEX IF NOT EXISTS tags_title_lower_idx ON tags (LOWER(title));
+CREATE INDEX IF NOT EXISTS tags_title_trgm_idx ON tags USING gin (title gin_trgm_ops);
+
+-- Bridge table for Projects <--> Tags
+-- Many need to adjust the cascade for deletions later.
+CREATE TABLE IF NOT EXISTS project_tags (
+    project_id UUID REFERENCES projects (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    tag_id INTEGER REFERENCES tags (id) ON DELETE NO ACTION ON UPDATE NO ACTION,
+    PRIMARY KEY (project_id, tag_id)
+);
+
+-- Bridge table for Events <--> Tags
+CREATE TABLE IF NOT EXISTS event_tags (
+    event_id UUID REFERENCES events (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    tag_id INTEGER REFERENCES tags (id) ON DELETE NO ACTION ON UPDATE NO ACTION,
+    PRIMARY KEY (event_id, tag_id)
+);
+
+-- Bridge table for Projects <--> Members
+-- Many need to adjust the cascade for deletions later.
+CREATE TABLE IF NOT EXISTS project_members (
+    project_id UUID REFERENCES projects (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    member_id UUID REFERENCES members (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+    role project_role DEFAULT 'unaffiliated',
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+    PRIMARY KEY (project_id, member_id)
+);
+
+CREATE TABLE IF NOT EXISTS media (
+    hash TEXT PRIMARY KEY,
+    content_type TEXT,
+    kind media_type GENERATED ALWAYS AS (
+        CASE
+            WHEN content_type LIKE 'image/%' THEN 'image'::media_type
+            WHEN content_type LIKE 'video/%' THEN 'video'::media_type
+        END
+    ) STORED,
+    size BIGINT,
+    creator_id UUID REFERENCES members (id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+CREATE TABLE IF NOT EXISTS project_media (
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+    media_hash TEXT REFERENCES media(hash) ON DELETE CASCADE,
+    position INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+    PRIMARY KEY (project_id, media_hash)
+);
+
+CREATE INDEX IF NOT EXISTS project_media_project_idx ON project_media (project_id, position);
+
+CREATE TABLE IF NOT EXISTS sudo_grants (
+    member_id UUID PRIMARY KEY REFERENCES members (id) ON DELETE CASCADE,
+    granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    reason TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS sudo_grants_expiry_idx ON sudo_grants (expires_at);
+
+CREATE TABLE IF NOT EXISTS sudo_audit (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    member_id UUID REFERENCES members(id) ON DELETE SET NULL,
+    reason TEXT NOT NULL,
+    granted_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS sudo_audit_member_idx ON sudo_audit (member_id, granted_at DESC);
+CREATE INDEX IF NOT EXISTS sudo_audit_granted_idx ON sudo_audit (granted_at DESC);

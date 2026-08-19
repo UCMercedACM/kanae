@@ -1,0 +1,156 @@
+{{/*
+  Three plain Jobs. They were previously one `define` block called three times
+  with dict(...) arguments — clever, unreadable, and it made the rendered output
+  impossible to reason about. Repetition is the better trade here.
+
+  post-install,post-upgrade rather than pre-install: Helm hooks run outside the
+  normal release, so a pre-install hook cannot wait on a StatefulSet that does
+  not exist yet. All three only need Postgres, so they share weight 0 and run
+  concurrently.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kanae-schema
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  schema.sql: |
+{{ .Files.Get "files/schema.sql" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kanae-migrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: atlas
+          image: {{ .Values.migrate.atlasImage }}
+          # No `command:` override and no shell. The compose service passes these
+          # same words as `command:` to the image's atlas entrypoint, so args
+          # alone reproduces it exactly — and nothing here depends on the atlas
+          # image shipping /bin/sh, which is not something this chart can check.
+          # The DSNs are assembled by Kubernetes' own $(VAR) expansion, the same
+          # mechanism kratos/keto use below; DB_* must be declared before the
+          # values that reference them.
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DB_DATABASE_NAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_DATABASE_NAME } }
+          args:
+            - schema
+            - apply
+            - --auto-approve
+            - --to
+            - file:///schema/schema.sql
+            - --url
+            - postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/$(DB_DATABASE_NAME)?search_path=public&sslmode=disable
+            - --dev-url
+            - postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/postgres?search_path=public&sslmode=disable
+          volumeMounts:
+            - { name: schema, mountPath: /schema, readOnly: true }
+      volumes:
+        - name: schema
+          configMap: { name: kanae-schema }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kratos-migrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: kratos-migrate
+          image: {{ .Values.ory.kratosImage }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4"
+            - name: SECRETS_COOKIE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_COOKIE } }
+            - name: SECRETS_CIPHER
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_CIPHER } }
+          args: ["migrate", "sql", "-c", "/etc/config/kratos.prod.yml", "--read-from-env", "--yes"]
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+      volumes:
+        - name: config
+          configMap:
+            name: kratos-config
+            items:
+              - { key: kratos.prod.yml,      path: kratos.prod.yml }
+              - { key: identity.schema.json, path: identity.schema.json }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keto-migrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: keto-migrate
+          image: {{ .Values.ory.ketoImage }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4"
+          args: ["migrate", "up", "-c", "/etc/config/keto.yml", "--yes"]
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: keto-config }

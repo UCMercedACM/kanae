@@ -10,6 +10,21 @@ shfmt = "3.13.1"
 yq = "4.53.3"
 hurl = "8.0.1"
 
+# Kubernetes / Helm. Versions left at "latest" deliberately — pin them once
+# you have run the stack and know what works, rather than trusting a guess.
+helm = "latest"
+kubectl = "latest"
+k3d = "latest"          # local cluster
+k9s = "latest"          # TUI for watching pods/logs/events
+kubeconform = "latest"  # validates rendered manifests against k8s schemas
+
+# Secrets. SOPS has age support compiled in, so the age binary is only needed
+# for age-keygen and for passphrase-wrapping the break-glass key. rage is a
+# drop-in alternative if you prefer the Rust toolchain — the keys are the same
+# X25519 format either way.
+sops = "latest"
+age = "latest"
+
 
 [settings]
 experimental = true
@@ -239,4 +254,83 @@ run = """
     --cors-configuration '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","HEAD"],"AllowedHeaders":["*"],"MaxAgeSeconds":86400}]}' \
     --region garage
   echo "Garage setup complete."
+"""
+
+[tasks."helm:sync"]
+description = "Copy the canonical Ory configs, schema and seed scripts into the Helm chart's files/ directory. Helm can only read files inside the chart, so these are copies — re-run after editing the originals."
+dir = "{{ config_root }}"
+run = """
+  set -e
+  CHART=deploy/helm/kanae/files
+  mkdir -p "$CHART"/kratos/hooks "$CHART"/kratos/templates/recovery/valid "$CHART"/keto "$CHART"/seed/data
+  cp docker/ory/init.sh "$CHART"/init.sh
+  cp src/schema.sql "$CHART"/schema.sql
+  cp config.dist.yml "$CHART"/config.dist.yml
+  cp docker/ory/config/kratos/kratos.prod.yml docker/ory/config/kratos/identity.schema.json "$CHART"/kratos/
+  cp docker/ory/config/kratos/hooks/payload.jsonnet "$CHART"/kratos/hooks/
+  cp docker/ory/config/kratos/templates/recovery/valid/*.gotmpl "$CHART"/kratos/templates/recovery/valid/
+  cp docker/ory/config/keto/keto.yml docker/ory/config/keto/namespaces.keto.ts "$CHART"/keto/
+  cp scripts/seed/init.sh scripts/seed/vars.env "$CHART"/seed/
+  cp scripts/seed/data/*.json "$CHART"/seed/data/
+  echo "Chart files synced."
+"""
+
+[tasks."helm:check"]
+description = "Fail if the Helm chart's files/ copies have drifted from their canonical sources. Run in CI."
+depends = ["helm:sync"]
+dir = "{{ config_root }}"
+run = """
+  if ! git diff --quiet -- deploy/helm/kanae/files; then
+    echo "error: deploy/helm/kanae/files is out of date with its sources" >&2
+    git diff --stat -- deploy/helm/kanae/files >&2
+    echo "run 'mise run helm:sync' and commit the result" >&2
+    exit 1
+  fi
+  echo "Chart files are in sync."
+"""
+
+[tasks."helm:lint"]
+description = "Lint the Helm chart and validate the rendered manifests against Kubernetes schemas. helm lint alone only checks chart structure — kubeconform is what catches invalid Kubernetes."
+dir = "{{ config_root }}"
+run = """
+  set -e
+  helm lint deploy/helm/kanae
+  echo "Rendering with production values..."
+  helm template kanae deploy/helm/kanae \
+    | kubeconform -strict -summary -kubernetes-version 1.31.0 -
+  echo "Rendering with local values..."
+  helm template kanae deploy/helm/kanae -f deploy/helm/values-local.yaml \
+    | kubeconform -strict -summary -kubernetes-version 1.31.0 -
+  # The example secrets file is committed, carries every key and sets
+  # secrets.create, so it is the only way to exercise templates/secrets.yaml
+  # without a decryption key. Without this the production install path — the
+  # one that renders three more Secrets — is the one path CI never renders.
+  echo "Rendering the secrets path (secrets-prod.example.yaml)..."
+  helm template kanae deploy/helm/kanae -f deploy/helm/secrets-prod.example.yaml \
+    | kubeconform -strict -summary -kubernetes-version 1.31.0 -
+"""
+
+[tasks."k3d:images"]
+alias = ["seed:image"]
+description = "Build the kanae and kanae-seed images and import them into the local k3d cluster. Both are LOCAL-ONLY tags: ghcr.io/ucmercedacm/kanae is a private package a k3d node cannot pull, and no kanae-seed image is published at all."
+dir = "{{ config_root }}"
+run = """
+  set -e
+  CLUSTER=${K3D_CLUSTER:-kanae}
+  APP_IMAGE=${APP_IMAGE:-kanae:dev}
+  SEED_IMAGE=${SEED_IMAGE:-kanae-seed:dev}
+
+  # Unqualified names on purpose. A tag like ghcr.io/ucmercedacm/kanae-seed:dev
+  # reads as something you could pull and cannot be: nothing publishes it. These
+  # only ever exist in the local daemon and in the k3d node, and values-local.yaml
+  # pairs them with pullPolicy: Never so the kubelet never reaches for a registry.
+  docker build -f docker/Dockerfile -t "$APP_IMAGE" .
+  docker build -f docker/Dockerfile.seed -t "$SEED_IMAGE" .
+
+  if k3d cluster list "$CLUSTER" >/dev/null 2>&1; then
+    k3d image import "$APP_IMAGE" "$SEED_IMAGE" -c "$CLUSTER"
+    echo "Imported $APP_IMAGE and $SEED_IMAGE into k3d cluster '$CLUSTER'."
+  else
+    echo "k3d cluster '$CLUSTER' not found — built the images but did not import them."
+  fi
 """

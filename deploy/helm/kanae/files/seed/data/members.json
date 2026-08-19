@@ -1,0 +1,17 @@
+[
+  { "name": "Ava Chen", "email": "ava.chen@seed.test.local", "role": "admin" },
+  { "name": "Amara Okafor", "email": "amara.okafor@seed.test.local", "role": "admin" },
+  { "name": "Liam Patel", "email": "liam.patel@seed.test.local", "role": "manager" },
+  { "name": "Maya Johnson", "email": "maya.johnson@seed.test.local", "role": "manager" },
+  { "name": "Mateo Alvarez", "email": "mateo.alvarez@seed.test.local", "role": "manager" },
+  { "name": "Sofia Rodriguez", "email": "sofia.rodriguez@seed.test.local", "role": "leads" },
+  { "name": "Isabella Garcia", "email": "isabella.garcia@seed.test.local", "role": "leads" },
+  { "name": "Jackson Lee", "email": "jackson.lee@seed.test.local", "role": "leads" },
+  { "name": "Noah Kim", "email": "noah.kim@seed.test.local", "role": "member" },
+  { "name": "Ethan Nguyen", "email": "ethan.nguyen@seed.test.local", "role": "member" },
+  { "name": "Lucas Martin", "email": "lucas.martin@seed.test.local", "role": "member" },
+  { "name": "Priya Sharma", "email": "priya.sharma@seed.test.local", "role": "member" },
+  { "name": "Chloe Dubois", "email": "chloe.dubois@seed.test.local", "role": "member" },
+  { "name": "Omar Hassan", "email": "omar.hassan@seed.test.local", "role": "member" },
+  { "name": "Hannah Weber", "email": "hannah.weber@seed.test.local", "role": "member" }
+]

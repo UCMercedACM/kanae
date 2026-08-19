@@ -1,0 +1,17 @@
+[
+  { "title": "python", "description": "Projects and events centered on Python" },
+  { "title": "javascript", "description": "Frontend and backend JavaScript work" },
+  { "title": "typescript", "description": "Typed JavaScript at scale" },
+  { "title": "react", "description": "React and the wider React ecosystem" },
+  { "title": "machine-learning", "description": "Applied ML and model training" },
+  { "title": "cybersecurity", "description": "Offensive and defensive security" },
+  { "title": "web-dev", "description": "General web development" },
+  { "title": "data-science", "description": "Data wrangling, analysis, and viz" },
+  { "title": "cloud", "description": "Cloud platforms and infrastructure" },
+  { "title": "devops", "description": "CI/CD, automation, and tooling" },
+  { "title": "mobile", "description": "iOS and Android development" },
+  { "title": "game-dev", "description": "Game design and development" },
+  { "title": "databases", "description": "Relational and NoSQL data stores" },
+  { "title": "ui-ux", "description": "Interface and experience design" },
+  { "title": "open-source", "description": "Open-source contribution and maintenance" }
+]

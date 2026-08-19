@@ -1,0 +1,7 @@
+<p>Hi {{ .Identity.traits.name }},</p>
+
+<p>We received a request to reset the password on your account. Use the link below to reset your password:</p>
+
+<a href="{{ .RecoveryURL }}">{{ .RecoveryURL }}</a>
+
+<p>Didn't ask for this? You can safely ignore this email, nothing will change. This link stops working in {{ .ExpiresInMinutes }} minutes.</p>
