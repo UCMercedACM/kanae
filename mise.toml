@@ -24,6 +24,7 @@ kubeconform = "latest"  # validates rendered manifests against k8s schemas
 # X25519 format either way.
 sops = "latest"
 age = "latest"
+kapp = "0.65.4"
 
 
 [settings]

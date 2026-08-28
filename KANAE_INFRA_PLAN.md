@@ -59,13 +59,10 @@ the work is correct. That is the gap this plan closes.
 **The chart is source code. `deploy/k8s/` is the deployment.** Helm is a build
 tool here, not the thing that installs. Phase 2 renders the chart to plain
 Kubernetes YAML under `deploy/k8s/`, commits it, and that directory is what
-`kubectl apply` sends to the production cluster. Nothing runs `helm install`.
+`kapp` applies to the production cluster. Nothing runs `helm install`.
 
-Two things fall out of that. Reviewers read Kubernetes rather than Go templates,
-because the pull request carries both the template change and the manifest it
-produces. And there is no gap between the reviewed artifact and the applied one,
-because they are the same file. This arrangement has a name, the rendered
-manifests pattern, and the section at the end of Phase 2 covers what it costs.
+Reviewers therefore read Kubernetes rather than Go templates. Phase 2 covers the
+layout and what the arrangement costs.
 
 **Every phase ends by running it.** Each phase below has an exit gate: a command
 you run against a real cluster and the output you must see. A phase is not done
@@ -85,7 +82,12 @@ meet, in the order you meet them.
 | **JSON Schema** | A file that describes what a config file is allowed to contain: which keys exist, what type each one is, which are required. `values.schema.json` is Helm's version. |
 | **rendered manifests pattern** | Running the templating tool as a build step, committing its plain-YAML output, and deploying that output rather than re-templating at install time. What is in git is exactly what is in the cluster. |
 | **drift check** | A CI step that regenerates committed output and fails if the committed copy is stale, so nobody can change a template without also committing the manifest it produces. |
-| **`kubectl diff`** | Compares files on disk against what is live in the cluster and prints the difference. The preview you run before `kubectl apply`. |
+| **kapp** | A single-binary deploy tool from Carvel. Takes a directory of Kubernetes YAML, shows what will change, applies it, and deletes anything that has left the directory since last time. |
+| **pruning** | Deleting cluster resources that have been removed from your manifests. `kubectl apply` does not do it; kapp does. |
+| **Gateway API** | The Kubernetes routing API that replaces Ingress. A `Gateway` owns the listeners and the certificate, an `HTTPRoute` owns the rules. |
+| **HTTPRoute filter** | A step applied to a matched request before it reaches the backend. This plan uses `URLRewrite` to strip `/auth` on one rule and leave every other rule alone. |
+| **Envoy Gateway** | The Gateway API controller this plan runs. A control plane pod watches Gateways and HTTPRoutes, and provisions an Envoy proxy pod per Gateway to carry the traffic. |
+| **dorny/paths-filter** | A GitHub Action that reports which of a named set of path patterns a pull request touched, so a workflow can decide per job whether to run. |
 | **SOPS** | Encrypts the values in a YAML file and leaves the keys readable. That gives you a secrets file you can commit to git and still review, because the diff shows which key changed. |
 | **age** | The encryption tool SOPS uses here. Each person has a key pair. You list the public halves in `.sops.yaml` and everybody listed can decrypt. |
 | **Atlas** | The database migration tool this repo already uses, pinned in `mise.toml`. You give it the schema you want in `src/schema.sql` and it works out the SQL to get there. |
@@ -96,6 +98,7 @@ meet, in the order you meet them.
 | **cert-manager** | A program that runs inside the cluster, gets TLS certificates from Let's Encrypt, and renews them without anybody doing anything. |
 | **CSRF, double-submit** | A defence against another website submitting a form on your behalf. Double-submit means the server sends a token twice, once in the page and once in a cookie, and rejects the request unless both arrive and match. Kratos uses it, so a dropped cookie shows up as a rejected login. |
 | **Borg, borgmatic** | Borg is a backup tool. borgmatic is a wrapper that runs it on a schedule from a config file. |
+| **3-2-1** | A backup rule of thumb: three copies of the data, on two kinds of storage, one of them offsite. |
 
 ## The layers and phases
 
@@ -108,13 +111,68 @@ meet, in the order you meet them.
 | B. Platform | 5 | The three databases, their tables, and migrations you can review before they run |
 | C. Services | 6 | Ory Kratos and Ory Keto |
 | C. Services | 7 | The kanae API |
-| C. Services | 8 | Ingress, path rewriting, and TLS (finishes after Phase 7) |
+| C. Services | 8 | Gateway API routing, path rewriting, and TLS (finishes after Phase 7) |
 | D. Proof | 9 | An automated test that boots the whole stack and signs a user up |
-| D. Proof | 10 | Backups you have restored from, resource limits from measurements, runbooks |
+| D. Proof | 10 | Backups you have restored from, memory limits from measurements, runbooks |
 | D. Proof | 11 | The production cluster and the first real deploy |
 
 Layers run in order, and inside a layer phases run in order, with one exception
 noted at the top of Layer C.
+
+### What the cluster looks like when it is finished
+
+Each box carries the phase that builds it.
+
+```mermaid
+flowchart TB
+    user(["Browser at ucmacm.dev"])
+
+    subgraph cluster["Kubernetes cluster, namespace kanae"]
+        gw["Gateway, HTTPS listener<br/>Phase 8"]
+        route["HTTPRoute<br/>rule 1: /auth, strip the prefix<br/>rule 2: everything else"]
+        kratos["Kratos<br/>who you are<br/>Phase 6"]
+        keto["Keto<br/>what you may do<br/>Phase 6"]
+        api["kanae API<br/>Phase 7"]
+        pg[("Postgres<br/>kanae, kratos, keto<br/>Phase 4")]
+        valkey[("Valkey<br/>sessions, rate limits<br/>Phase 4")]
+        migrate["Atlas migration Job<br/>Phase 5"]
+        backup["borgmatic CronJob<br/>Phase 10"]
+    end
+
+    offsite[("Offsite S3 bucket<br/>Phase 10")]
+
+    user -->|HTTPS| gw --> route
+    route -->|/auth| kratos
+    route -->|everything else| api
+    kratos -->|webhook on signup| api
+    api --> keto
+    api --> pg
+    api --> valkey
+    kratos --> pg
+    keto --> pg
+    migrate --> pg
+    backup --> pg
+    backup --> offsite
+```
+
+### How a change reaches that cluster
+
+```mermaid
+flowchart LR
+    chart["deploy/helm/kanae/<br/>templates and values.yaml<br/>edited by hand"]
+    enc["deploy/helm/secrets-prod.enc.yaml<br/>SOPS encrypted"]
+    render["mise run k8s:render<br/>helm template, split by yq"]
+    k8s["deploy/k8s/<br/>plain YAML, committed, reviewed"]
+    ci{{"infra.yml<br/>drift check, kubeconform, kube-linter"}}
+    apply["mise run k8s:apply<br/>kapp deploy"]
+    live[["Live cluster"]]
+
+    chart --> render --> k8s --> apply --> live
+    k8s --> ci
+    enc -->|decrypted in memory at apply time| apply
+```
+
+Phase 2 builds the second diagram. Everything else builds a box in the first.
 
 ## Rules that apply to every phase
 
@@ -129,6 +187,10 @@ noted at the top of Layer C.
    3 in POC_FINDINGS.md, where two overlapping commands cost ten minutes.
 6. **Write down decisions where the next person will look.** A decision that
    only exists in a pull request comment is lost.
+7. **Every container gets a memory request and a memory limit, equal to each
+   other, and no container gets a CPU limit.** Phase 4 gives the reason. Each
+   phase sets estimates for what it builds and Phase 10 replaces them with
+   measurements.
 
 ---
 
@@ -137,77 +199,39 @@ noted at the top of Layer C.
 ## Phase 1. Tools and a local cluster
 
 **What you build.** Every tool pinned to an exact version, a formatter and a
-linter for the YAML files, and a cluster on your laptop that you create and
-destroy with one command each.
+linter for the YAML files, and a k3d cluster you create and destroy with one
+command each.
 
-**Why it comes first.** Everything else is edited, checked, and run with these
-tools. If two people have different Helm versions, they get different rendered
-output, and the drift check in Phase 2 fails for reasons that have nothing to do
-with the change.
+**Why it comes first.** Different Helm versions produce different rendered
+output, so the drift check in Phase 2 would fail for reasons unrelated to any
+actual change.
 
-**How it goes.** Three separate jobs, in this order. First pin the versions,
-because the rest of the phase is easier once everybody has the same binaries.
-Second set up the formatter and the linter, which is where most of the thinking
-goes and which the section below explains. Third write the cluster config and
-the four mise tasks around it, which is mechanical once you know what shape of
-cluster you want.
+**How it goes.** Pin versions, set up the formatter and linter, then write the
+cluster config and its tasks. Port mapping is the fiddly part: get one port
+reaching the cluster before adding the rest.
 
-Expect the cluster work to be the fiddly part. k3d maps ports from the container
-running the cluster out to your laptop, and if you get that wrong the cluster
-comes up healthy and nothing you do can reach it. Get one port working before
-you add the rest.
+**What formats and what lints.** `dprint` with the `pretty_yaml` plugin formats.
+Layout is settled once it does, so the linter only needs the rules a formatter
+cannot cover. Two matter here. Duplicate keys, which YAML resolves silently as
+last-one-wins and which `kubeconform` cannot catch because the first value is
+already gone by the time it looks. And `truthy`, where `no` parses as boolean
+false rather than the string.
 
-The versions you pin should be versions you have actually run. Do not copy them
-from a blog post. Write the date next to them, because in a year somebody will
-want to know whether the pin was a considered choice or an accident.
+`yamllint` is the tool for that, with its layout rules switched off. It is the
+decided choice. It is also Python, which this plan otherwise keeps out of the
+infra checks, so the reasoning is recorded here rather than left to be
+re-argued:
 
-**What formats and what lints.** These are two jobs and this plan splits them
-between two tools.
+| Tool | Language | Stars | Status |
+| --- | --- | --- | --- |
+| yamllint | Python | 3,447 | ten years old, what the ecosystem uses |
+| ryl | Rust | 65 | active, drop-in config, one maintainer, one year old |
+| yaml-lint-rs | Rust | 7 | stopped February 2026 |
+| yamllint-rs | Rust | 4 | two commits |
 
-`dprint` formats, using the `pretty_yaml` plugin. dprint is Rust, the plugin is
-Rust compiled to WebAssembly, and formatting is the whole of its job.
-
-The linter is the harder call, so here is the reasoning rather than just the
-answer. Linting YAML breaks into rules about layout (indentation, line length,
-spacing) and rules about meaning (duplicate keys, values that parse as something
-you did not intend). Once dprint owns the file's layout, the layout rules are
-not just redundant, they are actively harmful: two tools with opinions about the
-same bytes will disagree eventually and you will spend an afternoon on it.
-
-That leaves the rules about meaning, and two of them earn their place here.
-A duplicate key in a YAML file is not an error. The last one silently wins, and
-neither `kubeconform` nor `kube-linter` will tell you, because the file they see
-has already lost the first value. The other is the one where `no` parses as the
-boolean false rather than the string "no", which bites Kubernetes YAML often
-enough to have a nickname.
-
-`yamllint` is the tool for that, with its layout rules switched off. It is
-Python, and this plan otherwise avoids adding a Python step to the infra checks,
-so that choice needs defending on two counts.
-
-On speed: `yamllint` over every YAML file in this repo, all 39 of them and 3,728
-lines, takes 0.434 seconds including Python interpreter startup. That is
-measured, not estimated. The concern about a slow development loop is real in
-general and does not apply at this size.
-
-On the alternatives: there are three Rust reimplementations of `yamllint` and
-none of them clears the bar this plan sets for everything else. `ryl` is the
-strongest, actively maintained, and drop-in compatible with `yamllint`'s config
-format, and it has 65 stars and 3 forks and its first commit is a year old.
-`yaml-lint-rs` has 7 stars and stopped in February 2026. `yamllint-rs` has 4
-stars and two commits. By comparison `yamllint` has 3,447 stars, has been
-maintained for ten years, and is what the Kubernetes ecosystem already reaches
-for. A plan whose argument is that infrastructure should be auditable cannot put
-a one-year-old single-maintainer tool in its foundation layer.
-
-So: `dprint` formats, `yamllint` catches duplicate keys and surprising values,
-`kubeconform` checks Kubernetes field types in Phase 2, and `kube-linter` checks
-policy in Phase 2. Four tools, four jobs, no overlap.
-
-If a Python dependency in the infra checks is a hard requirement to avoid rather
-than a preference, `ryl` is the fallback, and you take on the risk of a young
-tool with one maintainer knowingly. Write that down in `deploy/DECISIONS.md`
-either way.
+Speed was the objection and it does not survive measurement. `yamllint` over all
+39 YAML files here, 3,728 lines, takes 0.434 seconds. None of the Rust
+reimplementations clears the bar this plan sets for everything else.
 
 ### Tasks
 
@@ -227,14 +251,55 @@ either way.
 - [ ] Write `deploy/k3d/cluster.yaml`, a k3d cluster config file. Put the node
       count, the ports, and the registry settings in this file rather than in
       command-line flags, so the cluster shape is committed and reviewable.
+- [ ] Disable the bundled Traefik in that config with `--disable=traefik`. k3s
+      installs Traefik and its Gateway API CRDs by default, and Phase 8 installs
+      Envoy Gateway, which ships those same CRDs. Leaving both in place makes
+      k3s's own install job fail with `invalid ownership metadata`, which was
+      checked. Disabling it also keeps the local cluster honest: nothing should
+      be present locally that a rented cluster would not have.
 - [ ] Add the mise task `k8s:up`. It creates the cluster from that file and then
       waits until `kubectl get nodes` reports Ready.
 - [ ] Add the mise task `k8s:down`. It deletes the cluster and waits for the
       deletion to finish before returning.
 - [ ] Add the mise task `k8s:reset`, which runs `k8s:down` then `k8s:up`.
-- [ ] Write `.github/workflows/infra.yml`. Run it on pull requests that touch
-      `deploy/**` or `mise.toml`. For now it runs `k8s:fmt:check` and the
-      existing `scripts:lint`.
+- [ ] Move the Kubernetes tool pins out of `mise.toml` and into
+      `.config/mise/conf.d/k8s.toml`. mise layers that file over `mise.toml`
+      with no extra configuration, which was checked. The point is the path:
+      `mise.toml` changes every time a dependency is bumped, so while the k3d
+      pin and the uv pin live in one file no CI filter can tell a cluster change
+      from a routine one.
+- [ ] Pin the seven tools that still read `latest`: helm, kubectl, k3d, k9s,
+      kubeconform, sops, and age. `latest` lets CI and your laptop run different
+      versions and disagree about a rendered manifest.
+- [ ] Write `.github/workflows/infra.yml`, gated on `dorny/paths-filter` rather
+      than on a `paths:` key. A job skipped by `paths:` reports no status at
+      all, so a branch protection rule that requires it waits forever. A filter
+      job that always runs, sets an output, and is read by the real jobs does
+      not have that problem. Pin the action by commit SHA the way
+      `.github/workflows/lint.yml` already pins its actions:
+      `dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3`.
+      For now the gated job runs `k8s:fmt:check` and the existing
+      `scripts:lint`.
+- [ ] Write the filter narrowly. `deploy/**` matches too much: HANDOFF.md, the
+      Compose helper scripts, and anything else that lands under `deploy/` would
+      trigger a cluster build for no reason.
+
+      ```yaml
+      infra:
+        - 'deploy/helm/kanae/**'
+        - 'deploy/k8s/**'
+        - 'deploy/k3d/**'
+        - 'deploy/cluster/**'
+        - 'deploy/test/**'
+        - '.config/mise/conf.d/k8s.toml'
+        - '.github/workflows/infra.yml'
+        - 'dprint.json'
+        - '.yamllint.yaml'
+      ```
+
+      On `pull_request` the action compares through the API and needs no
+      history. On `push` it needs `fetch-depth: 0` on the checkout, or it has
+      nothing to diff against.
 
 ### Exit gate
 
@@ -255,89 +320,63 @@ fails on it.
 ## Phase 2. The deployment artifact
 
 **What you build.** A machine-checked description of every value the chart
-accepts, and `deploy/k8s/`, the plain Kubernetes YAML that gets applied to
-clusters.
+accepts, and `deploy/k8s/`, the plain Kubernetes YAML that runs in production.
 
-**Why it comes second.** Every phase after this one adds manifests. If you build
-the review mechanism now, every later change arrives with a readable diff. If
-you build it at the end, you have to review eight phases of work at once.
-
-**How the pieces relate.** Two directories, and each has exactly one meaning.
-
-`deploy/helm/kanae/` is source code. Templates and values. You edit it. It is
-never applied to anything.
-
-`deploy/k8s/` is the production deployment. Plain Kubernetes YAML with no
-templating left in it. You do not edit it, you regenerate it. It is what runs in
-production.
+**How the pieces relate.** Two directories, one meaning each.
 
 ```
 deploy/
-  helm/kanae/          the chart. source. edited by hand
+  helm/kanae/          the chart. source. edited by hand, never applied
   k8s/                 production manifests. generated. this is what is deployed
 ```
 
-**There is no `local/` beside it, on purpose.** An earlier draft of this plan had
-`deploy/k8s/local/` and `deploy/k8s/production/` side by side, and that is worse
-than it looks. Two directories of nearly identical YAML, one disposable and one
-holding the real cluster, means every reader has to check which one they are in
-before they can trust anything they see, and every local tweak produces a diff in
-a directory whose diffs are supposed to mean something. One wrong `kubectl apply`
-away from a bad afternoon.
+Helm is a build tool here. `mise run k8s:render` turns the chart into plain
+YAML, you commit it, and `kapp` applies that directory to the cluster.
+Nothing runs `helm install`, so the reviewed artifact and the applied one are
+the same bytes. The arrangement has a name, the rendered manifests pattern.
 
-So `deploy/k8s/` means production and nothing else. Local manifests are rendered
-on demand into `.k8s-local/`, which is in `.gitignore` and never committed. A
-laptop render is a build artifact, not a deployment. CI still renders and
-validates the local values on every pull request, so a chart change that only
-breaks local rendering is still caught. It just does not leave a file behind.
+There is no `local/` beside it. Two near-identical directories, one disposable
+and one holding the real cluster, means checking which one you are in before you
+can trust anything you see. Local renders go to `.k8s-local/`, gitignored. CI
+still renders and validates them on every pull request, it just leaves no file
+behind.
 
-The directory is called `k8s` rather than `k3s` on purpose. k3s is one
-distribution of Kubernetes, and Kapsule is another, and the manifests contain
-nothing specific to either. They would apply to any conformant cluster, so naming
-the directory after one distribution would suggest a coupling that does not
-exist.
+The name is `k8s` rather than `k3s` because k3s is one distribution and Kapsule
+is another, and the manifests contain nothing specific to either.
 
-**Two more guards, because a generated file that looks editable will get edited.**
-Put a `deploy/k8s/README.md` in the directory saying what generates it and what
-applies it. Put a banner comment at the top of every generated file saying the
-same in one line. Both cost nothing and both catch the person who arrives at one
-of these files from a search result with no idea where they are.
+**How it goes.** Write the schema first. Doing so makes you read every value in
+`values.yaml` and decide what it is for, and you will find one or two that
+nothing reads. Then add the render tasks, splitting output one file per resource
+so a diff names the resource in its path instead of moving 900 lines of one
+blob.
 
-**How it goes.** Write the schema first, because writing it makes you read every
-value in `values.yaml` and decide what it is actually for. Expect to find one or
-two values that nothing reads. Delete those.
+**What it costs, and what applies the manifests.** No `helm rollback`. A git
+revert plus re-apply replaces it, which is more auditable and slower under
+pressure.
 
-Then add the render tasks. The mechanism is small: `helm template` writes to
-`deploy/k8s/`, you commit the result, and CI regenerates and compares. Set
-the render to split output into one file per resource rather than one long
-stream. A 900-line file changes on every edit and tells a reviewer nothing about
-what moved. A directory of `deployment-kanae.yaml`, `service-database.yaml`, and
-so on gives you a diff that names the resource in the file path.
+The harder problem is deletion. `kubectl apply` creates and updates and never
+deletes, so a resource you remove from the chart keeps running with nothing
+reporting it. Apply with **kapp** instead. It records the set of resources it owns, shows a
+diff before changing anything, applies in dependency order, waits for resources
+to settle, and deletes what has left the manifests:
 
-The habit this creates is the deliverable, not the tooling. From here on, every
-change is two things in one commit: the template edit and the manifest it
-produces. The reviewer reads the second one, and it is the same bytes the
-cluster will receive.
+```
+kapp deploy -a kanae -f deploy/k8s/
+```
 
-**What this costs, and how to cover it.** Deploying rendered manifests rather
-than running `helm install` gives up two things Helm does for you. Both are
-worth naming plainly.
+This was checked against a k3d cluster rather than taken from the
+documentation. kapp 0.65.4 planned and applied 22 creates from this chart's
+rendered output. Deleting one manifest and redeploying reported
+`0 create, 1 delete, 1 update` and the resource was gone from the cluster.
+Redeploying unchanged reported `0 create, 0 delete, 0 update`, a true no-op.
+`kapp deploy --diff-run` printed the pending delete and changed nothing.
 
-You lose `helm rollback`. Git replaces it: the previous manifests are the
-previous commit, so `git revert` and re-apply is the rollback. That is more
-auditable, because the rollback is a reviewable commit rather than a command
-somebody ran, but it is slower under pressure and it needs the person doing it
-to be comfortable with git. Rehearse it in Phase 11 rather than learning it
-during an outage.
+kapp is a Carvel project, in the CNCF landscape, maintained since 2019. There is
+no controller and nothing running in the cluster between deploys.
 
-You lose pruning. `kubectl apply` creates and updates, and it does not delete. A
-resource you remove from the chart stays in the cluster indefinitely, still
-running, invisible in the manifests. This is the sharper of the two problems
-because nothing tells you it happened. Cover it by putting a common label on
-every resource the chart renders and applying with `--prune` and a selector for
-that label, so a resource that vanishes from the render vanishes from the
-cluster. Verify pruning works in Phase 9 by removing a resource and confirming
-it leaves.
+Argo CD or Flux remain the upgrade path if somebody later wants continuous
+reconciliation rather than a command they run. Nothing here blocks that, since
+rendered manifests in git is exactly their input format.
 
 ### Tasks
 
@@ -351,16 +390,17 @@ it leaves.
 - [ ] Create `deploy/k8s/` and write `deploy/k8s/README.md` in it: what
       generates this directory, what applies it, and do not edit it by hand.
 - [ ] Add the mise task `k8s:render`, which regenerates `deploy/k8s/` from the
-      production values by running `helm template`, splitting output into one
-      file per resource, with a generated-file banner at the top of each. Delete
-      the target directory first, or a resource you removed from the chart
-      lingers as a stale file.
+      production values. Do not use `helm template --output-dir`: it writes one
+      file per template and appends, so `postgres.yaml` arrives holding four
+      resources. Pipe through the `yq` already pinned in `mise.toml` instead,
+      which was checked and produces 22 files for this chart:
+      `helm template kanae deploy/helm/kanae | yq -s '(.kind | downcase) + "-" + .metadata.name'`.
+      Delete the target directory first, or a resource you removed from the
+      chart lingers as a stale file.
 - [ ] Add the mise task `k8s:render:local`, which renders the local values into
       `.k8s-local/`. Add `.k8s-local/` to `.gitignore`. A laptop render is a
       build artifact and does not belong in the repository.
-- [ ] Add a `app.kubernetes.io/part-of: kanae` label to every resource the chart
-      renders, through `_helpers.tpl`. Pruning needs it, and pruning is what
-      stops removed resources from living forever in the cluster.
+- [ ] Add `kapp = "0.65.4"` to `[tools]` in `mise.toml`.
 - [ ] Keep Secrets out of `deploy/k8s/`. Everything else renders into it, but a
       rendered Secret holds a base64 credential, and this directory exists to be
       read. Phase 3 decides where Secrets go instead.
@@ -368,11 +408,11 @@ it leaves.
       directory and fails if the result differs from what is committed. Print
       the diff and the words `run 'mise run k8s:render' and commit the result`,
       matching how `helm:check` already reports drift.
-- [ ] Add the mise task `k8s:apply`, which runs `kubectl diff` against
-      `deploy/k8s/`, shows you the difference, waits for you to confirm, then
-      applies with `--prune` and the label selector. Never let it apply without
-      showing the diff first. Add a matching `k8s:apply:local` for `.k8s-local/`
-      so the two paths cannot be confused at the command line either.
+- [ ] Add the mise task `k8s:apply`, wrapping `kapp deploy -a kanae -f
+      deploy/k8s/`. kapp shows the diff and asks before it changes anything, so
+      the confirmation step is built in rather than something you add. Add a
+      matching `k8s:apply:local` against `.k8s-local/` under a different app
+      name, so the two can never be confused at the command line.
 - [ ] Add `k8s:render:check` to `.github/workflows/infra.yml`, and have CI also
       render the local values into a temporary directory and run `kubeconform`
       over the result. Local rendering stays checked without being committed.
@@ -381,12 +421,13 @@ it leaves.
       `.github/workflows/infra.yml`. Turn on the check for containers running as
       root. Finding 3 in POC_FINDINGS.md was a container that crashed because it
       ran as root under dropped privileges, and this check names that pattern.
-- [ ] Leave kube-linter's resource-limit checks switched off until Phase 10, and
-      write the reason in the config file next to the switch. Phase 4 collects
-      real numbers and Phase 10 sets limits from them, so between here and there
-      every workload would fail that check for a reason you already know about.
-      A check that everybody has learned to ignore is worse than no check, which
-      is the same argument this plan opens with.
+- [ ] Turn on kube-linter's `unset-memory-requirements` check. Rule 7 puts a
+      memory request and limit on every container from Phase 4 onward, so
+      nothing needs an exemption and the check never becomes noise.
+- [ ] Leave the CPU-limit check off, and write the reason in the config file
+      next to the switch. This plan sets memory limits deliberately and CPU
+      limits never, for the reason in Phase 4, so a check demanding CPU limits
+      would only teach people to ignore the config.
 - [ ] Rename `helm:lint` to `k8s:schema`. The current name reads like a quality
       gate. It checks the shape of the YAML and nothing about what the YAML
       does. Give it a name that says so.
@@ -406,7 +447,7 @@ variable.
 Then commit only the values change, without the rendered manifests, and confirm
 CI fails.
 
-Then, against a running local cluster, run `mise run k8s:apply` and confirm it
+Then, against a running local cluster, run `mise run k8s:apply` and confirm kapp
 prints the same difference `git diff` did before it applies anything. Those two
 diffs agreeing is the property this whole phase exists to give you.
 
@@ -417,72 +458,78 @@ diffs agreeing is the property this whole phase exists to give you.
 ## Phase 3. Configuration and secrets
 
 **What you build.** One place that owns each configuration file, and one program
-that produces each generated file.
+that renders each generated file.
 
-**Why this is the hardest phase.** It is the only phase that deletes more than
-it adds, and deleting a working code path always feels wrong. Do it anyway. Two
-programs that produce the same file will differ eventually, and the day they
-differ is a day somebody spends debugging a service that reads a config nobody
-wrote.
+**Why it is the hardest phase.** It deletes more than it adds. Two programs that
+produce the same file will differ eventually, and the day they do is a day spent
+debugging a service reading a config nobody wrote.
 
-**How it goes.** This phase has three parts that are independent of each other,
-so you can do them in any order, but do them one at a time and run
-`mise run k8s:render` after each. The render must not change. That is your
-safety net for the whole phase.
+**How it goes.** Three independent parts. Run `mise run k8s:render` after each,
+and the render must not change. That is the safety net for the whole phase.
 
-The first part removes the copies under `deploy/helm/kanae/files/`. Helm cannot
-read files outside the chart directory, which is why the copies exist. The fix
-is to move the originals in rather than to keep copying them out, and then point
-the Docker Compose bind mounts at the new location. Compose can mount from
-anywhere.
+First, remove the copies under `deploy/helm/kanae/files/` without moving
+anything. The copies exist because `.Files.Get` refuses a path outside the chart
+directory. The obvious fix is to move the originals into the chart, and that
+fix is wrong here: `src/schema.sql`, `config.dist.yml`, and `docker/ory/config/`
+are read by Atlas, by the application, and by every Compose file, and moving
+them breaks all of it to satisfy Helm.
 
-The second part cuts `seed-k8s.sh` down. Read it before you change it. It does
-four things today: it generates secret values, it derives two tokens, it renders
-`config.yml` with `yq`, and it pushes Secrets into the cluster with `kubectl`.
-Only the first two survive. The chart does the rest.
+Helm follows symlinks, so replace each copy with a link to the real file. Helm
+resolves the link, reads the target, and logs `found symbolic link in path` as
+it goes. This was checked rather than assumed: it works for a linked file and
+for a linked directory, the target may sit outside the chart, and `helm package`
+dereferences the link into a regular file inside the tarball, so a packaged
+chart carries content rather than a dangling link. Nothing moves, every existing
+path keeps working, and there is one copy of each file.
 
-The third part is the smaller cleanup: real age keys, the service names declared
-in one place, and the image pull secret.
+The cost is Windows. Git there writes a symlink as a text file holding the
+target path unless `core.symlinks` is on, which needs Developer Mode or an
+administrator shell. This repo already ships `run_windows` task variants, so
+somebody will hit it: a render on a Windows checkout without symlink support
+produces a ConfigMap containing a path string instead of a file. Write that in
+`deploy/k8s/README.md`. CI renders on Linux, so the drift check catches it.
 
-Secrets are the one place where the property from Phase 2 does not hold. Every
-other resource is committed in `deploy/k8s/` exactly as the cluster receives it.
-A Secret cannot be, because a rendered Secret is a base64 credential and that
-directory exists to be read. Encrypting the rendered Secret and committing it
-does not work either: SOPS generates a fresh data key on each encryption, so the
-same content encrypts to different bytes every time and the drift check fails on
-every run for no reason.
+Second, cut `seed-k8s.sh` down and rename it `deploy/helm/init.sh`, matching how
+init scripts are named elsewhere in this repo. It does four things today:
+generates secret values, derives two tokens, renders `config.yml` with `yq`, and
+pushes Secrets with `kubectl`. Only the first two survive.
 
-So Secrets take a different route, and it is worth stating exactly what it is.
-`deploy/helm/secrets-prod.enc.yaml` holds the values, encrypted with SOPS, keys
-in plaintext so the diff still shows which one changed. At apply time they are
-decrypted in memory, rendered by the same chart that renders everything else,
-and piped into `kubectl`. Nothing lands on disk in the clear and there is still
-only one renderer. What you give up is that Secrets are the one part of the
-deployment you cannot read out of git, which is the correct trade for a
-credential.
+The repository holds six files called `init.sh` doing unrelated jobs, so always
+write the full path. `deploy/helm/init.sh` generates secrets, and is this phase.
+`docker/ory/init.sh` is the Postgres initdb script that creates the `kratos` and
+`keto` databases, reached from the chart through the symlink at
+`deploy/helm/kanae/files/init.sh`, and is Phase 5. Neither is ever called just
+"init.sh" in this plan.
 
-Take the pull secret seriously even though it looks trivial. Finding 6 in
-POC_FINDINGS.md is the failure it prevents, and that one is unusually nasty
-because the obvious way to test it gives you the wrong answer. Running
-`docker pull` on the same tag succeeds from your laptop, which has credentials
-saved from a login the cluster never saw.
+Third, the smaller cleanup: real age keys, service names declared once, and the
+image pull secret. Take the pull secret seriously despite it looking trivial,
+because `docker pull` succeeds from your laptop using credentials the cluster
+never saw.
+
+**Where Secrets live.** Not in `deploy/k8s/`. A rendered Secret is a base64
+credential and that directory exists to be read. Committing it encrypted fails
+too, because SOPS generates a fresh data key per encryption, so identical
+content encrypts to different bytes every run and the drift check never passes.
+Instead `deploy/helm/secrets-prod.enc.yaml` holds the values, and at apply time
+they are decrypted in memory, rendered by the same chart, and piped into
+`kubectl`. Secrets are the one part of the deployment you cannot read out of
+git.
 
 ### Tasks
 
-- [ ] Move the canonical Ory configs into the chart. Right now
-      `docker/ory/config/**` is the source and `deploy/helm/kanae/files/` is a
-      copy kept in step by `mise run helm:sync`. Reverse it: make the chart
-      directory the source, and point the Docker Compose bind mounts in
-      `docker/docker-compose.yml` at the chart directory. Do the same for
-      `src/schema.sql`, `config.dist.yml`, and `scripts/seed/**`.
-- [ ] Delete the `helm:sync` and `helm:check` tasks from `mise.toml`. Once there
-      are no copies, there is nothing to sync and nothing to check.
+- [ ] Replace every copy under `deploy/helm/kanae/files/` with a symlink to its
+      original. The `helm:sync` task in `mise.toml` names all seventeen and
+      where each came from, so it is the checklist: `docker/ory/config/**`,
+      `docker/ory/init.sh`, `src/schema.sql`, `config.dist.yml`, and
+      `scripts/seed/**`. Nothing moves and no Compose bind mount changes.
+- [ ] Delete the `helm:sync` and `helm:check` tasks from `mise.toml`. With no
+      copies there is nothing to sync and nothing to check. `helm:check` only
+      ever existed because the copies did.
 - [ ] Cut `deploy/helm/seed-k8s.sh` down to one job: generate secret values and
       write them to a plain YAML file for SOPS to encrypt. Delete the `yq`
       config rendering at line 247 and the `kubectl create secret` calls at
-      lines 310 to 334. Rename it `deploy/helm/gen-secrets.sh`, because a script
-      named `seed` that creates secrets and a Job named `seed` that creates test
-      members are two different things with one name.
+      lines 310 to 334. Rename it `deploy/helm/init.sh`. The old name was also
+      misleading, since a Job named `seed` already creates test members.
 - [ ] Delete the `secrets.create` value and the branch it controls. The chart
       now always renders the Secrets from values. There is one path, so no
       reader has to work out which one ran.
@@ -494,8 +541,8 @@ saved from a login the cluster never saw.
 - [ ] Keep the property that made `seed-k8s.sh` safe to re-run: if a secret
       already has a value, keep it. One of those keys encrypts user data at
       rest, and regenerating it makes existing accounts unreadable.
-- [ ] Have `gen-secrets.sh` call `scripts/derive-webhook-tokens.py` rather than
-      recomputing the blake3 tokens itself. One implementation.
+- [ ] Have `deploy/helm/init.sh` call `scripts/derive-webhook-tokens.py` rather
+      than recomputing the blake3 tokens itself. One implementation.
 - [ ] Replace the four placeholder age keys in `.sops.yaml`. All four currently
       read `REPLACE`.
 - [ ] Declare the fixed Service names once. Add a `serviceNames` block to
@@ -503,9 +550,11 @@ saved from a login the cluster never saw.
       and reference it through `_helpers.tpl` everywhere. The names stay fixed,
       for the reason HANDOFF.md gives, but they become a documented list in one
       file instead of strings typed into ten templates.
-- [ ] Add a check to `k8s:policy` that fails if any file in
+- [ ] Add two checks to `k8s:policy`. Fail if any file in
       `deploy/helm/kanae/templates/` contains a hardcoded `database:5432` or
-      `kanae:8000`.
+      `kanae:8000`. Fail if anything under `deploy/helm/kanae/files/` is a
+      regular file rather than a symlink, which is what stops the copies coming
+      back.
 - [ ] Add `imagePullSecrets` to `values.yaml` and to every pod spec.
       `ghcr.io/ucmercedacm/kanae` is a private package, and nothing in `deploy/`
       currently mentions a pull secret. Finding 6 in POC_FINDINGS.md is what
@@ -518,83 +567,68 @@ Run `mise run k8s:render`. The rendered output must not change, because none of
 this phase changes what the cluster gets. That is the point: a refactor with an
 empty diff in `deploy/k8s/` is a refactor you can trust.
 
-Then run `grep -r 'files/' deploy/helm/kanae/templates/` and confirm every match
-reads a file that has no copy anywhere else in the repo.
+Then run `find deploy/helm/kanae/files -type f` and confirm it prints nothing.
+Every entry under that directory should be a symlink.
 
 ---
 
 ## Phase 4. Postgres and Valkey
 
 **What you build.** The two services that hold data. Postgres holds all three
-databases. Valkey is a cache and can be thrown away.
+databases. Valkey is a cache and can be lost.
 
-**Why they come before everything else.** Kratos, Keto, and kanae all connect to
-Postgres when they start. If Postgres is not there, none of them start, and you
-cannot test any of them.
+**Why they come first.** Kratos, Keto, and kanae all connect to Postgres at
+startup. Without it none of them start and none can be tested.
 
-**How it goes.** Do Postgres first and completely, then Valkey, which is a much
-smaller job. Get Postgres to Ready before you write anything else, because a
-Postgres that is not Ready makes every later failure look like a different
-problem.
+**How it goes.** Postgres first and completely, then Valkey, which is small.
 
-Two changes in this phase reverse decisions the proof of concept made, and both
-are about what happens when something goes wrong rather than when it goes right.
+Two changes reverse the proof of concept, and both are about what happens when
+something fails rather than when it works. The readiness probe becomes
+`pg_isready` and nothing else. The current one runs a checksum query copied from
+Compose, and Finding 1 is that copy failing and taking down the whole
+deployment. Corruption checking is worth doing somewhere that cannot stop the
+database serving traffic.
 
-The readiness probe is the first. The current one runs a checksum query copied
-from the Docker Compose healthcheck, and Finding 1 in POC_FINDINGS.md is that
-copy failing in a way that took down the entire deployment. The lesson people
-usually take from it is "escape the dollar sign correctly". The better lesson is
-that a readiness probe should be the simplest thing that can answer the
-question, because everything downstream depends on it being right. Corruption
-checking is a good idea and belongs somewhere that cannot stop the database from
-serving traffic.
+The Service type follows from it. A headless Service publishes no DNS record
+while its pod is not Ready, so a wrong probe does not degrade the system, it
+makes the name `database` stop existing and every service fails at once with a
+DNS error pointing nowhere near the cause. ClusterIP gives you connection
+refused against a name that resolves. One replica means headless buys nothing to
+offset that.
 
-The Service type is the second, and it follows from the first. A headless
-Service publishes no DNS record at all while its pod is not Ready. So a probe
-that wrongly reports not-Ready does not degrade the system, it makes the name
-`database` stop existing, and every service in the stack fails at once with a
-DNS error that points nowhere near the cause. A normal ClusterIP Service in the
-same situation gives you a connection refused against a name that resolves,
-which points at the right pod. One replica means headless buys nothing to offset
-that.
-
-Do not set resource requests or limits in this phase. Collect the numbers and
-leave the decision to Phase 10. Guessed limits are worse than absent ones,
-because a guessed memory limit gets a pod killed under load at the exact moment
-you need it.
+Memory limits go on now, CPU limits never, which is rule 7. A container over its
+memory limit is killed, so with no limit one leaking pod takes the whole node
+down with it. A container over a CPU limit is throttled instead, which surfaces
+as slow requests with nothing in the logs and is the harder thing to diagnose.
+Set the request equal to the limit so the scheduler reserves exactly what the
+pod is allowed to use. The first numbers are estimates; Phase 10 replaces them
+with what `k8s:measure` recorded.
 
 ### Tasks
 
 - [ ] Rewrite the Postgres readiness probe as `pg_isready` and nothing else.
-      The current probe copies a checksum query out of the Docker Compose
-      healthcheck. Finding 1 in POC_FINDINGS.md is that copy failing, and the
-      failure took the whole stack down. A readiness probe answers one question,
-      which is whether this pod can take traffic. Whether the data is corrupt is
-      a different question and belongs in a separate CronJob that alerts. Keep
-      the checksum query. Move it.
+- [ ] Move the checksum query it currently runs into a separate CronJob that
+      alerts, so corruption checking cannot stop the database serving traffic.
 - [ ] Change the `database` Service from headless to a normal ClusterIP Service.
-      A headless Service publishes no DNS record at all while the pod is not
-      Ready, so a broken probe becomes `NXDOMAIN` in every service at once. With
-      ClusterIP the name still resolves and you get a connection refused instead,
-      which points at the right pod. There is one replica, so headless buys
-      nothing here.
 - [ ] Set an explicit non-root `runAsUser`, `runAsGroup`, and `fsGroup` on the
-      Valkey pod. Finding 3 in POC_FINDINGS.md is Valkey crash-looping with
-      `chown: .: Operation not permitted`, because its startup script tries to
-      take ownership of its data directory when it starts as root, and the chart
-      had removed the privilege that needs. Starting as the right user means the
-      script skips that step.
-- [ ] Move the Retain-policy StorageClass out of a comment. It currently lives
-      as a `kubectl apply` block inside a comment in
-      `deploy/helm/kanae/templates/postgres.yaml`. Put it in
-      `deploy/cluster/storageclass.yaml` and add a step for it in Phase 11. It
-      is cluster-wide setup, not part of a release, so it stays out of the
-      chart. It also matters: the stock `scw-bssd` class deletes the underlying
-      volume when you delete the claim.
+      Valkey pod. Finding 3 is Valkey crash-looping on
+      `chown: .: Operation not permitted`, because its startup script takes
+      ownership of its data directory when it runs as root and the chart had
+      removed the privilege that needs.
+- [ ] Move the Retain-policy StorageClass out of the comment in
+      `deploy/helm/kanae/templates/postgres.yaml` into
+      `deploy/cluster/storageclass.yaml`, and add a step for it in Phase 11. It
+      is cluster-wide setup, not part of a release.
 - [ ] Keep `helm.sh/resource-policy: keep` on the Postgres claim.
+- [ ] Set a memory request and limit, equal to each other, on the Postgres and
+      Valkey containers. Start at 512Mi for Postgres and 256Mi for Valkey and
+      correct both in Phase 10. Leave CPU limits off.
+- [ ] Set Valkey's `maxmemory` below its container memory limit. Valkey evicts
+      keys when it reaches `maxmemory` and grows without bound when it is
+      unset, so an unset `maxmemory` under a container limit means the kernel
+      kills the container instead of Valkey doing the job it is designed for.
 - [ ] Add the mise task `k8s:measure`, which runs `kubectl top pod` and writes
-      the result to a file. Do not set resource requests yet. You set them in
-      Phase 10 from these numbers.
+      the result to a file for Phase 10.
 
 ### Exit gate
 
@@ -614,47 +648,39 @@ only proof that the volume is doing its job.
 
 ## Phase 5. Databases and migrations
 
-**What you build.** The `kanae`, `kratos`, and `keto` databases, their tables,
-and a way to see what a migration will do before it does it.
+**What you build.** The three databases, their tables, and a way to see what a
+migration will do before it does it.
 
 **Why it needs its own phase.** kanae starts fine against a database with no
-tables and then fails on every request. Migrations are also the one part of this
-system that can destroy data, so they get the most review.
+tables and then fails on every request. Migrations are also the only part of
+this system that can destroy data.
 
-**How it goes.** Start with the database creation Job, because the other two
-kinds of migration have nothing to run against until the `kratos` and `keto`
-databases exist. Then the kanae schema through Atlas, then the two Ory
-migrations, which are ordinary commands the Ory images already ship.
+**How it goes.** Database creation first, since nothing else has anything to run
+against until `kratos` and `keto` exist. Today that is a script in
+`/docker-entrypoint-initdb.d/`, which Postgres runs only when the data directory
+is empty, so on an existing volume it silently does nothing. A Job that can run
+twice safely has no such mode.
 
-The database creation is worth a careful look. Today it is a script mounted into
-`/docker-entrypoint-initdb.d/`, and Postgres runs scripts in that directory only
-when the data directory is empty. On a fresh volume it works. On an existing
-volume it does nothing, silently, and you find out when Kratos cannot reach its
-database. A Job that can run twice safely does not have that failure mode.
+Atlas needs the most thought and the least code. It compares `src/schema.sql`
+against the live database and generates the difference, so a column you delete
+from that file becomes a `DROP COLUMN` that nobody read. The dry-run job puts
+that statement in front of a human first, and it is the cheapest safety measure
+in this plan.
 
-The Atlas part needs the most thought and the least code. Atlas is declarative:
-you tell it the schema you want in `src/schema.sql` and it works out the SQL to
-get from the current database to that. Convenient, and it means a column you
-delete from that file becomes a `DROP COLUMN` that runs without anybody reading
-it. The dry-run job in the task list exists to put that statement in front of a
-human first. It is the cheapest safety measure in this plan.
-
-While this phase runs you will see the kanae pod sitting in `Init:Error` with a
-climbing restart count. Nothing is wrong. Its init container checks for a table
-that does not exist yet, exits non-zero, and Kubernetes retries it on a growing
-delay until the migration lands. Knowing that in advance saves an hour.
+Expect the kanae pod in `Init:Error` with a climbing restart count while this
+runs. Its init container is checking for a table that does not exist yet. That
+is the design.
 
 ### Tasks
 
-- [ ] Replace the initdb script with an idempotent Job. `files/init.sh` creates
-      the `kratos` and `keto` databases and the `pg_trgm` extension, and Postgres
-      only runs scripts in `/docker-entrypoint-initdb.d/` when the data directory
-      is empty. On an existing volume it silently never runs. A Job that issues
-      `CREATE DATABASE IF NOT EXISTS`-shaped statements runs correctly every
-      time.
+- [ ] Replace `deploy/helm/kanae/files/init.sh`, the Postgres initdb script,
+      with an idempotent Job. Postgres runs scripts in
+      `/docker-entrypoint-initdb.d/` only when the data directory is empty, so
+      on an existing volume this one silently never runs. It creates the
+      `kratos` and `keto` databases and the `pg_trgm` extension, and nothing
+      else does.
 - [ ] Keep migrations as Jobs rather than init containers. Init containers run
-      once per pod, so with more than one replica two copies of a schema
-      migration race each other. Jobs run once per deploy.
+      once per pod, so two replicas race two copies of a schema migration.
 - [ ] Strip the Helm hook annotations off the migration Jobs. Nothing reads them
       any more. Hooks are executed by `helm install` and `helm upgrade`, and
       neither runs in this design, so a hook annotation on an applied manifest is
@@ -674,17 +700,15 @@ delay until the migration lands. Knowing that in advance saves an hour.
       caught, and it is the only place.
 - [ ] Add a CI job that runs `atlas schema apply --dry-run` against a scratch
       Postgres on any pull request touching `src/schema.sql`, and posts the DDL
-      as a comment. Atlas compares the declarative schema against the database
-      and writes the difference, which can include `DROP COLUMN`. A reviewer
-      should read that statement before it runs, not after.
-- [ ] Keep passing arguments straight to the atlas entrypoint. Do not wrap the
-      command in `sh -c`. Finding 2 in POC_FINDINGS.md is a container image that
-      ships no shell, and the chart cannot check whether an image has one.
-- [ ] Keep every startup gate single-shot. No `until` loops and no
-      `for i in $(seq ...)` inside a container. Kubernetes already retries a
-      failed init container with a backoff, so a loop inside duplicates it. An
-      earlier unbounded `until` loop in these Jobs could never exit non-zero, so
-      `backoffLimit` never tripped and a stuck Postgres hung the whole upgrade.
+      as a comment.
+- [ ] Keep passing arguments straight to the atlas entrypoint, never through
+      `sh -c`. Finding 2 is an image that ships no shell, which the chart cannot
+      check for.
+- [ ] Keep every startup gate single-shot. No `until` loops, no
+      `for i in $(seq ...)`. Kubernetes already retries a failed init container
+      with a backoff. An earlier unbounded `until` loop here could never exit
+      non-zero, so `backoffLimit` never tripped and a stuck Postgres hung the
+      deploy.
 - [ ] Add the Ory migration Jobs: `kratos migrate sql` and `keto migrate up`.
 
 ### Exit gate
@@ -700,10 +724,8 @@ kubectl -n kanae exec database-0 -- psql -d kratos -c '\dt'  # kratos tables
 kubectl -n kanae exec database-0 -- psql -d keto -c '\dt'    # keto tables
 ```
 
-While the migration Jobs are running, expect the kanae pod to show `Init:Error`
-with a climbing restart count. That is the design. Its init container checks for
-a table that does not exist yet, fails, and Kubernetes retries it with a growing
-delay until the migration lands.
+While the Jobs run, the kanae pod shows `Init:Error` with a climbing restart
+count, for the reason given above.
 
 ---
 
@@ -711,41 +733,31 @@ delay until the migration lands.
 
 Phases 6 and 7 touch different files and different people can work on them at
 the same time. Phase 8 can be written alongside them, but it cannot be finished
-until Phase 7 is, because its exit gate sends a request through the Ingress to a
+until Phase 7 is, because its exit gate sends a request through the Gateway to a
 running API. None of the three can finish before Layer B does.
 
 ## Phase 6. Ory Kratos and Ory Keto
 
-**What you build.** The two services that answer "who is this person" (Kratos)
-and "what is this person allowed to do" (Keto).
+**What you build.** The services that answer who a person is (Kratos) and what
+they may do (Keto).
 
-**Why they come before kanae.** They do not, strictly. Neither one is contacted
-by kanae at startup. They are first in this layer because Kratos is the fussier
-of the two about its configuration, and it is easier to get it right on its own
-than while also debugging the API.
+**Why before kanae.** Not strictly necessary, since neither is contacted when
+kanae starts. Kratos is fussy about its configuration and easier to get right on
+its own than while debugging the API at the same time.
 
-**How it goes.** Keto is close to mechanical: mount two config files, run the
-migration from Phase 5, check it answers. Budget your time for Kratos.
+**How it goes.** Keto is close to mechanical. Budget your time for Kratos.
 
 Kratos validates its whole configuration at startup and refuses to boot if any
-part of it is wrong, including parts nothing will use. Finding 4 in
-POC_FINDINGS.md is exactly that. A local run has no mail server, so the setup
-script filled the mail server setting with a throwaway string, and Kratos
-rejected it because it was not shaped like a URI and stopped. The value did not
-have to work. It had to parse.
+part of it is wrong, including parts nothing will use. Finding 4 is exactly
+that: a throwaway string in the mail server setting that was not shaped like a
+URI. The value did not have to work, it had to parse.
 
-The other thing that will cost you time is cookies, and it is worth understanding
-before you hit it rather than after. Kratos issues its session and CSRF cookies
-with the Secure flag unless it is told otherwise, and a Secure cookie is dropped
-on a plain `http://` connection. Locally there is no TLS, so the cookie
-disappears, the CSRF check on the next request fails because the token that
-should have come back in a cookie did not, and login fails with an error about
-CSRF that has nothing to do with CSRF being misconfigured. The `insecureCookies`
-value exists for that and must stay off in production.
-
-Test that from inside the cluster, not through a port-forward. `curl` treats
-`127.0.0.1` as a secure context and will keep a Secure cookie there, so a
-port-forwarded test can pass while the real in-cluster path fails.
+Cookies cost the other half of your time. Kratos issues Secure cookies unless
+told otherwise, and a Secure cookie is dropped over plain `http://`. Locally the
+cookie vanishes, the next request fails its CSRF check, and the error names CSRF
+while having nothing to do with CSRF being misconfigured. Test from inside the
+cluster, because `curl` treats `127.0.0.1` as a secure context and a
+port-forwarded test will pass while the real path fails.
 
 ### Tasks
 
@@ -761,10 +773,8 @@ port-forwarded test can pass while the real in-cluster path fails.
       non-localhost host, which breaks every browser self-service flow at the
       CSRF check. HANDOFF.md says this was worked out from reading the config
       schema and never observed. Observe it.
-- [ ] Watch out for one trap when you test that. `curl` treats `127.0.0.1` as a
-      secure context, so a probe through `kubectl port-forward` can succeed
-      while the same request from inside the cluster to `http://kratos:4433`
-      fails. Test from inside the cluster.
+- [ ] Test the cookie behaviour from inside the cluster against
+      `http://kratos:4433`, not through `kubectl port-forward`.
 - [ ] Lower `max_conns` in the Kratos and Keto database connection strings from
       20 to 5. Kratos at 20, Keto at 20, and kanae's asyncpg pool at its
       default of 10 is up to 50 connections against a Postgres sized for a 4 GB
@@ -774,6 +784,9 @@ port-forwarded test can pass while the real in-cluster path fails.
       against `kratos.yml`. A local Kubernetes run therefore exercises a
       combination the Compose stack never has. Decide whether that is what you
       want, and write down the answer.
+- [ ] Set a memory request and limit, equal to each other, on the Kratos and
+      Keto containers, and on the Kratos and Keto migration containers. 256Mi
+      is a starting point for each. Phase 10 corrects them.
 
 ### Exit gate
 
@@ -791,47 +804,35 @@ exist yet. Phase 9 tests it.
 
 ## Phase 7. The kanae API
 
-**What you build.** The API itself. Everything in Layers B and C exists to
-support this one service.
+**What you build.** The API. Everything in Layers B and C exists to support this
+one service.
 
-**How it goes.** Most of this phase is configuration rather than Kubernetes. The
-pod spec is the simplest in the chart: one container, one init container, no
-storage. What takes the time is getting `config.yml` right and getting the
-process to behave like a container process.
+**How it goes.** Mostly configuration rather than Kubernetes. The pod spec is
+the simplest in the chart: one container, one init container, no storage.
 
-The config is rendered as an overlay on `config.dist.yml` rather than as a
-second copy of it. That is worth keeping. A key added to `config.dist.yml`
-arrives with its documented default instead of quietly going missing, which is
-what a second copy would do. The pod template also carries a checksum of the
-rendered config so that changing the config restarts the pod. Compute that
-checksum from the same bytes the ConfigMap holds, or it stops matching the first
-time the overlay grows a key, and then config changes stop restarting anything.
+`config.yml` renders as an overlay on `config.dist.yml` rather than a second
+copy, so a key added there arrives with its documented default instead of going
+missing. The pod template carries a checksum of the rendered config so a change
+restarts the pod. Compute that checksum from the same bytes the ConfigMap holds,
+or it stops matching the first time the overlay grows a key and config changes
+quietly stop restarting anything.
 
-The behaviour fix is `_is_docker()` in `src/core.py:166`. It decides whether
-kanae writes logs to standard output or to files, by checking for `/.dockerenv`
-and for the string `docker` in `/proc/self/cgroup`. Kubernetes runs containers
-under containerd, where neither is true, so kanae writes log files. The chart
-currently works around it by mounting a writable directory at `/kanae/logs` for
-files nothing ever reads, while `kubectl logs` shows almost nothing. Fix the
-check, then delete the mount. This is the one task in the phase that changes
-application code rather than deployment code.
+The behaviour fix is `_is_docker()` at `src/core.py:166`. It checks for
+`/.dockerenv` and for `docker` in `/proc/self/cgroup`, neither of which holds
+under containerd, so kanae writes log files. The chart works around that by
+mounting `/kanae/logs` for files nothing reads while `kubectl logs` shows almost
+nothing. Fix the check, then delete the mount.
 
-Two settings are easy to leave wrong because both defaults are correct for a
-laptop. `allowedOrigins` defaults to the Vite dev server, so with the default
-the browser refuses every request coming from `ucmacm.dev`. The rate limiter
-should stay on in production and off for local seeded runs, for the reason in
-Finding 5 of POC_FINDINGS.md.
+Two settings are easy to leave wrong because both defaults suit a laptop.
+`allowedOrigins` defaults to the Vite dev server, so the browser refuses every
+request from `ucmacm.dev`. The rate limiter stays on in production and off for
+local seeded runs, per Finding 5.
 
 ### Tasks
 
-- [ ] Render `config.yml` as an overlay on `config.dist.yml` rather than
-      maintaining a second copy. This is how the proof of concept does it and it
-      is right: a key added to `config.dist.yml` arrives with its documented
-      default instead of being missing.
-- [ ] Keep the `checksum/config` annotation on the pod template so that changing
-      the config restarts the pod. Compute it from the same bytes the ConfigMap
-      holds. A checksum computed from anything else stops matching the moment
-      the overlay grows a key.
+- [ ] Render `config.yml` as an overlay on `config.dist.yml`, not a second copy.
+- [ ] Keep the `checksum/config` annotation, computed from the same bytes the
+      ConfigMap holds.
 - [ ] Keep the single init container that checks the schema exists. One query,
       one attempt, exit non-zero if the table is missing.
 - [ ] Change the readiness probe from `exec` to `httpGet` on `/`, the route
@@ -840,20 +841,15 @@ Finding 5 of POC_FINDINGS.md.
       the image shipping both a shell and `curl`, neither of which the chart can
       check for. The kubelet performs an `httpGet` probe itself and needs
       neither. No new route is required.
-- [ ] Fix `_is_docker()` at `src/core.py:166`. It checks for `/.dockerenv` and
-      for the string `docker` in `/proc/self/cgroup`, and neither holds under
-      containerd, which is what Kubernetes uses. As a result kanae writes log
-      files instead of writing to standard output, and the chart mounts an
-      `emptyDir` at `/kanae/logs` purely so it has somewhere to write. Nothing
-      reads those files. Fix the check, then delete the mount.
-- [ ] Set `kanae.allowedOrigins` to the real frontend origin. The default in
-      `config.dist.yml` is the Vite dev server, which is right on a laptop and
-      wrong in a deployment: with it, the browser refuses every request from
-      `ucmacm.dev`.
+- [ ] Fix `_is_docker()` at `src/core.py:166` to detect containerd, then delete
+      the `/kanae/logs` `emptyDir` mount it currently requires.
+- [ ] Set `kanae.allowedOrigins` to the real frontend origin.
 - [ ] Leave the rate limiter on in production and off for local seeded runs.
-      Finding 5 in POC_FINDINGS.md is the seed script hitting the 10 requests
-      per minute limit on `GET /members/me` at member 11, and reporting it as
-      `did not resolve an identity`, which says nothing about rate limiting.
+- [ ] Set a memory request and limit, equal to each other, on the kanae
+      container and on the init container that checks the schema. 512Mi for the
+      application and 64Mi for the init container are starting points. An init
+      container without a limit is the same gap as any other container.
+      Finding 5 has the detail.
 
 ### Exit gate
 
@@ -870,56 +866,95 @@ service you cannot debug once it is in production.
 
 ---
 
-## Phase 8. Ingress and TLS
+## Phase 8. Gateway API routing and TLS
 
-**What you build.** The route from the public internet to the right service.
-Requests to `/auth` go to Kratos with the prefix stripped. Everything else goes
-to kanae.
+**What you build.** The route from the internet to the right service. `/auth`
+goes to Kratos with the prefix stripped, everything else goes to kanae.
 
-**When it can finish.** Write it whenever. Finish it after Phase 7, because its
-exit gate sends a request all the way through to a running API.
+**When it can finish.** After Phase 7, because its exit gate reaches a running
+API.
 
-**How it goes.** The routing is two Ingress objects and the reason for two is
-the whole difficulty of the phase. HAProxy's path-rewrite setting applies to
-every path in the object it is attached to, and only the Kratos route may have
-`/auth` removed from it. Kratos generates URLs that carry the `/auth` prefix but
-serves its own routes at the root, so without the rewrite every login and signup
-flow returns 404, and with the rewrite applied too broadly the API loses the
-first segment of every path. One object per rewrite rule is the only arrangement
-that works.
+**How it goes.** Routing uses the Gateway API rather than Ingress. A `Gateway`
+owns the listeners and the TLS certificate; an `HTTPRoute` attaches to it and
+holds the rules.
 
-Test it from outside the cluster. A `kubectl port-forward` opens a tunnel
-straight to the pod and never touches the Ingress controller, so it cannot tell
-you anything about whether the rewrite is right. This is the same shape of
-mistake as the `docker pull` trap in Finding 6: a convenient check that answers
-a different question than the one you asked.
+The prefix strip is the difficulty of the phase. Kratos generates URLs carrying
+`/auth` but serves its routes at the root, so without the strip every login flow
+returns 404, and with the strip applied too broadly the API loses the first
+segment of every path. In the Gateway API a `URLRewrite` filter attaches to a
+single rule, so one route object carries both:
 
-The TLS task changes an existing decision, so read it as a proposal rather than
-an instruction. Certificates today come from certbot on a server, assembled into
-a file that HAProxy reads. That works. What it does not do is tell anybody when
-the certificate expires, and renewal depends on a job on a machine that a
-graduating student set up. cert-manager keeps the certificate in the cluster as
-a Secret and renews it on its own, and `kubectl get certificate` answers the
-expiry question in one command. Decide it deliberately and write down which way
-you went.
+```yaml
+rules:
+  - matches: [{ path: { type: PathPrefix, value: /auth } }]
+    filters:
+      - type: URLRewrite
+        urlRewrite:
+          path: { type: ReplacePrefixMatch, replacePrefixMatch: / }
+    backendRefs: [{ name: kratos, port: 4433 }]
+  - matches: [{ path: { type: PathPrefix, value: / } }]
+    backendRefs: [{ name: kanae, port: 8000 }]
+```
+
+The controller is **Envoy Gateway**. It installs from one Helm chart on any
+cluster, which is the property that matters: the local k3d cluster and a rented
+one run the same controller installed the same way, with nothing borrowed from a
+distribution's bundle. Its conformance report supports `HTTPRoutePathRewrite`,
+which the route above needs, along with route-level timeouts, CORS, and
+mirroring, which nothing needs yet.
+
+It runs as two pods: a control plane that watches Gateways and HTTPRoutes, and
+one Envoy proxy provisioned per Gateway. Measured idle on k3d with a single
+Gateway, that was 36Mi each.
+
+**TLS terminates at the Gateway, and nowhere else.** Every provider offers to
+terminate it at their load balancer instead, and taking that offer moves the
+certificate into one provider's API and makes the stack unportable. So the
+load balancer in front passes TCP through, and the Gateway holds the
+certificate. cert-manager issues it into a Secret the Gateway names, which makes
+`kubectl get certificate` the answer to when it expires.
+
+This reverses `deploy/helm/HANDOFF.md`, which says "No TLS in the chart.
+Certificates come from certbot/letsencrypt assembled into HAProxy's combined PEM
+and referenced from the HAProxy config." That works today. It reports nothing
+when a certificate is about to expire, and its renewal depends on a job on a
+machine some graduating student set up.
+
+Test from outside the cluster. `kubectl port-forward` tunnels straight to the
+pod and never touches the Gateway, so it cannot tell you whether the rewrite is
+right.
 
 ### Tasks
 
-- [ ] Keep two Ingress objects rather than one. The
-      `haproxy.org/path-rewrite` annotation applies to every path in the object
-      it is attached to, and only the Kratos route may have `/auth` removed.
-      Kratos generates URLs carrying that prefix but serves its routes at the
-      root, so without the rewrite every self-service flow returns 404.
-- [ ] Move TLS into the cluster with cert-manager. Certificates currently come
-      from certbot assembled into a combined PEM file that the HAProxy config
-      references, which means renewal is a task on somebody's machine and the
-      expiry date is not visible anywhere you would look. cert-manager stores the
-      certificate as a Secret and renews it on its own, and `kubectl get
-      certificate` tells you when it expires. This changes an existing decision,
-      so record the change in `deploy/DECISIONS.md`.
-- [ ] Test through the Ingress, never through `kubectl port-forward`. A
-      port-forward connects straight to the pod and skips the Ingress
-      controller, so it cannot catch a broken path rewrite.
+- [ ] Install Envoy Gateway from its Helm chart, pinned to a version in
+      `deploy/cluster/`, with the same command in `k8s:up` and in Phase 11.
+      The Gateway API CRDs are not built into Kubernetes, and the chart ships
+      them, so let it own them and do not apply them separately. A cluster
+      missing them accepts a `Gateway` as an unknown type and routes nothing.
+- [ ] Override the chart's control plane memory request. It defaults to
+      `requests.memory: 256Mi` and `limits.memory: 1024Mi` against 36Mi
+      measured idle. Rule 7 makes the request equal the limit, and the
+      scheduler reserves the request, so the default reserves seven times what
+      the pod uses on a node that has other work to do.
+- [ ] Write one `Gateway` with an HTTPS listener and one `HTTPRoute` with two
+      rules. Put the `URLRewrite` filter on the `/auth` rule only. Two objects,
+      not two routes.
+- [ ] Give `kubeconform` the Gateway API schemas through `-schema-location`. It
+      validates against the built-in Kubernetes schemas by default and reports
+      a `Gateway` as an unknown kind, so without this the newest manifests in
+      the repository are the ones nothing checks.
+- [ ] Terminate TLS on the Gateway's HTTPS listener, with cert-manager issuing
+      the certificate into the Secret it names. cert-manager needs
+      `--enable-gateway-api` on its controller before it will issue for a
+      Gateway. Record the change in `deploy/DECISIONS.md`, since it reverses
+      HANDOFF.md's "No TLS in the chart".
+- [ ] Use the DNS-01 ACME solver rather than HTTP-01. HTTP-01 makes cert-manager
+      create an HTTPRoute that the Gateway must already be serving, so the first
+      certificate depends on the routing it is supposed to secure.
+- [ ] Expose the Gateway with a `Service` of type `LoadBalancer` and no
+      provider-specific settings in the chart. Any provider-specific annotation
+      belongs in the values file for that environment, not in the template.
+- [ ] Test through the Gateway, never through `kubectl port-forward`.
 
 ### Exit gate
 
@@ -939,58 +974,58 @@ A 404 on the second command means the rewrite is wrong.
 
 ## Phase 9. The end-to-end test
 
-**What you build.** One script that starts from nothing, brings up the whole
-stack, signs a user up, and checks the user exists. Then CI runs it.
+**What you build.** One script that starts from nothing, brings up the stack,
+signs a user up, and checks the user exists. Then CI runs it.
 
-**Why this is the most valuable phase in the plan.** Signup crosses four
-services: the browser talks to Kratos, Kratos creates the identity, Kratos calls
-a webhook back into kanae, and kanae writes a member row. A break anywhere in
-that chain looks like "signup is broken" with no clue where. This test is the
-only thing that exercises the whole chain, and no amount of schema validation
-substitutes for it.
+**Why it is the most valuable phase here.** Signup crosses four services. The
+browser talks to Kratos, Kratos creates the identity, Kratos calls a webhook
+into kanae, and kanae writes a member row. A break anywhere in that chain looks
+like "signup is broken" with no clue where.
 
-**How it goes.** Build the script in two passes. The first pass gets the
-mechanics working: create a cluster, render, apply, wait for everything, tear
-down,
-and always tear down even when it failed. Get that reliable before you write a
-single assertion, because a test harness that leaves clusters lying around when
-it fails will waste more of your time than the bugs it finds.
+**How it goes.** Half of this phase is already written. `tests/integration/`
+holds 43 hurl scenarios that drive signup, login, the permission matrix, and the
+event and project flows against the Compose stack, `mise.toml` pins hurl 8.0.1,
+and `.github/workflows/test.yml` already runs them. Point them at the cluster
+and they become the cluster's test suite. So this phase writes no assertions in
+bash: hurl asserts status codes, JSON bodies, and captured values as declarative
+lines in a `.hurl` file, and a bash `if` chain reimplementing that badly is how
+an end-to-end test rots.
 
-The second pass adds the assertions, and this is where the phase earns its
-place. Waiting for pods to be Ready is not a test. Every pod was Ready in the
-proof of concept while the stack was unusable. The assertions have to follow the
-signup chain: send a signup request to Kratos, confirm Kratos created an
-identity, confirm the webhook reached kanae, and confirm the new member is
-readable through the API. Four services, one request path, one test.
+What is new is the harness around them: create the cluster, build and import the
+images, apply, wait, run hurl through the Gateway, and tear the cluster down
+whether it passed or failed. Get that reliable before adding anything else,
+because a harness that leaks clusters costs more time than the bugs it finds.
 
-Then break it on purpose. Install with the wrong database password and confirm
-the script fails. A test that has never failed is a test you have no reason to
-believe, and this one is going to be the gate on every infrastructure change
-from here on.
+Waiting for pods to be Ready is not a test. Every pod was Ready in the proof of
+concept while the stack was unusable. The signup scenario is what tells you
+otherwise, because it crosses Kratos, the webhook, and the kanae database in one
+request chain.
 
-Spend real effort on the failure output. POC_FINDINGS.md found that failures in
-this system surface a long way from their cause, with a bad health check
-presenting as total DNS failure and a rate limit presenting as an authentication
-error. A test that fails with only "timed out waiting for pods" hands the next
-person the same puzzle. Dump the events and the logs of everything that is not
-Ready.
+Then break it on purpose with a wrong database password. A test that has never
+failed is one you have no reason to believe, and this one becomes the gate on
+every infrastructure change from here.
 
-The seed script is the loose end. It gets partway through fifteen members and
-stalls, and turning off the rate limiter moved it further without finishing it.
-Find the actual cause. Removing one more limit until it passes is how the first
-version of this got into trouble.
+Spend real effort on the failure output. Failures here surface far from their
+cause, so dump the events and the logs of everything that is not Ready.
 
 ### Tasks
 
 - [ ] Write `deploy/test/e2e.sh`. It creates a k3d cluster, builds and imports
       the images, renders the local values with `k8s:render:local` and applies
-      them, waits for every
-      workload to be Ready with a timeout, runs the assertions below, and
-      deletes the cluster whether it passed or failed.
-- [ ] Assert more than "the pods are Ready". Ready pods were true in the proof of
-      concept while the stack was unusable. Assert that a signup request to
-      Kratos mints an identity, that kanae received the webhook, and that
-      `GET /members/me` returns the new member.
+      them, waits for every workload to be Ready with a timeout, runs hurl, and
+      deletes the cluster whether it passed or failed. The script owns the
+      cluster lifecycle and nothing else.
+- [ ] Write `deploy/test/vars.env` with the same variable names as
+      `tests/integration/vars.env` and the Gateway hostname as the base URL, so
+      the existing scenarios run unchanged:
+      `hurl --test --variables-file deploy/test/vars.env ...`. A scenario that
+      needs editing to run against Kubernetes is testing the harness rather
+      than the application, so treat any such edit as a bug in the harness.
+- [ ] Start with the three scenarios that prove the wiring rather than all 43:
+      `01_health_and_docs.hurl`, `02_login_admin_bootstrapped.hurl`, and
+      `22_full_journey_lead.hurl`. The last one covers signup end to end, which
+      is the chain this phase exists to check. Widen to the full directory once
+      the harness stops being the thing that fails.
 - [ ] Fix the seed script so it completes all fifteen members. It currently gets
       partway through, fails, retries, and gets a little further. Turning off the
       rate limiter moved it past one blockage but did not finish it. Find the
@@ -998,12 +1033,14 @@ version of this got into trouble.
 - [ ] Add a negative test. Apply with a deliberately wrong database password and
       confirm `e2e.sh` fails. A test that has never failed proves nothing about
       the thing it tests.
-- [ ] Test pruning. Remove a resource from the chart, re-render, apply, and
-      confirm the resource leaves the cluster. This is the failure mode the
-      rendered manifests pattern introduces, per Phase 2, and it is silent
+- [ ] Test deletion. Remove a resource from the chart, re-render, run
+      `k8s:apply`, and confirm kapp removes it from the cluster. This is the
+      failure mode the rendered manifests pattern introduces, and it is silent
       without a test.
-- [ ] Add `e2e.sh` to `.github/workflows/infra.yml`, on pull requests touching
-      `deploy/**` and on a nightly schedule. GitHub runners can run k3d.
+- [ ] Add `e2e.sh` to `.github/workflows/infra.yml`, behind the same
+      `dorny/paths-filter` output as the rest of that workflow, plus a nightly
+      schedule so it still runs on the weeks nobody touches the cluster.
+      GitHub runners can run k3d.
 - [ ] Have the script print, on failure, the output of
       `kubectl get events --sort-by=.lastTimestamp` and the logs of every pod
       that is not Ready. The proof of concept found that failures surface far
@@ -1023,53 +1060,58 @@ with the Postgres authentication error in its output.
 **What you build.** The operational parts. None of them are needed to make the
 stack work, and all of them are needed before you trust it with real data.
 
-**How it goes.** Backups first, because they are the only item here that
-protects something you cannot get back.
+**How it goes.** Backups first, since they protect the only thing you cannot get
+back.
 
-Start by checking what the backup image can actually do, before writing any
-config. Borg 1.x cannot write to S3-compatible storage at all. Only Borg 2.x
-can, through a component called borgstore. The chart currently schedules a
-backup against a repository setting that may be impossible for the image it
-runs, and nobody has checked which version is in there. The credential variable
-names are a guess too, recorded as one in HANDOFF.md. Both are one command to
-resolve and neither has been run.
+Check what the backup image can actually do before writing any config. Borg 1.x
+cannot write to S3-compatible storage at all, only 2.x can, through borgstore.
+The chart schedules a backup against a repository setting that may be impossible
+for the image it runs, and HANDOFF.md records the credential variable names as a
+guess. Both are one command to resolve and neither has been run.
 
-Then restore from a backup. Not "confirm the backup Job succeeded", restore it
-into a scratch database and compare row counts against the source. A backup
-nobody has restored from is a file of unknown contents. Do it by hand once so
-you understand the steps, then write it as a script so it can be done again
-under pressure.
+Aim at 3-2-1: three copies of the data, on two kinds of storage, one of them
+offsite. Two thirds of that comes free here. The live Postgres volume is copy
+one, a Borg repository on a separate volume is copy two, and an S3 bucket at a
+different provider is copy three and the offsite one. The middle leg is the one
+a single-node cluster cannot honestly meet, because the first two copies sit on
+block volumes from the same provider and fail together. Write that down rather
+than claiming a policy the setup does not meet, and treat the offsite copy as
+the one that carries the weight.
 
-Resource limits come from the numbers Phase 4 collected. Set requests near the
-steady state you measured and limits with room above the peak. Resist the urge
-to round to memorable numbers.
+Then restore. Not "the backup Job succeeded" but restore into a scratch database
+and compare row counts against the source. A backup nobody has restored from is
+a file of unknown contents.
 
-The runbook is the last item and the one most likely to be skipped. Write it
-anyway, keyed on the exact text of the error somebody will see, because that is
-what they will paste into a search box at the moment they need it. The six
-findings in POC_FINDINGS.md are six real error messages that will happen again,
-and each of them looked like a different problem than it was.
+The runbook is the item most likely to be skipped. Key it on the exact error
+text somebody will paste into a search box. The six findings in POC_FINDINGS.md
+are six real messages that will happen again.
 
 ### Tasks
 
-- [ ] Check which Borg version the backup image ships. Borg 1.x cannot write to
-      S3-compatible storage at all. Only Borg 2.x can, through `borgstore`.
-      `deploy/helm/kanae/templates/backup-borgmatic.yaml` schedules a backup
-      today against a repository setting that may be impossible for the image.
+- [ ] Check which Borg version the backup image ships, then set
+      `backup.repository` in
+      `deploy/helm/kanae/templates/backup-borgmatic.yaml` to match what it can
+      actually write to.
 - [ ] Write the borgmatic config ConfigMap. The chart expects a ConfigMap named
       by `backup.configMap` and the config itself does not exist yet.
 - [ ] Confirm the backup credential environment variable names against the
       image. HANDOFF.md records that `AWS_ACCESS_KEY_ID` and
       `AWS_SECRET_ACCESS_KEY` are a guess, based on what rclone, borgstore, and
       boto read.
-- [ ] Restore from a backup into a scratch database and compare row counts
-      against the source. A backup you have never restored from is not a backup.
-      Do this once by hand, then write it as a script.
-- [ ] Set resource requests and limits from the numbers `k8s:measure` collected
-      in Phase 4, not from guesses. Set requests near the observed steady state
-      and limits with headroom above the observed peak.
-- [ ] Switch on kube-linter's resource-limit checks, which Phase 2 left off
-      until there were numbers to satisfy them.
+- [ ] Restore from a backup by hand once, then write it as a script so it can be
+      done again under pressure.
+- [ ] Record the backup layout against 3-2-1 in `deploy/DECISIONS.md`: which
+      copy is which, and which leg this setup does not meet. A policy nobody
+      has written down is a policy nobody can audit.
+- [ ] Put the offsite copy somewhere that is not the cluster's provider. A
+      backup held on the same account as the thing it protects survives a disk
+      failure and very little else.
+- [ ] Replace the memory estimates from Phases 4, 6, and 7 with the numbers
+      `k8s:measure` collected. Keep request and limit equal, and set both above
+      the observed peak rather than the steady state, because the limit is what
+      the pod is killed for exceeding.
+- [ ] Leave CPU limits unset and write the reason beside the values, so the
+      next person does not read the gap as an oversight and fill it in.
 - [ ] Write `deploy/RUNBOOK.md`, keyed on exact error strings. Start with the
       six findings in POC_FINDINGS.md, since each one is a real error message
       somebody will see again: `Init:Error`, `ImagePullBackOff`,
@@ -1089,36 +1131,28 @@ database, and the row counts match the source.
 
 ## Phase 11. Production
 
-**What you build.** The real cluster, and the first deploy onto it.
+**What you build.** The real cluster and the first deploy onto it.
 
-**Why it is last.** Everything above is rehearsal for this, and every step here
-is easier to debug on a laptop first.
+**Why it is last.** Everything above is rehearsal, and every step here is easier
+to debug on a laptop first.
 
-**How it goes.** The order matters more here than anywhere else, because some of
+**How it goes.** Order matters more here than anywhere else, because some of
 these steps are hard to undo once data exists.
 
-Cluster-wide setup comes before the first install: the storage class, the
-ingress controller, cert-manager, and the image pull secret. The storage class
-in particular has to exist before you install anything, because the Postgres
-claim names it and a claim that names a class which does not exist waits
-forever without a useful error. It also has to be the Retain variant. The stock
-Scaleway class deletes the underlying volume when the claim goes away, which
+Cluster-wide setup comes before the first apply: storage class, Gateway API
+CRDs, Envoy Gateway, cert-manager, image pull secret. The storage class
+especially,
+because the Postgres claim names it and a claim naming a class that does not
+exist waits forever without a useful error. It has to be the Retain variant, as
+the stock Scaleway class deletes the underlying volume when the claim goes and
 turns a routine mistake into data loss.
 
-Then secrets, then the install. Generate the production secrets, encrypt them,
-commit the encrypted file, and put the CI key in a repository secret. Keep the
-property that re-running the generator preserves existing values. One of those
-keys encrypts user data at rest, and regenerating it makes every existing
-account unreadable, with no way back.
+Then secrets, then apply. The generator preserves existing values on a re-run,
+per Phase 3, and that property matters most here.
 
-Once it is installed and before anyone depends on it, do a rollback on purpose.
-Upgrade to something harmless, roll back, roll forward. The first rollback you
-ever perform should not be during an outage at 2am, and the forward-only
-migration policy from Phase 5 is the thing you are really testing: you want to
-find out now what a rollback does and does not undo.
-
-Keep whatever serves the API today running until signup works against the new
-cluster. Cutting over is a DNS change, which means it is also a DNS change back.
+Rehearse a rollback before anyone depends on it. Here that is a git revert and
+re-apply rather than one Helm command, and the forward-only migration policy
+from Phase 5 is what you are really testing.
 
 ### Tasks
 
@@ -1126,23 +1160,36 @@ cluster. Cutting over is a DNS change, which means it is also a DNS change back.
       concept targets Kapsule with the free Mutualized control plane, at roughly
       €21 a month for a DEV1-M node, block storage, and an IPv4 address. Write
       the decision and its cost in `deploy/DECISIONS.md`.
-- [ ] Create the cluster with its own ingress controller turned off, so it does
-      not install nginx or traefik alongside HAProxy.
+- [ ] Create the cluster with the provider's managed ingress add-on turned off,
+      so nothing installs a second controller alongside the one this plan
+      configures.
 - [ ] Apply `deploy/cluster/storageclass.yaml` from Phase 4. Do this before the
       first install, because the Postgres claim names that class.
-- [ ] Install the HAProxy ingress controller.
+- [ ] Install Envoy Gateway with the same pinned command `k8s:up` runs, which
+      brings the Gateway API CRDs with it. Do this before the first
+      `k8s:apply`: applied to a cluster without those CRDs, the Gateway and the
+      HTTPRoute are unknown types and nothing routes.
+- [ ] Add whatever annotations the provider's cloud controller needs to the
+      Gateway's `LoadBalancer` Service, in the production values file only. On
+      Scaleway that is the CCM annotations, and reserving the IP before you
+      point DNS at it. Nothing provider-specific goes in the chart templates,
+      so this is the one file that changes when the provider does.
+- [ ] Leave TLS terminating on the Gateway rather than on the provider's load
+      balancer, whatever the provider offers. Configure the load balancer to
+      pass TCP through. Terminating there puts the certificate somewhere
+      `kubectl` cannot see it and somewhere the next provider will not have.
 - [ ] Install cert-manager and create the issuer.
 - [ ] Create the image pull secret for `ghcr.io/ucmercedacm/kanae`.
 - [ ] Publish the `kanae-seed` image. `docker/Dockerfile.seed` exists and
       `mise run seed:image` builds it locally, but nothing pushes it to ghcr.
-- [ ] Generate the production secrets with `gen-secrets.sh`, encrypt with SOPS,
+- [ ] Generate the production secrets with `deploy/helm/init.sh`, encrypt with SOPS,
       commit the encrypted file, and put the CI age key in a GitHub Actions
       repository secret. Apply them before the first `k8s:apply`, or every pod
       that mounts them stays pending.
 - [ ] Point DNS at the cluster.
-- [ ] Apply `deploy/k8s/` with `mise run k8s:apply`. Read the
-      `kubectl diff` it prints before you confirm. On a first install that diff
-      is every resource, which is the one time it is not worth reading closely.
+- [ ] Apply `deploy/k8s/` with `mise run k8s:apply`. Read the diff kapp prints
+      before you confirm. On a first install that diff is every resource, which
+      is the one time it is not worth reading closely.
 - [ ] Rehearse a rollback while nobody is using it. Change something harmless,
       render, apply, then `git revert` the commit, re-render, and apply again.
       The first rollback you ever perform should not be during an outage, and
@@ -1165,15 +1212,17 @@ Tick a phase only when its exit gate has passed on a real cluster.
 
 **Layer A. Foundation**
 
-- [ ] Phase 1. Tools pinned, dprint and yamllint wired up, `k8s:up` and
-      `k8s:down` work, CI runs both checks
+- [ ] Phase 1. Tools pinned and the Kubernetes ones split into their own mise
+      config, dprint and yamllint wired up, `k8s:up` and `k8s:down` work, CI
+      runs both checks behind a path filter
 - [ ] Phase 2. `values.schema.json` written, `deploy/k8s/` committed and
-      applyable, local renders gitignored, CI fails on a stale render
+      applicable, local renders gitignored, CI fails on a stale render
 
 **Layer B. Platform**
 
-- [ ] Phase 3. No file in the repo is a copy of another, one program renders
-      each generated file, real age keys in `.sops.yaml`
+- [ ] Phase 3. No file in the repo is a copy of another, the chart reaches its
+      sources through symlinks, one program renders each generated file, real
+      age keys in `.sops.yaml`
 - [ ] Phase 4. Postgres and Valkey Ready, data survives deleting the Postgres
       pod
 - [ ] Phase 5. Three databases with their tables, a written forward-only
@@ -1185,15 +1234,16 @@ Tick a phase only when its exit gate has passed on a real cluster.
       assumed
 - [ ] Phase 7. kanae Ready, the readiness probe needs no shell, logs appear in
       `kubectl logs`
-- [ ] Phase 8. Both Ingress routes work from outside the cluster, TLS renews
+- [ ] Phase 8. Both HTTPRoute rules work from outside the cluster, TLS renews
       without a human
 
 **Layer D. Proof and operations**
 
-- [ ] Phase 9. `e2e.sh` signs a user up from an empty cluster, and fails when
-      you break something on purpose
-- [ ] Phase 10. A restore from a real backup matches the source, resource limits
-      set from measurements, runbook written
+- [ ] Phase 9. `e2e.sh` brings up a cluster and the existing hurl scenarios
+      pass against it, and fail when you break something on purpose
+- [ ] Phase 10. A restore from a real backup matches the source, memory limits
+      set from measurements, backup layout recorded against 3-2-1, runbook
+      written
 - [ ] Phase 11. Signup works through the real domain, and a git revert rollback
       has been rehearsed
 
@@ -1207,13 +1257,14 @@ input format both tools want, so adopting one later is a configuration change
 rather than a rewrite.
 
 The reason to wait is that each is another system to run, upgrade, and debug, on
-one node, for one application, maintained by students who graduate. The reason
-to revisit is pruning. `kubectl apply --prune` with a label selector works, and
-it is the weakest part of this plan: it depends on every resource carrying the
-label and on nobody applying without the flag. Argo tracks what it created and
-removes what left the repository, without depending on either. If pruning bites
-somebody after Phase 11, that is the signal to reconsider rather than to add
-more discipline.
+one node, for one application, maintained by students who graduate. kapp already
+covers the deletion problem that would otherwise force the issue, and it runs
+only when somebody runs it.
+
+The reason to revisit is drift. kapp tells you what changed when you deploy;
+Argo watches continuously and tells you when the cluster stops matching the
+repository, including when somebody changes something by hand. If that happens
+and nobody notices for a week, that is the signal.
 
 **Kustomize instead of Helm.** Helm is already pinned in `mise.toml`, the chart
 already exists, and the templating engine was never what made the proof of
