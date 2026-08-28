@@ -217,10 +217,9 @@ last-one-wins and which `kubeconform` cannot catch because the first value is
 already gone by the time it looks. And `truthy`, where `no` parses as boolean
 false rather than the string.
 
-`yamllint` is the tool for that, with its layout rules switched off. It is the
-decided choice. It is also Python, which this plan otherwise keeps out of the
-infra checks, so the reasoning is recorded here rather than left to be
-re-argued:
+`yamllint` is the choice, with its layout rules off. It is Python, which this
+plan otherwise avoids in the infra checks, so the alternatives are recorded
+here rather than left to be re-argued:
 
 | Tool | Language | Stars | Status |
 | --- | --- | --- | --- |
@@ -229,9 +228,9 @@ re-argued:
 | yaml-lint-rs | Rust | 7 | stopped February 2026 |
 | yamllint-rs | Rust | 4 | two commits |
 
-Speed was the objection and it does not survive measurement. `yamllint` over all
-39 YAML files here, 3,728 lines, takes 0.434 seconds. None of the Rust
-reimplementations clears the bar this plan sets for everything else.
+Speed was the objection and it does not survive measurement: 0.434 seconds over
+all 39 YAML files here. No Rust reimplementation clears the maturity bar this
+plan sets for everything else.
 
 ### Tasks
 
@@ -262,15 +261,6 @@ reimplementations clears the bar this plan sets for everything else.
 - [ ] Add the mise task `k8s:down`. It deletes the cluster and waits for the
       deletion to finish before returning.
 - [ ] Add the mise task `k8s:reset`, which runs `k8s:down` then `k8s:up`.
-- [ ] Move the Kubernetes tool pins out of `mise.toml` and into
-      `.config/mise/conf.d/k8s.toml`. mise layers that file over `mise.toml`
-      with no extra configuration, which was checked. The point is the path:
-      `mise.toml` changes every time a dependency is bumped, so while the k3d
-      pin and the uv pin live in one file no CI filter can tell a cluster change
-      from a routine one.
-- [ ] Pin the seven tools that still read `latest`: helm, kubectl, k3d, k9s,
-      kubeconform, sops, and age. `latest` lets CI and your laptop run different
-      versions and disagree about a rendered manifest.
 - [ ] Write `.github/workflows/infra.yml`, gated on `dorny/paths-filter` rather
       than on a `paths:` key. A job skipped by `paths:` reports no status at
       all, so a branch protection rule that requires it waits forever. A filter
@@ -278,8 +268,11 @@ reimplementations clears the bar this plan sets for everything else.
       not have that problem. Pin the action by commit SHA the way
       `.github/workflows/lint.yml` already pins its actions:
       `dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3`.
-      For now the gated job runs `k8s:fmt:check` and the existing
-      `scripts:lint`.
+      For now the gated job runs `k8s:fmt:check`, `k8s:lint`, and the
+      existing `scripts:lint`. Run `k8s:lint` in CI and not only from the exit
+      gate, because `key-duplicates` is the one rule here that nothing else can
+      catch: YAML resolves a duplicate key silently as last-one-wins, and
+      `kubeconform` never sees the discarded value.
 - [ ] Write the filter narrowly. `deploy/**` matches too much: HANDOFF.md, the
       Compose helper scripts, and anything else that lands under `deploy/` would
       trigger a cluster build for no reason.
@@ -291,10 +284,7 @@ reimplementations clears the bar this plan sets for everything else.
         - 'deploy/k3d/**'
         - 'deploy/cluster/**'
         - 'deploy/test/**'
-        - '.config/mise/conf.d/k8s.toml'
         - '.github/workflows/infra.yml'
-        - 'dprint.json'
-        - '.yamllint.yaml'
       ```
 
       On `pull_request` the action compares through the API and needs no
@@ -330,19 +320,11 @@ deploy/
   k8s/                 production manifests. generated. this is what is deployed
 ```
 
-Helm is a build tool here. `mise run k8s:render` turns the chart into plain
-YAML, you commit it, and `kapp` applies that directory to the cluster.
-Nothing runs `helm install`, so the reviewed artifact and the applied one are
-the same bytes. The arrangement has a name, the rendered manifests pattern.
-
-There is no `local/` beside it. Two near-identical directories, one disposable
-and one holding the real cluster, means checking which one you are in before you
-can trust anything you see. Local renders go to `.k8s-local/`, gitignored. CI
-still renders and validates them on every pull request, it just leaves no file
-behind.
-
-The name is `k8s` rather than `k3s` because k3s is one distribution and Kapsule
-is another, and the manifests contain nothing specific to either.
+There is no `local/` beside them. Two near-identical directories, one
+disposable and one holding the real cluster, means checking which one you are in
+before you can trust anything you see. Local renders go to gitignored
+`.k8s-local/`, still rendered and validated in CI. The name is `k8s` rather than
+`k3s` because the manifests contain nothing specific to any one distribution.
 
 **How it goes.** Write the schema first. Doing so makes you read every value in
 `values.yaml` and decide what it is for, and you will find one or two that
@@ -350,33 +332,24 @@ nothing reads. Then add the render tasks, splitting output one file per resource
 so a diff names the resource in its path instead of moving 900 lines of one
 blob.
 
-**What it costs, and what applies the manifests.** No `helm rollback`. A git
-revert plus re-apply replaces it, which is more auditable and slower under
-pressure.
+**What it costs.** No `helm rollback`. A git revert plus re-apply replaces it,
+which is more auditable and slower under pressure.
 
-The harder problem is deletion. `kubectl apply` creates and updates and never
-deletes, so a resource you remove from the chart keeps running with nothing
-reporting it. Apply with **kapp** instead. It records the set of resources it owns, shows a
-diff before changing anything, applies in dependency order, waits for resources
-to settle, and deletes what has left the manifests:
+The harder cost is deletion: `kubectl apply` never deletes, so a resource you
+remove from the chart keeps running with nothing reporting it. Apply with
+**kapp** instead, which records the resources it owns, shows a diff before
+changing anything, applies in dependency order, and deletes what has left the
+manifests:
 
 ```
 kapp deploy -a kanae -f deploy/k8s/
 ```
 
-This was checked against a k3d cluster rather than taken from the
-documentation. kapp 0.65.4 planned and applied 22 creates from this chart's
-rendered output. Deleting one manifest and redeploying reported
-`0 create, 1 delete, 1 update` and the resource was gone from the cluster.
-Redeploying unchanged reported `0 create, 0 delete, 0 update`, a true no-op.
-`kapp deploy --diff-run` printed the pending delete and changed nothing.
-
-kapp is a Carvel project, in the CNCF landscape, maintained since 2019. There is
-no controller and nothing running in the cluster between deploys.
-
-Argo CD or Flux remain the upgrade path if somebody later wants continuous
-reconciliation rather than a command they run. Nothing here blocks that, since
-rendered manifests in git is exactly their input format.
+That behaviour was confirmed against a k3d cluster, including the delete: 22
+creates on first deploy, and `0 create, 1 delete, 1 update` after a manifest was
+removed. kapp is a Carvel project with no controller and nothing running in the
+cluster between deploys. Argo CD or Flux stay available later, since rendered
+manifests in git is exactly their input format.
 
 ### Tasks
 
@@ -428,9 +401,12 @@ rendered manifests in git is exactly their input format.
       next to the switch. This plan sets memory limits deliberately and CPU
       limits never, for the reason in Phase 4, so a check demanding CPU limits
       would only teach people to ignore the config.
-- [ ] Rename `helm:lint` to `k8s:schema`. The current name reads like a quality
+- [ ] Rename `helm:lint` to `k8s:schema`, and add it to
+      `.github/workflows/infra.yml`. The current name reads like a quality
       gate. It checks the shape of the YAML and nothing about what the YAML
-      does. Give it a name that says so.
+      does. Give it a name that says so. It is also the only check that renders
+      the production, local, and secrets values paths, so leaving it out of CI
+      means the secrets path is rendered by nobody until a release.
 - [ ] Move the "Decisions worth not re-litigating" section of
       `deploy/helm/HANDOFF.md` into `deploy/DECISIONS.md`, one decision per
       heading, each with the reason and the date. HANDOFF.md then becomes a
@@ -467,53 +443,33 @@ debugging a service reading a config nobody wrote.
 **How it goes.** Three independent parts. Run `mise run k8s:render` after each,
 and the render must not change. That is the safety net for the whole phase.
 
-First, remove the copies under `deploy/helm/kanae/files/` without moving
-anything. The copies exist because `.Files.Get` refuses a path outside the chart
-directory. The obvious fix is to move the originals into the chart, and that
-fix is wrong here: `src/schema.sql`, `config.dist.yml`, and `docker/ory/config/`
-are read by Atlas, by the application, and by every Compose file, and moving
-them breaks all of it to satisfy Helm.
+First, replace the copies under `deploy/helm/kanae/files/` with symlinks to the
+originals. Nothing moves. The copies exist because `.Files.Get` is scoped to the
+chart directory, and it enforces that badly: a path climbing out renders an
+empty string and exits 0. Helm does follow symlinks, and converting all 17
+renders the chart byte identically. The cost is Windows, where git writes a
+symlink as a text file unless `core.symlinks` is on, silently. The policy check
+below is what catches it.
 
-Helm follows symlinks, so replace each copy with a link to the real file. Helm
-resolves the link, reads the target, and logs `found symbolic link in path` as
-it goes. This was checked rather than assumed: it works for a linked file and
-for a linked directory, the target may sit outside the chart, and `helm package`
-dereferences the link into a regular file inside the tarball, so a packaged
-chart carries content rather than a dangling link. Nothing moves, every existing
-path keeps working, and there is one copy of each file.
+Second, cut `seed-k8s.sh` down to generating secret values and deriving tokens,
+and rename it `deploy/helm/init.sh`. Its `yq` config rendering and its
+`kubectl create secret` calls both go.
 
-The cost is Windows. Git there writes a symlink as a text file holding the
-target path unless `core.symlinks` is on, which needs Developer Mode or an
-administrator shell. This repo already ships `run_windows` task variants, so
-somebody will hit it: a render on a Windows checkout without symlink support
-produces a ConfigMap containing a path string instead of a file. Write that in
-`deploy/k8s/README.md`. CI renders on Linux, so the drift check catches it.
-
-Second, cut `seed-k8s.sh` down and rename it `deploy/helm/init.sh`, matching how
-init scripts are named elsewhere in this repo. It does four things today:
-generates secret values, derives two tokens, renders `config.yml` with `yq`, and
-pushes Secrets with `kubectl`. Only the first two survive.
-
-The repository holds six files called `init.sh` doing unrelated jobs, so always
-write the full path. `deploy/helm/init.sh` generates secrets, and is this phase.
-`docker/ory/init.sh` is the Postgres initdb script that creates the `kratos` and
-`keto` databases, reached from the chart through the symlink at
-`deploy/helm/kanae/files/init.sh`, and is Phase 5. Neither is ever called just
-"init.sh" in this plan.
+Six files here are called `init.sh`, so always write the full path.
+`deploy/helm/init.sh` generates secrets and is this phase. `docker/ory/init.sh`
+is the Postgres initdb script and is Phase 5.
 
 Third, the smaller cleanup: real age keys, service names declared once, and the
-image pull secret. Take the pull secret seriously despite it looking trivial,
-because `docker pull` succeeds from your laptop using credentials the cluster
-never saw.
+image pull secret. The pull secret looks trivial and is not, because
+`docker pull` succeeds from your laptop using credentials the cluster never saw.
 
-**Where Secrets live.** Not in `deploy/k8s/`. A rendered Secret is a base64
+**Where Secrets live.** Not in `deploy/k8s/`: a rendered Secret is a base64
 credential and that directory exists to be read. Committing it encrypted fails
-too, because SOPS generates a fresh data key per encryption, so identical
-content encrypts to different bytes every run and the drift check never passes.
-Instead `deploy/helm/secrets-prod.enc.yaml` holds the values, and at apply time
-they are decrypted in memory, rendered by the same chart, and piped into
-`kubectl`. Secrets are the one part of the deployment you cannot read out of
-git.
+too, because SOPS uses a fresh data key per run, so identical content encrypts
+to different bytes and the drift check never passes. Instead
+`deploy/helm/secrets-prod.enc.yaml` holds the values, decrypted in memory at
+apply time and piped into `kubectl`. Secrets are the one part of the deployment
+you cannot read out of git.
 
 ### Tasks
 
@@ -525,6 +481,25 @@ git.
 - [ ] Delete the `helm:sync` and `helm:check` tasks from `mise.toml`. With no
       copies there is nothing to sync and nothing to check. `helm:check` only
       ever existed because the copies did.
+- [ ] Replace them with a hidden `helm:files` task, and make `k8s:render`,
+      `k8s:render:local`, and `k8s:schema` declare `depends = ["helm:files"]`.
+      It asserts every entry under `files/` is a symlink that resolves, and
+      recreates any that are missing or broken from the same list. Nothing
+      renders without it having passed, so a stale or deleted link never
+      reaches a manifest.
+- [ ] Have `helm:files` fail with instructions rather than fall back to copying
+      when the checkout has no symlink support. Copying would put content in
+      `files/` that differs from what is committed, which is the drift this
+      phase removes. The instructions are `git config core.symlinks true` and
+      re-checkout, or clone with `git clone -c core.symlinks=true`.
+- [ ] Write the Windows situation in `deploy/k8s/README.md` rather than
+      pretending it away. Git cannot be made to fix this from inside the
+      repository: `core.symlinks` lives in `.git/config`, which `clone` creates
+      and never fetches, and there is no `.gitattributes` equivalent. What git
+      does do is refuse to record such a checkout's plain files back as
+      regular files, so a Windows clone cannot silently replace the links. That
+      was checked: `git status` reads clean and `git add -A` leaves every entry
+      at mode `120000`.
 - [ ] Cut `deploy/helm/seed-k8s.sh` down to one job: generate secret values and
       write them to a plain YAML file for SOPS to encrypt. Delete the `yq`
       config rendering at line 247 and the `kubectl create secret` calls at
@@ -552,9 +527,11 @@ git.
       file instead of strings typed into ten templates.
 - [ ] Add two checks to `k8s:policy`. Fail if any file in
       `deploy/helm/kanae/templates/` contains a hardcoded `database:5432` or
-      `kanae:8000`. Fail if anything under `deploy/helm/kanae/files/` is a
-      regular file rather than a symlink, which is what stops the copies coming
-      back.
+      `kanae:8000`. Fail if anything under `deploy/helm/kanae/files/` is not a
+      symlink, or is a symlink that does not resolve:
+      `find deploy/helm/kanae/files -type f -o -xtype l` must print nothing.
+      One check covers three failures: a copy creeping back, a Windows checkout
+      turning a link into a text file, and a link whose target was renamed.
 - [ ] Add `imagePullSecrets` to `values.yaml` and to every pod spec.
       `ghcr.io/ucmercedacm/kanae` is a private package, and nothing in `deploy/`
       currently mentions a pull secret. Finding 6 in POC_FINDINGS.md is what
@@ -596,13 +573,12 @@ DNS error pointing nowhere near the cause. ClusterIP gives you connection
 refused against a name that resolves. One replica means headless buys nothing to
 offset that.
 
-Memory limits go on now, CPU limits never, which is rule 7. A container over its
-memory limit is killed, so with no limit one leaking pod takes the whole node
-down with it. A container over a CPU limit is throttled instead, which surfaces
-as slow requests with nothing in the logs and is the harder thing to diagnose.
-Set the request equal to the limit so the scheduler reserves exactly what the
-pod is allowed to use. The first numbers are estimates; Phase 10 replaces them
-with what `k8s:measure` recorded.
+Memory limits go on now, CPU limits never, which is rule 7. Exceeding a memory
+limit kills the container, so with no limit one leaking pod takes the node down
+with it. Exceeding a CPU limit only throttles, which surfaces as slow requests
+with nothing in the logs. Request equals limit so the scheduler reserves what
+the pod may use. The first numbers are estimates; Phase 10 replaces them with
+what `k8s:measure` recorded.
 
 ### Tasks
 
@@ -896,33 +872,22 @@ rules:
     backendRefs: [{ name: kanae, port: 8000 }]
 ```
 
-The controller is **Envoy Gateway**. It installs from one Helm chart on any
-cluster, which is the property that matters: the local k3d cluster and a rented
-one run the same controller installed the same way, with nothing borrowed from a
-distribution's bundle. Its conformance report supports `HTTPRoutePathRewrite`,
-which the route above needs, along with route-level timeouts, CORS, and
-mirroring, which nothing needs yet.
-
-It runs as two pods: a control plane that watches Gateways and HTTPRoutes, and
-one Envoy proxy provisioned per Gateway. Measured idle on k3d with a single
-Gateway, that was 36Mi each.
+The controller is **Envoy Gateway**, chosen because it installs from one Helm
+chart on any cluster: local and production run the same controller the same way,
+with nothing borrowed from a distribution's bundle. It supports
+`HTTPRoutePathRewrite`, which the route above needs. It runs as a control plane
+pod plus one Envoy proxy per Gateway, 36Mi each idle.
 
 **TLS terminates at the Gateway, and nowhere else.** Every provider offers to
-terminate it at their load balancer instead, and taking that offer moves the
-certificate into one provider's API and makes the stack unportable. So the
-load balancer in front passes TCP through, and the Gateway holds the
-certificate. cert-manager issues it into a Secret the Gateway names, which makes
-`kubectl get certificate` the answer to when it expires.
-
-This reverses `deploy/helm/HANDOFF.md`, which says "No TLS in the chart.
-Certificates come from certbot/letsencrypt assembled into HAProxy's combined PEM
-and referenced from the HAProxy config." That works today. It reports nothing
-when a certificate is about to expire, and its renewal depends on a job on a
-machine some graduating student set up.
+terminate at their load balancer instead, which moves the certificate into that
+provider's API and makes the stack unportable. The load balancer passes TCP
+through, cert-manager issues into a Secret the Gateway names, and
+`kubectl get certificate` answers when it expires. That reverses HANDOFF.md's
+"No TLS in the chart", which works today but reports nothing before a
+certificate lapses.
 
 Test from outside the cluster. `kubectl port-forward` tunnels straight to the
-pod and never touches the Gateway, so it cannot tell you whether the rewrite is
-right.
+pod and never touches the Gateway.
 
 ### Tasks
 
@@ -983,30 +948,22 @@ into kanae, and kanae writes a member row. A break anywhere in that chain looks
 like "signup is broken" with no clue where.
 
 **How it goes.** Half of this phase is already written. `tests/integration/`
-holds 43 hurl scenarios that drive signup, login, the permission matrix, and the
-event and project flows against the Compose stack, `mise.toml` pins hurl 8.0.1,
-and `.github/workflows/test.yml` already runs them. Point them at the cluster
-and they become the cluster's test suite. So this phase writes no assertions in
-bash: hurl asserts status codes, JSON bodies, and captured values as declarative
-lines in a `.hurl` file, and a bash `if` chain reimplementing that badly is how
-an end-to-end test rots.
+holds 43 hurl scenarios covering signup, login, the permission matrix, and the
+event and project flows, `mise.toml` pins hurl 8.0.1, and
+`.github/workflows/test.yml` already runs them against Compose. Point them at
+the cluster and they become the cluster's test suite, so this phase writes no
+assertions in bash.
 
-What is new is the harness around them: create the cluster, build and import the
-images, apply, wait, run hurl through the Gateway, and tear the cluster down
-whether it passed or failed. Get that reliable before adding anything else,
-because a harness that leaks clusters costs more time than the bugs it finds.
+What is new is the harness: create the cluster, build and import the images,
+apply, wait, run hurl through the Gateway, and tear down whether it passed or
+failed. Get that reliable first, because a harness that leaks clusters costs
+more time than the bugs it finds.
 
 Waiting for pods to be Ready is not a test. Every pod was Ready in the proof of
-concept while the stack was unusable. The signup scenario is what tells you
-otherwise, because it crosses Kratos, the webhook, and the kanae database in one
-request chain.
-
-Then break it on purpose with a wrong database password. A test that has never
-failed is one you have no reason to believe, and this one becomes the gate on
-every infrastructure change from here.
-
-Spend real effort on the failure output. Failures here surface far from their
-cause, so dump the events and the logs of everything that is not Ready.
+concept while the stack was unusable. Then break it on purpose with a wrong
+database password, because a test that has never failed is one you have no
+reason to believe. Failures here surface far from their cause, so the failure
+output has to carry enough to find it.
 
 ### Tasks
 
@@ -1063,20 +1020,17 @@ stack work, and all of them are needed before you trust it with real data.
 **How it goes.** Backups first, since they protect the only thing you cannot get
 back.
 
-Check what the backup image can actually do before writing any config. Borg 1.x
-cannot write to S3-compatible storage at all, only 2.x can, through borgstore.
-The chart schedules a backup against a repository setting that may be impossible
-for the image it runs, and HANDOFF.md records the credential variable names as a
-guess. Both are one command to resolve and neither has been run.
+Check what the backup image can do before writing any config. Borg 1.x cannot
+write to S3-compatible storage at all, only 2.x can through borgstore, and the
+chart schedules against a repository setting that may be impossible for the
+image it runs. HANDOFF.md records the credential variable names as a guess.
 
-Aim at 3-2-1: three copies of the data, on two kinds of storage, one of them
-offsite. Two thirds of that comes free here. The live Postgres volume is copy
-one, a Borg repository on a separate volume is copy two, and an S3 bucket at a
-different provider is copy three and the offsite one. The middle leg is the one
-a single-node cluster cannot honestly meet, because the first two copies sit on
-block volumes from the same provider and fail together. Write that down rather
-than claiming a policy the setup does not meet, and treat the offsite copy as
-the one that carries the weight.
+Aim at 3-2-1: three copies, two kinds of storage, one offsite. The live Postgres
+volume, a Borg repository on a separate volume, and an S3 bucket at a different
+provider give you three copies and the offsite one. The two-media leg is what a
+single-node cluster cannot honestly meet, since the first two sit on block
+volumes from the same provider and fail together. Record that rather than claim
+a policy the setup does not meet.
 
 Then restore. Not "the backup Job succeeded" but restore into a scratch database
 and compare row counts against the source. A backup nobody has restored from is
