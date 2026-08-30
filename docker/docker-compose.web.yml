@@ -8,9 +8,6 @@ services:
   chapter-website:
     container_name: chapter_website
     image: ghcr.io/ucmercedacm/chapter-website:edge
-    environment:
-      VITE_API_URL: http://kanae:8000
-      VITE_ORY_URL: http://kratos:4433
     ports:
       - 5173:8080
     depends_on:
