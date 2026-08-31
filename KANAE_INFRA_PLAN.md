@@ -99,6 +99,9 @@ meet, in the order you meet them.
 | **CSRF, double-submit** | A defence against another website submitting a form on your behalf. Double-submit means the server sends a token twice, once in the page and once in a cookie, and rejects the request unless both arrive and match. Kratos uses it, so a dropped cookie shows up as a rejected login. |
 | **Borg, borgmatic** | Borg is a backup tool. borgmatic is a wrapper that runs it on a schedule from a config file. |
 | **3-2-1** | A backup rule of thumb: three copies of the data, on two kinds of storage, one of them offsite. |
+| **change-group, change-rule** | kapp annotations that declare deploy order. A change-group names a set of resources; a change-rule says which group a resource waits for. Kubernetes has no `depends_on`, so without them everything is applied at once. |
+| **versioned resource** | A kapp annotation that creates a uniquely named copy of a resource instead of updating it in place, rewriting whatever references it. Used here so a changed migration Job is a new Job. |
+| **orphan** | A kapp delete-strategy that makes kapp forget a resource rather than delete it. What protects the Postgres claim. `helm.sh/resource-policy` does nothing in this design, because Helm never installs. |
 
 ## The layers and phases
 
@@ -190,7 +193,65 @@ Phase 2 builds the second diagram. Everything else builds a box in the first.
 7. **Every container gets a memory request and a memory limit, equal to each
    other, and no container gets a CPU limit.** Phase 4 gives the reason. Each
    phase sets estimates for what it builds and Phase 10 replaces them with
-   measurements.
+   measurements. The node budget below is the running total those estimates
+   answer to.
+
+## The node budget
+
+Rule 7 makes every container's memory request equal its limit, and the scheduler
+reserves requests. On one 4 GB node that arithmetic decides what fits, so it
+lives here rather than scattered across five phases.
+
+### Steady state
+
+| Pod | Request = limit | Set in |
+| --- | --- | --- |
+| kanae | 512Mi | Phase 7 |
+| postgres | 512Mi | Phase 4 |
+| kratos | 256Mi | Phase 6 |
+| keto | 256Mi | Phase 6 |
+| valkey | 256Mi | Phase 4 |
+| envoy proxy, one per Gateway | 64Mi | Phase 8 |
+| envoy gateway control plane | 64Mi | Phase 8 |
+| cert-manager controller | 64Mi | Phase 8 |
+| cert-manager cainjector | 128Mi | Phase 8 |
+| cert-manager webhook | 32Mi | Phase 8 |
+| **Reserved** | **~2.1Gi** | |
+
+A pod's effective request is the larger of its biggest init container and the
+sum of its app containers. kanae's 64Mi init container therefore adds nothing on
+top of its 512Mi app container. Init containers are free unless they are the
+biggest thing in the pod.
+
+### Deploy-time peak
+
+Three migration Jobs at 256Mi each are alive while they run, and under
+`RollingUpdate` a second kanae pod at 512Mi exists before the first is killed.
+That is 1.3Gi on top of steady state, against a node reporting materially less
+than 4 GB as allocatable.
+
+Two decisions keep it under. `strategy: Recreate` on kanae removes the surge, at
+the cost of a few seconds of downtime per deploy, which is already true of the
+systemd deploy this replaces. The apply order in Phase 2 finishes the migration
+Jobs and releases their pods before app pods are scheduled, so the two never
+overlap. With both, the peak is one migration wave above steady state.
+
+### Rules
+
+- Write the node's real `Allocatable` from `kubectl describe node` beside this
+  table. Do not assume 4 GB; k3s and the kubelet take their cut first.
+- Set CPU requests. Never set CPU limits. Exceeding a memory limit kills the
+  container, so an unset limit lets one leaking pod take the node down.
+  Exceeding a CPU limit only throttles, which surfaces as slow requests with
+  nothing in the logs. Without CPU requests the scheduler gives every pod
+  minimal shares and Postgres starves under contention.
+- The borgmatic CronJob is not in the table. A backup firing mid-deploy competes
+  for the same headroom, so schedule it away from deploy windows.
+- Phase 10 replaces these estimates with measurements and re-totals the table.
+
+A laptop k3d cluster will never reproduce a shortfall here. This table is the
+only thing between a clean local run and `Pending: Insufficient memory` on the
+first production deploy.
 
 ---
 
@@ -338,8 +399,8 @@ which is more auditable and slower under pressure.
 The harder cost is deletion: `kubectl apply` never deletes, so a resource you
 remove from the chart keeps running with nothing reporting it. Apply with
 **kapp** instead, which records the resources it owns, shows a diff before
-changing anything, applies in dependency order, and deletes what has left the
-manifests:
+changing anything, applies in the order you declare, and deletes what has left
+the manifests:
 
 ```
 kapp deploy -a kanae -f deploy/k8s/
@@ -386,6 +447,45 @@ manifests in git is exactly their input format.
       the confirmation step is built in rather than something you add. Add a
       matching `k8s:apply:local` against `.k8s-local/` under a different app
       name, so the two can never be confused at the command line.
+- [ ] Declare the apply order. Kubernetes has no `depends_on` and kapp applies
+      everything at once unless told otherwise. Annotate resources into six
+      waves with `kapp.k14s.io/change-group` and `kapp.k14s.io/change-rule`;
+      later phases annotate what they build.
+
+      | Wave | Group | Contents | kapp waits for |
+      | --- | --- | --- | --- |
+      | 1 | `kanae/config` | ConfigMaps, Services, ServiceAccount, pull Secret | nothing |
+      | 2 | `kanae/databases` | Postgres StatefulSet, Valkey, Postgres PVC | pods Ready |
+      | 3 | `kanae/database-init` | the database-creation Job | Job Complete |
+      | 4 | `kanae/schemas` | atlas, Kratos and Keto migration Jobs | all Complete |
+      | 5 | `kanae/services` | kanae, Kratos, Keto Deployments | Deployments Available |
+      | 6 | none | Gateway, HTTPRoute, seed Job | Gateway Programmed |
+
+      Each rule names only the wave before it, as `upsert after upserting
+      kanae/config`. Wave 6 needs no group, because nothing points at it.
+- [ ] Give `k8s:apply:local` a no-wait mode. kapp blocks until every resource is
+      healthy, and Phases 4 through 7 each deploy a stack that is deliberately
+      incomplete. The phase exit gates check readiness instead. Drop the mode
+      from Phase 8 on.
+- [ ] Pin `image.tag` to a digest and let Renovate move it. `deploy/k8s/` is
+      generated, so a manifest that does not change deploys nothing: a push to
+      main rebuilds `edge`, the rendered Deployment comes out byte-identical,
+      kapp sees no diff, and the pod keeps the old image indefinitely. With a
+      digest pinned, `pullPolicy` becomes `IfNotPresent`.
+- [ ] Add a render workflow that runs `k8s:render` on any pull request touching
+      `deploy/helm/kanae/**` and commits the result to that branch. Renovate
+      cannot render, so without this every digest bump arrives with a stale
+      `deploy/k8s/` and fails the drift check. Push with an app token: a
+      `GITHUB_TOKEN` push does not re-trigger the check it needs to satisfy.
+- [ ] Give the other five images the shape Renovate reads. `postgres.image`,
+      `valkey.image`, `ory.kratosImage`, `ory.ketoImage` and
+      `migrate.atlasImage` are bare strings, so nothing updates them.
+      `arigaio/atlas:latest` is unpinned today.
+- [ ] Write the `deploy/test/e2e.sh` skeleton: create a cluster, import images,
+      render local, apply, wait, run hurl, tear down. It asserts nothing yet.
+      Every phase from 4 onward adds its exit gate to it as a hurl file, so the
+      gates keep running after the phase ends. Phase 9 widens it to the full
+      suite.
 - [ ] Add `k8s:render:check` to `.github/workflows/infra.yml`, and have CI also
       render the local values into a temporary directory and run `kubeconform`
       over the result. Local rendering stays checked without being committed.
@@ -415,13 +515,12 @@ manifests in git is exactly their input format.
 
 ### Exit gate
 
-Change `kanae.granianWorkers` from 2 to 3 in `deploy/helm/kanae/values.yaml`.
-Run `mise run k8s:render`. Run `git diff deploy/k8s/`. The diff should touch one
-file, `deploy/k8s/deployment-kanae.yaml`, and show one changed environment
-variable.
+Change `kanae.granianWorkers` from 2 to 3 in `deploy/helm/kanae/values.yaml` and
+open a pull request. The render workflow commits the regenerated manifests, and
+that diff should touch one file, `deploy/k8s/deployment-kanae.yaml`, and show
+one changed environment variable.
 
-Then commit only the values change, without the rendered manifests, and confirm
-CI fails.
+Then hand-edit `deploy/k8s/` on a branch and confirm CI fails on the drift.
 
 Then, against a running local cluster, run `mise run k8s:apply` and confirm kapp
 prints the same difference `git diff` did before it applies anything. Those two
@@ -483,10 +582,14 @@ you cannot read out of git.
       ever existed because the copies did.
 - [ ] Replace them with a hidden `helm:files` task, and make `k8s:render`,
       `k8s:render:local`, and `k8s:schema` declare `depends = ["helm:files"]`.
-      It asserts every entry under `files/` is a symlink that resolves, and
-      recreates any that are missing or broken from the same list. Nothing
-      renders without it having passed, so a stale or deleted link never
-      reaches a manifest.
+      Hold the eighteen entries as `link|source` pairs and compute each
+      relative target with `realpath -s --relative-to`, so nobody hand-counts
+      `../`. Nothing renders without it having passed.
+- [ ] Assert four things per entry: it is a symlink, its target is relative, its
+      target is the expected one, and it resolves. A link that resolves to the
+      wrong existing file passes every other check in this plan. Check the
+      source exists too, so a renamed source names itself rather than producing
+      a mysteriously dangling link.
 - [ ] Have `helm:files` fail with instructions rather than fall back to copying
       when the checkout has no symlink support. Copying would put content in
       `files/` that differs from what is committed, which is the drift this
@@ -509,10 +612,21 @@ you cannot read out of git.
       now always renders the Secrets from values. There is one path, so no
       reader has to work out which one ran.
 - [ ] Extend `k8s:apply` from Phase 2 with the Secret step: decrypt
-      `deploy/helm/secrets-prod.enc.yaml` with SOPS, pass the result to
-      `helm template --show-only templates/secrets.yaml`, and pipe that into
-      `kubectl apply`. Keep it out of `deploy/k8s/` and add the file to the
+      `deploy/helm/secrets-prod.enc.yaml` with SOPS, render
+      `--show-only templates/secrets.yaml`, and pass the result to kapp as a
+      second `-f -`. Keep it out of `deploy/k8s/` and add the file to the
       repository's list of things never to decrypt to disk.
+- [ ] Do not pipe Secrets to `kubectl apply`. That puts them outside kapp, where
+      nothing prunes them and nothing diffs them. kapp masks Secret values in
+      its diff, so it reports which Secret changed without printing what it
+      changed to.
+- [ ] Have `k8s:apply` check for the age key first and fail naming it. Without
+      that, a missing key makes SOPS error, the pipe carries something useless
+      into `helm template`, and the failure reports a missing value rather than
+      a missing key.
+- [ ] Put `kapp.k14s.io/delete-strategy: "orphan"` on both Secrets.
+      `templates/secrets.yaml` carries `helm.sh/resource-policy: keep` today,
+      which kapp does not read.
 - [ ] Keep the property that made `seed-k8s.sh` safe to re-run: if a secret
       already has a value, keep it. One of those keys encrypts user data at
       rest, and regenerating it makes existing accounts unreadable.
@@ -525,13 +639,20 @@ you cannot read out of git.
       and reference it through `_helpers.tpl` everywhere. The names stay fixed,
       for the reason HANDOFF.md gives, but they become a documented list in one
       file instead of strings typed into ten templates.
-- [ ] Add two checks to `k8s:policy`. Fail if any file in
+- [ ] Add three checks to `k8s:policy`. Fail if any file in
       `deploy/helm/kanae/templates/` contains a hardcoded `database:5432` or
-      `kanae:8000`. Fail if anything under `deploy/helm/kanae/files/` is not a
-      symlink, or is a symlink that does not resolve:
-      `find deploy/helm/kanae/files -type f -o -xtype l` must print nothing.
-      One check covers three failures: a copy creeping back, a Windows checkout
-      turning a link into a text file, and a link whose target was renamed.
+      `kanae:8000`. Fail if
+      `find deploy/helm/kanae/files \( -type f -o -xtype l \) -print` prints
+      anything, which catches a copy creeping back and a link whose target was
+      renamed; the parentheses are load-bearing, since `-print` otherwise binds
+      to the last term alone. Fail on any `.Files.Get` outside `_helpers.tpl`.
+- [ ] Route every read of `files/` through a `kanae.file` helper that fails the
+      render when the content is empty or is a bare path. `.Files.Get` returns
+      an empty string and exits 0 for a path it cannot resolve, so an unguarded
+      read turns a broken link into an empty ConfigMap and a clean render.
+      Convert all eighteen call sites, including the two `checksum/config`
+      reads, which would otherwise hash the empty string and produce a stable
+      checksum that never restarts anything.
 - [ ] Add `imagePullSecrets` to `values.yaml` and to every pod spec.
       `ghcr.io/ucmercedacm/kanae` is a private package, and nothing in `deploy/`
       currently mentions a pull secret. Finding 6 in POC_FINDINGS.md is what
@@ -595,7 +716,15 @@ what `k8s:measure` recorded.
       `deploy/helm/kanae/templates/postgres.yaml` into
       `deploy/cluster/storageclass.yaml`, and add a step for it in Phase 11. It
       is cluster-wide setup, not part of a release.
-- [ ] Keep `helm.sh/resource-policy: keep` on the Postgres claim.
+- [ ] Put `kapp.k14s.io/delete-strategy: "orphan"` on the Postgres claim. The
+      `helm.sh/resource-policy: keep` it carries today is a Helm annotation, and
+      Helm no longer installs, so nothing reads it. Orphan and the Retain-policy
+      StorageClass cover different accidents: orphan stops kapp deleting the
+      claim, Retain stops the disk going if the claim does.
+- [ ] Annotate Postgres, Valkey and the Postgres PVC into the `kanae/databases`
+      wave. Keep the claim in the same wave as the StatefulSet: a
+      `WaitForFirstConsumer` storage class leaves it `Pending` until a pod needs
+      it, so a claim alone in an earlier wave has nothing to trigger binding.
 - [ ] Set a memory request and limit, equal to each other, on the Postgres and
       Valkey containers. Start at 512Mi for Postgres and 256Mi for Valkey and
       correct both in Phase 10. Leave CPU limits off.
@@ -643,9 +772,8 @@ from that file becomes a `DROP COLUMN` that nobody read. The dry-run job puts
 that statement in front of a human first, and it is the cheapest safety measure
 in this plan.
 
-Expect the kanae pod in `Init:Error` with a climbing restart count while this
-runs. Its init container is checking for a table that does not exist yet. That
-is the design.
+The apply order from Phase 2 holds kanae back until the migrations finish, so an
+`Init:Error` here is a real fault rather than normal startup.
 
 ### Tasks
 
@@ -661,12 +789,17 @@ is the design.
       any more. Hooks are executed by `helm install` and `helm upgrade`, and
       neither runs in this design, so a hook annotation on an applied manifest is
       an inert comment that misleads whoever reads it next.
-- [ ] Give each migration Job a name that includes a content hash of the schema
-      it applies, and set `ttlSecondsAfterFinished` so finished Jobs clean
-      themselves up. A Job's pod template is immutable, so re-applying an
-      unchanged Job name fails, and applying the same name with new contents
-      fails too. A name that changes when the schema changes gets you a new Job
-      exactly when there is new work, and a harmless no-op when there is not.
+- [ ] Mark the migration Jobs `kapp.k14s.io/versioned` with
+      `kapp.k14s.io/num-versions: "2"`. A Job's pod template is immutable, so
+      re-applying an unchanged name fails and applying the same name with new
+      contents fails too. kapp creates a new version when the content changes
+      and prunes the old ones itself.
+- [ ] Do not set `ttlSecondsAfterFinished`. Anything that deletes a resource
+      kapp owns behind its back makes the next deploy recreate it, so a TTL here
+      re-runs the migration days later.
+- [ ] Annotate the database-creation Job into `kanae/database-init` and the
+      three migration Jobs into `kanae/schemas`. The Kratos migration needs the
+      `kratos` database to exist already, so the two cannot share a wave.
 - [ ] Adopt a forward-only migration policy and write it in
       `deploy/DECISIONS.md`. Rolling the manifests back with `git revert` returns
       the code to the previous version and leaves the database migrated, because
@@ -691,7 +824,8 @@ is the design.
 
 Apply to an empty cluster. All migration Jobs reach `Complete`. Then run
 `mise run k8s:apply` again with nothing changed, and confirm it is a no-op
-rather than an error: the Job names have not changed, so there is no new work.
+rather than an error: unchanged content is the same version, and nothing has
+deleted it behind kapp's back.
 Then:
 
 ```
@@ -699,9 +833,6 @@ kubectl -n kanae exec database-0 -- psql -d kanae -c '\dt'   # kanae tables
 kubectl -n kanae exec database-0 -- psql -d kratos -c '\dt'  # kratos tables
 kubectl -n kanae exec database-0 -- psql -d keto -c '\dt'    # keto tables
 ```
-
-While the Jobs run, the kanae pod shows `Init:Error` with a climbing restart
-count, for the reason given above.
 
 ---
 
@@ -763,6 +894,9 @@ port-forwarded test will pass while the real path fails.
 - [ ] Set a memory request and limit, equal to each other, on the Kratos and
       Keto containers, and on the Kratos and Keto migration containers. 256Mi
       is a starting point for each. Phase 10 corrects them.
+- [ ] Annotate the Kratos and Keto Deployments into `kanae/services`, and add
+      `kapp.k14s.io/change-rule.teardown: "delete before deleting
+      kanae/databases"` so they stop before Postgres does.
 
 ### Exit gate
 
@@ -826,6 +960,16 @@ local seeded runs, per Finding 5.
       application and 64Mi for the init container are starting points. An init
       container without a limit is the same gap as any other container.
       Finding 5 has the detail.
+- [ ] Add a `checksum/env-secret` annotation beside the existing
+      `checksum/config`. Secrets reach these pods as environment variables,
+      which are fixed at container start, so a rotated credential never reaches
+      a running pod without one and nothing reports it. Hash each Secret
+      separately: one combined hash would restart Kratos whenever the backup
+      credentials changed.
+- [ ] Set `strategy: Recreate` on the kanae Deployment while there is one node.
+      See the node budget.
+- [ ] Annotate the kanae Deployment into `kanae/services`, with the same
+      teardown rule as Phase 6.
 
 ### Exit gate
 
@@ -919,6 +1063,15 @@ pod and never touches the Gateway.
 - [ ] Expose the Gateway with a `Service` of type `LoadBalancer` and no
       provider-specific settings in the chart. Any provider-specific annotation
       belongs in the values file for that environment, not in the template.
+- [ ] Issue local certificates from a cert-manager `selfSigned` issuer, chosen
+      by values. Let's Encrypt cannot sign a k3d hostname, and the exit gate
+      already passes `-k`. Same Gateway, same listener, same Secret; only
+      `issuerRef` differs, so local and production keep the same shape.
+- [ ] Give the Gateway and HTTPRoute `upsert after upserting kanae/services`
+      and no group of their own. Applying them last means the stack is up
+      before kapp waits on the Gateway to report `Programmed`, so a certificate
+      that cannot issue fails on its own rather than hiding whether anything
+      else works.
 - [ ] Test through the Gateway, never through `kubectl port-forward`.
 
 ### Exit gate
@@ -967,11 +1120,8 @@ output has to carry enough to find it.
 
 ### Tasks
 
-- [ ] Write `deploy/test/e2e.sh`. It creates a k3d cluster, builds and imports
-      the images, renders the local values with `k8s:render:local` and applies
-      them, waits for every workload to be Ready with a timeout, runs hurl, and
-      deletes the cluster whether it passed or failed. The script owns the
-      cluster lifecycle and nothing else.
+- [ ] Widen `deploy/test/e2e.sh`, built in Phase 2 and grown by every phase
+      since, from its per-phase assertions to the full scenario directory.
 - [ ] Write `deploy/test/vars.env` with the same variable names as
       `tests/integration/vars.env` and the Gateway hostname as the base URL, so
       the existing scenarios run unchanged:
@@ -983,17 +1133,18 @@ output has to carry enough to find it.
       `22_full_journey_lead.hurl`. The last one covers signup end to end, which
       is the chain this phase exists to check. Widen to the full directory once
       the harness stops being the thing that fails.
-- [ ] Fix the seed script so it completes all fifteen members. It currently gets
-      partway through, fails, retries, and gets a little further. Turning off the
-      rate limiter moved it past one blockage but did not finish it. Find the
-      real cause rather than removing another limit.
+- [ ] Track the seed script bug separately, not here. It completes only part of
+      its fifteen members and the cause is unknown. It is an application fault,
+      and it should not gate the phase carrying the regression net for
+      everything before it.
 - [ ] Add a negative test. Apply with a deliberately wrong database password and
       confirm `e2e.sh` fails. A test that has never failed proves nothing about
       the thing it tests.
-- [ ] Test deletion. Remove a resource from the chart, re-render, run
-      `k8s:apply`, and confirm kapp removes it from the cluster. This is the
-      failure mode the rendered manifests pattern introduces, and it is silent
-      without a test.
+- [ ] Test deletion both ways. Remove a resource from the chart, re-render, run
+      `k8s:apply`, and confirm kapp removes it. Then confirm the orphaned
+      Postgres claim survives a delete. Pruning is the failure mode this pattern
+      introduces; the claim surviving is the branch where being wrong costs the
+      database.
 - [ ] Add `e2e.sh` to `.github/workflows/infra.yml`, behind the same
       `dorny/paths-filter` output as the rest of that workflow, plus a nightly
       schedule so it still runs on the weeks nobody touches the cluster.
@@ -1063,7 +1214,7 @@ are six real messages that will happen again.
 - [ ] Replace the memory estimates from Phases 4, 6, and 7 with the numbers
       `k8s:measure` collected. Keep request and limit equal, and set both above
       the observed peak rather than the steady state, because the limit is what
-      the pod is killed for exceeding.
+      the pod is killed for exceeding. Re-total the node budget.
 - [ ] Leave CPU limits unset and write the reason beside the values, so the
       next person does not read the gap as an oversight and fill it in.
 - [ ] Write `deploy/RUNBOOK.md`, keyed on exact error strings. Start with the
@@ -1071,10 +1222,22 @@ are six real messages that will happen again.
       somebody will see again: `Init:Error`, `ImagePullBackOff`,
       `chown: .: Operation not permitted`, `did not resolve an identity`, a
       Kratos boot failure on a malformed SMTP URI, and a name that does not
-      resolve.
-- [ ] Document that restart counts climbing during startup are normal here.
-      Somebody reading `kubectl get pods` needs to know that before they can
-      debug anything.
+      resolve. `Init:Error` now means a real fault: the apply order holds kanae
+      back until its schema exists, so a crash loop is no longer normal.
+- [ ] Write the rotation entries. Routine rotation goes through a pull request.
+      Emergency rotation does not: change the Secret against the cluster, run
+      `kubectl rollout restart`, then reconcile `secrets-prod.enc.yaml` and let
+      CI re-render. The drift check nags until git matches.
+- [ ] Write the officer handover entry. `.sops.yaml` lists four age recipients,
+      and `sops updatekeys` re-encrypts to a new list without touching the
+      values. This is the entry that matters most: losing every key loses every
+      backup.
+- [ ] Keep one break-glass age key, passphrase-wrapped and held outside any
+      officer's laptop. It is what survives four officers graduating in the same
+      year.
+- [ ] Decide what protects uploaded media. The 3-2-1 layout covers Postgres
+      only, and nothing here backs up the R2 buckets. R2 has its own durability,
+      so the question is deletion rather than disk failure.
 
 ### Exit gate
 
@@ -1119,6 +1282,10 @@ from Phase 5 is what you are really testing.
       configures.
 - [ ] Apply `deploy/cluster/storageclass.yaml` from Phase 4. Do this before the
       first install, because the Postgres claim names that class.
+- [ ] Create the `kanae` namespace as cluster setup, not in the app's
+      manifests, while setting `namespace: kanae` explicitly on every resource.
+      If kapp owns the Namespace, `kapp delete` cascades to everything inside
+      it including the Postgres claim, which orphan cannot prevent.
 - [ ] Install Envoy Gateway with the same pinned command `k8s:up` runs, which
       brings the Gateway API CRDs with it. Do this before the first
       `k8s:apply`: applied to a cluster without those CRDs, the Gateway and the
@@ -1140,6 +1307,9 @@ from Phase 5 is what you are really testing.
       commit the encrypted file, and put the CI age key in a GitHub Actions
       repository secret. Apply them before the first `k8s:apply`, or every pod
       that mounts them stays pending.
+- [ ] Generate `KRATOS_SECRETS_CIPHER` once here and never again. It encrypts
+      identity data at rest, the backups hold only ciphertext, and regenerating
+      it makes every existing account unreadable.
 - [ ] Point DNS at the cluster.
 - [ ] Apply `deploy/k8s/` with `mise run k8s:apply`. Read the diff kapp prints
       before you confirm. On a first install that diff is every resource, which
@@ -1151,6 +1321,9 @@ from Phase 5 is what you are really testing.
       worth having done once with time to spare.
 - [ ] Cut over from whatever serves the API today, and keep the old thing
       running until signup works against the new one.
+- [ ] Hand operations to `deploy/RUNBOOK.md`. This plan ends at the first
+      successful deploy. Deploying, rotating keys, handing over to next year's
+      officers, and restoring belong there.
 
 ### Exit gate
 
@@ -1166,35 +1339,36 @@ Tick a phase only when its exit gate has passed on a real cluster.
 
 **Layer A. Foundation**
 
-- [ ] Phase 1. Tools pinned and the Kubernetes ones split into their own mise
-      config, dprint and yamllint wired up, `k8s:up` and `k8s:down` work, CI
-      runs both checks behind a path filter
+- [ ] Phase 1. Tools pinned, dprint and yamllint wired up, `k8s:up` and
+      `k8s:down` work, CI runs both checks behind a path filter
 - [ ] Phase 2. `values.schema.json` written, `deploy/k8s/` committed and
-      applicable, local renders gitignored, CI fails on a stale render
+      applicable, apply order declared, image pinned to a digest, CI renders and
+      fails on a stale render
 
 **Layer B. Platform**
 
 - [ ] Phase 3. No file in the repo is a copy of another, the chart reaches its
-      sources through symlinks, one program renders each generated file, real
-      age keys in `.sops.yaml`
+      sources through checked symlinks, Secrets are applied through kapp, one
+      program renders each generated file, real age keys in `.sops.yaml`
 - [ ] Phase 4. Postgres and Valkey Ready, data survives deleting the Postgres
       pod
-- [ ] Phase 5. Three databases with their tables, a written forward-only
-      migration policy, schema changes reviewed as DDL before they run
+- [ ] Phase 5. Three databases with their tables, migration Jobs versioned by
+      kapp, a written forward-only migration policy, schema changes reviewed as
+      DDL before they run
 
 **Layer C. Services**
 
 - [ ] Phase 6. Kratos and Keto Ready, cookie behaviour observed rather than
       assumed
-- [ ] Phase 7. kanae Ready, the readiness probe needs no shell, logs appear in
-      `kubectl logs`
+- [ ] Phase 7. kanae Ready, the readiness probe needs no shell, a rotated
+      secret restarts the pod, logs appear in `kubectl logs`
 - [ ] Phase 8. Both HTTPRoute rules work from outside the cluster, TLS renews
       without a human
 
 **Layer D. Proof and operations**
 
-- [ ] Phase 9. `e2e.sh` brings up a cluster and the existing hurl scenarios
-      pass against it, and fail when you break something on purpose
+- [ ] Phase 9. `e2e.sh` runs the full hurl suite against a cluster it built,
+      and fails when you break something on purpose
 - [ ] Phase 10. A restore from a real backup matches the source, memory limits
       set from measurements, backup layout recorded against 3-2-1, runbook
       written
