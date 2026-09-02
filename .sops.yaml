@@ -1,0 +1,32 @@
+# Controls which files get encrypted and to whom.
+#
+# NOTE: no `encrypted_regex`. secrets-*.enc.yaml files contain ONLY secrets, so
+# every value is encrypted and keys stay in plaintext (that's what gives you a
+# reviewable diff). A regex here is the main way people accidentally commit
+# plaintext with SOPS — avoided by keeping secret and non-secret values in
+# separate files instead.
+
+keys:
+  # --- officers: personal keys, private half never leaves the laptop ---
+  - &alice   age1qq0k000000000000000000000000000000000000000000000000  # REPLACE
+  - &bob     age1w8xz000000000000000000000000000000000000000000000000  # REPLACE
+  # --- automation: private half lives in a GitHub Actions repo secret ---
+  - &ci      age1m4tt000000000000000000000000000000000000000000000000  # REPLACE
+  # --- break-glass: private half is passphrase-wrapped in the club Shared Drive ---
+  - &recover age1r3cv000000000000000000000000000000000000000000000000  # REPLACE
+
+creation_rules:
+  - path_regex: deploy/helm/secrets-prod\.enc\.yaml$
+    key_groups:
+      - age:
+          - *alice
+          - *bob
+          - *ci
+          - *recover
+
+  # Local/dev secrets: officers only, no CI, no break-glass needed
+  - path_regex: deploy/helm/secrets-local\.enc\.yaml$
+    key_groups:
+      - age:
+          - *alice
+          - *bob

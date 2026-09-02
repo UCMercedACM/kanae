@@ -1,0 +1,177 @@
+# --------------------------------- #
+#    Kanae's Configuration file     #
+# --------------------------------- #
+# This holds the configuration for Kanae. This file is not settable during runtime.
+# If you wish to change the values, change and save, and restart your server
+
+# Entries pertaining to Kanae are located here
+kanae:
+
+  # Host that the server will use. Defaults to 0.0.0.0 so the kanae
+  # process is reachable when running inside Docker (the integration-test
+  # stack publishes port 8000 to the host). Set to "localhost" if running
+  # kanae directly on the host and you only want loopback access.
+  host: "0.0.0.0"
+
+  # Port that the server binds to.
+  # Defaults to 8000
+  port: 8000
+
+  # Whether the development mode should be enabled or not
+  # This should be disabled during production
+  dev_mode: False
+
+  # Allowed origins for CORS
+  # Leave this as is unless for production
+  allowed_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+
+  # Prometheus exporter for Kanae. The following keys are used in order to control
+  # the behavior of the Prometheus exporter
+  prometheus:
+
+    # Whether the Prometheus exporter is enabled or not
+    enabled: False
+
+    # The host that the Prometheus exporter will bind to. By default,
+    # it will always be set to 127.0.0.1
+    host: "localhost"
+
+    # The port used for the Prometheus exporter. By default,
+    # it will always be set to 9555
+    port: 9555
+
+  # Settings for Kanae's custom rate limiters
+  limiter:
+
+    # Whether the rate limiters are enabled or not
+    enabled: True
+
+    # Whether to inject the following headers into HTTP headers:
+    # - X-RateLimit-Reset
+    # - X-RateLimit-Remaining
+    # - X-RateLimit-Limit
+    # - Retry-After
+    headers_enabled: False
+
+    # Whether to check the rate limit before the request_before chain
+    auto_check: True
+
+    # Whether to swallow exceptions during rate limiting
+    swallow_errors: True
+
+    # The type of retry-after header to use. Must be http-date or delta-seconds
+    # See https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
+    retry_after: "http-date"
+
+    # Default ratelimits throughout all routes
+    # See https://limits.readthedocs.io/en/stable/quickstart.html#rate-limit-string-notation
+    default_limits:
+      - "10/second"
+
+    # Default shared ratelimits used throughout the application
+    # This means that these limits below will be used as one rate limit throughout the application
+    # LEAVE THIS BLANK if you have set the default limits
+    application_limits: []
+    
+    ## Settings for falling back to memory-based storage
+    in_memory_fallback:
+
+      # Whether to enable this feature or not
+      enabled: True
+
+      # Limits used in the case of falling back to memory-based storage
+      limits:
+        - "15/second"
+
+    # Prefix for each key
+    key_prefix: ""
+
+    # The style of the key. Must be either url or endpoint
+    # - URL uses the actual path of the endpoint
+    # - Endpoint uses the function module and name
+    key_style: "url"
+
+    # Valkey storage-backend URI
+    storage_uri: "valkey://localhost:6379/"
+
+# Ory Kratos and Keto configurations for Kanae.
+ory:
+
+  # Kratos public API. Used for `/sessions/whoami` during auth dependency resolution
+  # and for self-service flows proxied to the frontend.
+  kratos_public_url: "http://localhost:4433"
+
+  # Kratos admin API. Used for identity lookups, session revocation, and identity updates.
+  # Do not expose this externally.
+  kratos_admin_url: "http://localhost:4434"
+
+  # Keto read API. Used for permission checks (`/relation-tuples/check`) and tuple expansions.
+  keto_read_url: "http://localhost:4466"
+
+  # Keto write API. Used for creating and deleting relation tuples on project/event
+  # create, join, transfer, and demote flows.
+  keto_write_url: "http://localhost:4467"
+
+  # Master secret key for Kratos's webhook origin. 
+  # The master key will be used to derive the individual hook tokens via blake3 keyed-hash
+  # Note that the length of the token MUST be 32 bits
+  # Generate this by: uv run python -c "import secrets; print(secrets.token_hex(32))"
+  kratos_webhook_master_key: ""
+
+# S3 storage configs. These are used when storing media such as images, videos, etc
+storage:
+
+  # URL that points to the S3 object store. In this case, it's Garage.
+  url: "http://localhost:3900"
+
+  # Externally-reachable S3 endpoint used ONLY to sign the presigned upload/download
+  # URLs handed to clients (browsers). Required. Distinct in purpose from `url` above:
+  # `url` is how Kanae itself reaches Garage; `presign_url` is the host clients must
+  # reach and the one baked into the signature.
+  #   - Single-host / local dev: same as `url`      (e.g. http://localhost:3900)
+  #   - Docker:                  the published host (http://localhost:3900, while `url` is http://garage:3900)
+  #   - k3s / prod:              the public Ingress  (https://s3.example.com,  while `url` is the in-cluster Service DNS)
+  presign_url: "http://localhost:3900"
+
+  # Region that the S3 object store lives in.
+  # For using Garage, leave it as "garage"
+  region: "garage"
+
+  # The bucket that all media will be stored in
+  bucket: "kanae-media"
+  
+  # Key ID. Under AWS S3, it is called AWS_ACCESS_KEY_ID
+  # Generate this via: echo "GK$(openssl rand -hex 16)"
+  # Note that "GK" is prepended. This is intentional
+  # See: https://garagehq.deuxfleurs.fr/documentation/quick-start/
+  key_id: ""
+
+  # Secret key. Under AWS S3, it's called AWS_SECRET_ACCESS_KEY
+  # Generate this via: openssl rand -hex 32
+  # For further details, see: https://garagehq.deuxfleurs.fr/documentation/quick-start/
+  secret_key: ""
+  
+  # Public bucket for anonymously-readable media (e.g. project thumbnails).
+  # Served via Garage's website mode without presigning, so its contents are
+  # cacheable by browsers/CDNs and never expire (objects are content-addressed
+  # by BLAKE3 hash). Run "mise run garage:setup" to create + configure this
+  # bucket after filling in the fields below.
+
+  # Public bucket for anonymously-readable media (e.g. project thumbnails)
+  # These contents are meant to be viewable publicly, i.e., for media such as project thumbnails 
+  public:
+
+    # Name of the public bucket. Must be different from `storage.bucket` above. Defaults to `kanae-public`
+    bucket: "kanae-public"
+
+    # Externally-reachable base URL for the public bucket, no trailing slash.
+    # Under Garage's default website mode this is "http://<bucket>.web.garage.localhost:3902"
+    # for local dev, or whatever CDN/reverse proxy fronts the public bucket in prod.
+    url: "http://kanae-public.web.garage.localhost:3902"
+
+# The PostgreSQL connection URI that is used to connect to the database
+# The URI must be valid, and components will need to be quoted.
+# See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
+postgres_uri: "postgresql://postgres:password@localhost:5432/kanae"

@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kratos           # fixed: kratos.prod.yml admin base_url is http://kratos:4434/
+spec:
+  selector: { app: kratos }
+  ports:
+    - { name: public, port: 4433, targetPort: 4433 }
+    - { name: admin,  port: 4434, targetPort: 4434 }   # ClusterIP only, never in Ingress
+---
+{{/*
+  The compose service bind-mounts ./config/kratos:/etc/config:ro. This is that
+  directory. ConfigMap keys cannot contain "/", so hooks/ and templates/ are
+  flat keys here and reassembled into subdirectories by items[].path below.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kratos-config
+data:
+  kratos.prod.yml: |
+{{ .Files.Get "files/kratos/kratos.prod.yml" | indent 4 }}
+  identity.schema.json: |
+{{ .Files.Get "files/kratos/identity.schema.json" | indent 4 }}
+  payload.jsonnet: |
+{{ .Files.Get "files/kratos/hooks/payload.jsonnet" | indent 4 }}
+  email.body.gotmpl: |
+{{ .Files.Get "files/kratos/templates/recovery/valid/email.body.gotmpl" | indent 4 }}
+  email.subject.gotmpl: |
+{{ .Files.Get "files/kratos/templates/recovery/valid/email.subject.gotmpl" | indent 4 }}
+  email.body.plaintext.gotmpl: |
+{{ .Files.Get "files/kratos/templates/recovery/valid/email.body.plaintext.gotmpl" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kratos
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kratos }
+  template:
+    metadata:
+      labels: { app: kratos }
+      annotations:
+        checksum/config: {{ .Files.Get "files/kratos/kratos.prod.yml" | sha256sum }}
+    spec:
+      initContainers:
+        # compose: depends_on database, condition: service_healthy.
+        # Single-shot — kubelet restarts a failed init container with backoff.
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: kratos
+          image: {{ .Values.ory.kratosImage }}
+          args: ["serve", "-c", "/etc/config/kratos.prod.yml", "--watch-courier"]
+          env:
+            # DB_USERNAME/DB_PASSWORD first: k8s expands $(VAR) in later values.
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4"
+            - name: SECRETS_COOKIE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_COOKIE } }
+            - name: SECRETS_CIPHER
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SECRETS_CIPHER } }
+            - name: SELFSERVICE_FLOWS_REGISTRATION_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_WEBHOOK_TOKEN_REGISTRATION } }
+            - name: SELFSERVICE_FLOWS_SETTINGS_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_WEBHOOK_TOKEN_SETTINGS } }
+            - name: SELFSERVICE_FLOWS_SETTINGS_AFTER_PROFILE_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_WEBHOOK_TOKEN_SETTINGS } }
+            - name: COURIER_SMTP_CONNECTION_URI
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: KRATOS_SMTP_URI } }
+            {{- if .Values.ory.insecureCookies }}
+            # Local, plain-HTTP runs only — never set this for Kapsule.
+            #
+            # The v26.2.0 config schema says of both cookies.secure and
+            # session.cookie.secure: "If unset, defaults to !dev mode." Kratos is
+            # not started with --dev here, so both cookies are issued Secure, and
+            # a Secure cookie is never sent back over http:// to a non-localhost
+            # host. scripts/seed/init.sh drives the *browser* self-service flows
+            # (/self-service/registration/browser), which are double-submit CSRF
+            # protected: it reads the csrf_token out of the flow body but the
+            # matching cookie never returns, so the POST is rejected and seeding
+            # fails before it ever reaches the kanae webhook.
+            #
+            # Note curl special-cases 127.0.0.1 as a secure context, so a
+            # port-forwarded probe from a laptop can succeed while the in-cluster
+            # seed Job talking to http://kratos:4433 fails.
+            - { name: COOKIES_SECURE,       value: "false" }
+            - { name: SESSION_COOKIE_SECURE, value: "false" }
+            {{- end }}
+          ports:
+            - { name: public, containerPort: 4433 }
+            - { name: admin,  containerPort: 4434 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+            - { name: tmp,    mountPath: /tmp }
+          securityContext:          # compose x-hardening anchor
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          # Verbatim from the compose healthcheck.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "wget -q --spider http://127.0.0.1:4433/health/ready || exit 1"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+      volumes:
+        - name: config
+          configMap:
+            name: kratos-config
+            items:
+              - { key: kratos.prod.yml,             path: kratos.prod.yml }
+              - { key: identity.schema.json,        path: identity.schema.json }
+              - { key: payload.jsonnet,             path: hooks/payload.jsonnet }
+              - { key: email.body.gotmpl,           path: templates/recovery/valid/email.body.gotmpl }
+              - { key: email.subject.gotmpl,        path: templates/recovery/valid/email.subject.gotmpl }
+              - { key: email.body.plaintext.gotmpl, path: templates/recovery/valid/email.body.plaintext.gotmpl }
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 32Mi }   # compose tmpfs /tmp size=32m

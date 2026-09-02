@@ -1,0 +1,137 @@
+[
+  {
+    "name": "Aurora Dashboard",
+    "description": "Real-time analytics dashboard for club metrics",
+    "link": "https://example.com/aurora",
+    "type": "sig_swe",
+    "active": true,
+    "founded_at": "2023-01-15T00:00:00Z",
+    "tags": ["typescript", "react", "web-dev"]
+  },
+  {
+    "name": "Sentinel IDS",
+    "description": "Lightweight intrusion detection system",
+    "link": "https://example.com/sentinel",
+    "type": "sig_cyber",
+    "active": true,
+    "founded_at": "2023-02-20T00:00:00Z",
+    "tags": ["cybersecurity", "web-dev"]
+  },
+  {
+    "name": "NeuralNotes",
+    "description": "ML-powered lecture note summarizer",
+    "link": "https://example.com/neuralnotes",
+    "type": "sig_ai",
+    "active": true,
+    "founded_at": "2023-03-10T00:00:00Z",
+    "tags": ["machine-learning", "python"]
+  },
+  {
+    "name": "DataForge",
+    "description": "ETL pipeline toolkit for open datasets",
+    "link": "https://example.com/dataforge",
+    "type": "sig_data",
+    "active": true,
+    "founded_at": "2023-04-05T00:00:00Z",
+    "tags": ["data-science", "databases"]
+  },
+  {
+    "name": "Pixel Foundry",
+    "description": "2D game engine for rapid prototyping",
+    "link": "https://example.com/pixelfoundry",
+    "type": "sig_graph",
+    "active": true,
+    "founded_at": "2023-05-12T00:00:00Z",
+    "tags": ["game-dev", "open-source"]
+  },
+  {
+    "name": "CampusMap",
+    "description": "Indoor navigation for the UC Merced campus",
+    "link": "https://example.com/campusmap",
+    "type": "independent",
+    "active": true,
+    "founded_at": "2023-06-18T00:00:00Z",
+    "tags": ["mobile", "ui-ux"]
+  },
+  {
+    "name": "CloudNest",
+    "description": "Self-hostable file sync service",
+    "link": "https://example.com/cloudnest",
+    "type": "sig_swe",
+    "active": true,
+    "founded_at": "2023-07-22T00:00:00Z",
+    "tags": ["cloud", "devops"]
+  },
+  {
+    "name": "VoltEdge",
+    "description": "Firmware for a custom IoT sensor board",
+    "link": "https://example.com/voltedge",
+    "type": "sig_arch",
+    "active": true,
+    "founded_at": "2023-08-30T00:00:00Z",
+    "tags": ["devops", "open-source"]
+  },
+  {
+    "name": "Ledgerly",
+    "description": "Student-focused budgeting app",
+    "link": "https://example.com/ledgerly",
+    "type": "independent",
+    "active": true,
+    "founded_at": "2023-09-14T00:00:00Z",
+    "tags": ["mobile", "databases"]
+  },
+  {
+    "name": "VisionQuest",
+    "description": "Real-time object detection demos",
+    "link": "https://example.com/visionquest",
+    "type": "sig_ai",
+    "active": true,
+    "founded_at": "2023-10-08T00:00:00Z",
+    "tags": ["machine-learning", "web-dev"]
+  },
+  {
+    "name": "ChainLab",
+    "description": "Sandbox for smart contract experiments",
+    "link": "https://example.com/chainlab",
+    "type": "independent",
+    "active": false,
+    "founded_at": "2023-11-19T00:00:00Z",
+    "tags": ["open-source", "web-dev"]
+  },
+  {
+    "name": "RootShell",
+    "description": "Capture-the-flag training platform",
+    "link": "https://example.com/rootshell",
+    "type": "sig_cyber",
+    "active": true,
+    "founded_at": "2023-12-03T00:00:00Z",
+    "tags": ["cybersecurity", "web-dev"]
+  },
+  {
+    "name": "Insightful",
+    "description": "Survey and polling analytics tool",
+    "link": "https://example.com/insightful",
+    "type": "sig_data",
+    "active": true,
+    "founded_at": "2024-01-27T00:00:00Z",
+    "tags": ["data-science", "ui-ux"]
+  },
+  {
+    "name": "RenderRush",
+    "description": "WebGL shader playground",
+    "link": "https://example.com/renderrush",
+    "type": "sig_graph",
+    "active": false,
+    "founded_at": "2024-02-16T00:00:00Z",
+    "tags": ["game-dev", "web-dev"]
+  },
+  {
+    "name": "AutoPilot CI",
+    "description": "Opinionated CI configuration generator",
+    "link": "https://example.com/autopilotci",
+    "type": "sig_swe",
+    "active": true,
+    "founded_at": "2024-03-21T00:00:00Z",
+    "tags": ["devops", "open-source"]
+  }
+]

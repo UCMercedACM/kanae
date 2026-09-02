@@ -1,0 +1,91 @@
+{{- if .Values.backup.enabled }}
+{{/*
+  borgmatic's own configuration is NOT defined here. It lives in its own config
+  with values injected, and is supplied to the cluster as a ConfigMap named by
+  backup.configMap. This template only schedules it.
+
+  What that config must do: back up LOGICAL DUMPS via the postgresql_databases
+  hook (kanae, kratos, keto against host `database`), never the PVC filesystem.
+  Borg pointed at a running Postgres data directory gives torn pages and an
+  archive that restores to a corrupt cluster.
+
+  concurrencyPolicy: Forbid and activeDeadlineSeconds are load-bearing. Borg
+  takes an exclusive repository lock; an overrunning job leaves it held and
+  every later run fails until someone runs `borg break-lock`.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kanae-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: borgmatic
+              image: {{ .Values.backup.image }}
+              args: ["borgmatic", "create", "prune", "compact", "--stats"]
+              envFrom:
+                - secretRef: { name: {{ .Values.existingEnvSecret }} }    # DB_USERNAME / DB_PASSWORD
+                - secretRef: { name: {{ .Values.backup.existingSecret }} } # BORG_PASSPHRASE + repo creds
+              volumeMounts:
+                - { name: config, mountPath: /etc/borgmatic.d, readOnly: true }
+                - { name: cache,  mountPath: /root/.cache/borg }
+                - { name: tmp,    mountPath: /tmp }
+          volumes:
+            - name: config
+              configMap: { name: {{ .Values.backup.configMap }} }
+            - name: cache
+              emptyDir: {}      # a PVC here makes repeat runs much faster
+            - name: tmp
+              emptyDir: {}
+---
+{{/*
+  Pre-upgrade archive. atlas `schema apply --auto-approve` is a declarative diff
+  that can drop columns, so this guarantees an archive taken moments before it
+  runs. Ordering on `helm upgrade`:
+      weight -5  this backup (pre-upgrade)
+      ...        release resources updated
+      weight  0  kanae-migrate / kratos-migrate / keto-migrate (post-upgrade)
+  Not pre-install: there is nothing to back up on a fresh install.
+  backoffLimit 1 on purpose — if the pre-migration backup fails, the upgrade
+  should fail with it.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kanae-backup-preupgrade
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  activeDeadlineSeconds: 1800
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: borgmatic
+          image: {{ .Values.backup.image }}
+          args: ["borgmatic", "create", "--stats"]
+          envFrom:
+            - secretRef: { name: {{ .Values.existingEnvSecret }} }
+            - secretRef: { name: {{ .Values.backup.existingSecret }} }
+          volumeMounts:
+            - { name: config, mountPath: /etc/borgmatic.d, readOnly: true }
+            - { name: tmp,    mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap: { name: {{ .Values.backup.configMap }} }
+        - name: tmp
+          emptyDir: {}
+{{- end }}

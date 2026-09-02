@@ -1,0 +1,111 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kanae            # fixed: kratos.prod.yml posts webhooks to http://kanae:8000
+spec:
+  selector: { app: kanae }
+  ports:
+    - { name: http,    port: 8000, targetPort: 8000 }
+    - { name: metrics, port: 9555, targetPort: 9555 }   # ClusterIP only, never in Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kanae
+spec:
+  replicas: {{ .Values.kanae.replicas }}
+  selector:
+    matchLabels: { app: kanae }
+  template:
+    metadata:
+      labels: { app: kanae }
+      {{- if .Values.secrets.create }}
+      annotations:
+        # Rolls the pods when the rendered config.yml changes — a rotated
+        # dbPassword, a new storage URL. Only when the chart renders that Secret:
+        # with secrets.create false its contents live in the cluster, where a
+        # template cannot see them, and a hash of the empty values.secrets would
+        # be a constant pretending to be a checksum.
+        checksum/config: {{ include "kanae.configYml" . | sha256sum }}
+      {{- end }}
+    spec:
+      {{- /*
+        compose depends_on for kanae is database/valkey (service_healthy),
+        kratos/keto (service_started) and migrate (service_completed_successfully).
+
+        Kubernetes has no cross-pod equivalent -- "Pods in general are not
+        intended to support DAG workflows" (design-proposals-archive/node/
+        container-init.md) -- and most of that block is already covered:
+        asyncpg.create_pool and GlideClient.create both connect eagerly in the
+        lifespan, so a missing Postgres or Valkey fails fast and kubelet retries
+        with backoff; kratos and keto are not contacted at startup at all.
+
+        Only the migration does not fail fast: the pool connects to an empty
+        database, kanae reports ready, then errors per request. Hence one gate.
+      */}}
+      initContainers:
+        - name: wait-for-schema
+          image: {{ .Values.postgres.image }}
+          # Named keys rather than envFrom: this container needs three values,
+          # and envFrom would also hand it the Kratos cipher secret, the webhook
+          # tokens, the storage keys and the SMTP URI. Same reasoning as the
+          # database container in postgres.yaml.
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_DATABASE_NAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_DATABASE_NAME } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+          # Single-shot: psql exits non-zero when the relation is missing, so the
+          # exit code is the check. kubelet supplies the retry.
+          command: ["sh", "-c", "psql -v ON_ERROR_STOP=1 -h database -U \"$DB_USERNAME\" -d \"$DB_DATABASE_NAME\" -c 'SELECT 1 FROM members LIMIT 0'"]
+      containers:
+        - name: kanae
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GRANIAN_WORKERS
+              value: {{ .Values.kanae.granianWorkers | quote }}
+          ports:
+            - { name: http,    containerPort: 8000 }
+            - { name: metrics, containerPort: 9555 }
+          volumeMounts:
+            - name: config
+              mountPath: /kanae/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp          # Dockerfile sets HOME=/tmp
+            # src/core.py _is_docker() checks /.dockerenv and "docker" in
+            # /proc/self/cgroup, neither of which holds under containerd, so
+            # rotating_handler() returns AppRotatingHandler and kanae writes
+            # logs/kanae.log + logs/access.log relative to WORKDIR /kanae.
+            # Giving it a writable dir there is cheaper than changing the code
+            # and keeps readOnlyRootFilesystem on. The logs are ephemeral and
+            # duplicate stdout/stderr, which is what Alloy actually collects.
+            # sizeLimit covers MAX_BYTES 32MB x BACKUP_COUNT 10 x 2 files.
+            - name: logs
+              mountPath: /kanae/logs
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 999             # Dockerfile: USER kanae (uid 999)
+            capabilities: { drop: ["ALL"] }
+          # Verbatim from the compose healthcheck.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "curl -fsS --max-time 2 http://127.0.0.1:8000"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 20
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ .Values.existingSecret }}   # postgres_uri, storage keys, webhook master key
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 64Mi }
+        - name: logs
+          emptyDir: { sizeLimit: 1Gi }

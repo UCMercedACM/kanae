@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: keto             # fixed: config.yml keto_read_url / keto_write_url point here
+spec:
+  selector: { app: keto }
+  ports:
+    - { name: read,    port: 4466, targetPort: 4466 }
+    - { name: write,   port: 4467, targetPort: 4467 }
+    - { name: metrics, port: 4468, targetPort: 4468 }   # all ClusterIP only
+---
+{{/* compose bind-mounts ./config/keto:/etc/config:ro — this is that directory. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keto-config
+data:
+  keto.yml: |
+{{ .Files.Get "files/keto/keto.yml" | indent 4 }}
+  namespaces.keto.ts: |
+{{ .Files.Get "files/keto/namespaces.keto.ts" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keto
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: keto }
+  template:
+    metadata:
+      labels: { app: keto }
+      annotations:
+        checksum/config: {{ .Files.Get "files/keto/keto.yml" | sha256sum }}
+    spec:
+      initContainers:
+        # compose: depends_on database, condition: service_healthy.
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+          command: ["sh", "-c", "pg_isready -h database --username=\"$DB_USERNAME\""]
+      containers:
+        - name: keto
+          image: {{ .Values.ory.ketoImage }}
+          args: ["serve", "-c", "/etc/config/keto.yml"]
+          env:
+            - name: DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_USERNAME } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingEnvSecret }}, key: DB_PASSWORD } }
+            - name: DSN
+              value: "postgres://$(DB_USERNAME):$(DB_PASSWORD)@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4"
+          ports:
+            - { name: read,    containerPort: 4466 }
+            - { name: write,   containerPort: 4467 }
+            - { name: metrics, containerPort: 4468 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+            - { name: tmp,    mountPath: /tmp }
+          securityContext:          # compose x-hardening anchor
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          # Verbatim from the compose healthcheck.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "wget -q --spider http://127.0.0.1:4466/health/ready || exit 1"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+      volumes:
+        - name: config
+          configMap:
+            name: keto-config
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 32Mi }
