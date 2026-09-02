@@ -37,7 +37,6 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
 
-
       SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE}
       SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER}
 

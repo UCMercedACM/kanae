@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['3.12', '3.13', '3.14']
+        version: ["3.12", "3.13", "3.14"]
 
     env:
       UV_NO_DEV: true
@@ -52,3 +52,19 @@ jobs:
       - name: Check for formatting
         run: |
           uv run --frozen ruff format src --check
+
+  Formatting:
+    name: Formatting
+    runs-on: ubuntu-24.04
+
+    env:
+      DPRINT_VERSION: 0.57.0
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check for formatting
+        uses: dprint/check@9cb3a2b17a8e606d37aae341e49df3654933fc23 # v2
+        with:
+          dprint-version: ${DPRINT_VERSION}
