@@ -19,7 +19,7 @@ kanae:
 
   # Whether the development mode should be enabled or not
   # This should be disabled during production
-  dev_mode: False
+  dev_mode: false
 
   # Allowed origins for CORS
   # Leave this as is unless for production
@@ -32,7 +32,7 @@ kanae:
   prometheus:
 
     # Whether the Prometheus exporter is enabled or not
-    enabled: False
+    enabled: false
 
     # The host that the Prometheus exporter will bind to. By default,
     # it will always be set to 127.0.0.1
@@ -46,20 +46,20 @@ kanae:
   limiter:
 
     # Whether the rate limiters are enabled or not
-    enabled: True
+    enabled: true
 
     # Whether to inject the following headers into HTTP headers:
     # - X-RateLimit-Reset
     # - X-RateLimit-Remaining
     # - X-RateLimit-Limit
     # - Retry-After
-    headers_enabled: False
+    headers_enabled: false
 
     # Whether to check the rate limit before the request_before chain
-    auto_check: True
+    auto_check: true
 
     # Whether to swallow exceptions during rate limiting
-    swallow_errors: True
+    swallow_errors: true
 
     # The type of retry-after header to use. Must be http-date or delta-seconds
     # See https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
@@ -74,12 +74,12 @@ kanae:
     # This means that these limits below will be used as one rate limit throughout the application
     # LEAVE THIS BLANK if you have set the default limits
     application_limits: []
-    
+
     ## Settings for falling back to memory-based storage
     in_memory_fallback:
 
       # Whether to enable this feature or not
-      enabled: True
+      enabled: true
 
       # Limits used in the case of falling back to memory-based storage
       limits:
@@ -114,7 +114,7 @@ ory:
   # create, join, transfer, and demote flows.
   keto_write_url: "http://localhost:4467"
 
-  # Master secret key for Kratos's webhook origin. 
+  # Master secret key for Kratos's webhook origin.
   # The master key will be used to derive the individual hook tokens via blake3 keyed-hash
   # Note that the length of the token MUST be 32 bits
   # Generate this by: uv run python -c "import secrets; print(secrets.token_hex(32))"
@@ -141,7 +141,7 @@ storage:
 
   # The bucket that all media will be stored in
   bucket: "kanae-media"
-  
+
   # Key ID. Under AWS S3, it is called AWS_ACCESS_KEY_ID
   # Generate this via: echo "GK$(openssl rand -hex 16)"
   # Note that "GK" is prepended. This is intentional
@@ -152,7 +152,7 @@ storage:
   # Generate this via: openssl rand -hex 32
   # For further details, see: https://garagehq.deuxfleurs.fr/documentation/quick-start/
   secret_key: ""
-  
+
   # Public bucket for anonymously-readable media (e.g. project thumbnails).
   # Served via Garage's website mode without presigning, so its contents are
   # cacheable by browsers/CDNs and never expire (objects are content-addressed
@@ -160,7 +160,7 @@ storage:
   # bucket after filling in the fields below.
 
   # Public bucket for anonymously-readable media (e.g. project thumbnails)
-  # These contents are meant to be viewable publicly, i.e., for media such as project thumbnails 
+  # These contents are meant to be viewable publicly, i.e., for media such as project thumbnails
   public:
 
     # Name of the public bucket. Must be different from `storage.bucket` above. Defaults to `kanae-public`

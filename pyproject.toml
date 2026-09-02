@@ -33,6 +33,7 @@ dev = [
     { include-group = "test" },
 ]
 lint = [
+    "yamllint~=1.38.0",
     "ruff~=0.16.0",
     "ty==0.0.75",
     { include-group = "types" },

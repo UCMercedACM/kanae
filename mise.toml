@@ -7,6 +7,8 @@ atlas = "1.3.0"
 shellcheck = "0.11.0"
 shfmt = "3.14.0"
 
+dprint = "0.57.0"
+
 yq = "4.53.6"
 hurl = "8.0.1"
 
@@ -165,6 +167,24 @@ ENV_FILE="docker/.env"
 
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down -v=True
 """
+
+[tasks."yaml:lint"]
+description = "Lints through YAML files via yamllint"
+env._.path = ".venv/bin"
+dir = "{{ config_root }}"
+run = "yamllint --strict ."
+
+[tasks."yaml:format"]
+description = "Formats YAML files via dprint"
+run = "dprint fmt {{ config_root }}"
+
+[tasks."yaml:format:check"]
+description = "Checks for formatting via dprint"
+run = "dprint check {{ config_root }}"
+
+[tasks."yaml:check"]
+description = "Lints and formats YAML files"
+run = [ {task = "yaml:lint" }, { task = "yaml:format" }]
 
 [tasks."garage:generate:keys"]
 description = "Generate Garage RPC/admin/metrics secrets into docker/.env. Appends — re-run to rotate."

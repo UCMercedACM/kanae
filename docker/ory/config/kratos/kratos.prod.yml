@@ -150,7 +150,6 @@ selfservice:
     lookup_secret:
       enabled: true
 
-
 courier:
   smtp:
     from_address: noreply@ucmacm.dev

@@ -1,0 +1,20 @@
+{
+  "yaml": {
+    "quotes": "preferDouble",
+    "indentBlockSequenceInMap": true,
+    "preferSingleLine": false,
+    "trailingComma": true,
+    "formatComments": false,
+    "proseWrap": "preserve",
+    "associations": ["**/*.{yaml,yml}", "**/.yamllint"]
+  },
+  "excludes": [
+    "deploy/kubernetes/src/templates/**",
+    "deploy/kubernetes/src/files/**",
+    "deploy/kubernetes/dist/**",
+    "**/*.sops.yaml"
+  ],
+  "plugins": [
+    "npm:dprint-plugin-yaml@0.6.0"
+  ]
+}

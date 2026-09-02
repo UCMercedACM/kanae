@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['3.12', '3.13', '3.14']
+        version: ["3.12", "3.13", "3.14"]
 
     env:
       UV_NO_DEV: true
@@ -52,3 +52,45 @@ jobs:
       - name: Check for formatting
         run: |
           uv run --frozen ruff format src --check
+
+  YAML:
+    name: Check YAML
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+
+    env:
+      UV_NO_DEV: true
+      UV_NO_DEFAULT_GROUPS: true
+
+      DPRINT_VERSION: 0.57.0
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.x"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --group lint
+
+      - name: Check YAML files
+        run: |
+          uv run --frozen yamllint --strict .
+
+      - name: Check for formatting
+        uses: dprint/check@9cb3a2b17a8e606d37aae341e49df3654933fc23 # v2
+        with:
+          dprint-version: ${{ env.DPRINT_VERSION }}

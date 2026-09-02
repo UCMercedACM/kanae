@@ -415,12 +415,12 @@ plan sets for everything else.
 - [ ] Pin the versions in `mise.toml` that currently say `latest`: `helm`,
       `kubectl`, `k3d`, `k9s`, `kubeconform`, `sops`, and `age`. Pick the
       versions you have run, and write the date you picked them in a comment.
-- [ ] Add `dprint` to `[tools]` in `mise.toml` and write `dprint.json` with the
+- [x] Add `dprint` to `[tools]` in `mise.toml` and write `dprint.json` with the
       `pretty_yaml` plugin configured.
-- [ ] Add `yamllint` to `mise.toml` and write `.yamllint.yaml`. Switch off every
+- [x] Add `yamllint` to `pyproject.toml` and write `.yamllint.yaml`. Switch off every
       layout rule, because `dprint` owns layout. Leave on `key-duplicates`,
       `truthy`, `octal-values`, and `anchors`.
-- [ ] Exclude `deploy/kubernetes/src/templates/` from both tools. Those files
+- [x] Exclude `deploy/kubernetes/src/templates/` from both tools. Those files
       are Go templates and are not valid YAML until Helm renders them. Phase 2
       checks the rendered output instead, which is the version that matters.
 - [ ] Add the mise tasks `k8s:fmt`, `k8s:fmt:check`, and `k8s:lint`, matching

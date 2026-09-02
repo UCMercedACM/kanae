@@ -17,7 +17,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
       POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_INITDB_ARGS: '--data-checksums'
+      POSTGRES_INITDB_ARGS: "--data-checksums"
     ports:
       - 5432:5432
     networks:
@@ -63,7 +63,6 @@ services:
       - garage:/var/lib/garage/meta
       - ../garage.toml:/etc/garage.toml
     restart: unless-stopped
-    
 
 volumes:
   database:

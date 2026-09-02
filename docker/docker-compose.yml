@@ -57,7 +57,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
       POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_INITDB_ARGS: '--data-checksums'
+      POSTGRES_INITDB_ARGS: "--data-checksums"
     ports:
       - 5432:5432
     networks:
@@ -133,7 +133,6 @@ services:
         condition: service_healthy
     restart: "no"
 
-
   migrate:
     container_name: kanae_migrate
     image: arigaio/atlas:latest
@@ -151,8 +150,6 @@ services:
         condition: service_healthy
     volumes:
       - ../src/schema.sql:/schema.sql
-
-
 
 volumes:
   database:

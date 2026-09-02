@@ -38,7 +38,7 @@ services:
         restart: true
       migrate:
         condition: service_completed_successfully
-    healthcheck: 
+    healthcheck:
       test: curl -fsS --max-time 2 http://127.0.0.1:8000
       interval: 3s
       timeout: 5s
@@ -56,7 +56,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE_NAME}
       POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_INITDB_ARGS: '--data-checksums'
+      POSTGRES_INITDB_ARGS: "--data-checksums"
     ports:
       - 5432:5432
     networks:
@@ -101,7 +101,6 @@ services:
       - garage:/var/lib/garage/meta
       - ../garage.toml:/etc/garage.toml
     restart: unless-stopped
-    
 
   migrate:
     container_name: kanae_migrate
@@ -120,7 +119,6 @@ services:
         condition: service_healthy
     volumes:
       - ../src/schema.sql:/schema.sql
-
 
 volumes:
   database:
