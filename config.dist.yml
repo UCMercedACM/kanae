@@ -46,7 +46,7 @@ kanae:
   limiter:
 
     # Whether the rate limiters are enabled or not
-    enabled: true
+    enabled: True
 
     # Whether to inject the following headers into HTTP headers:
     # - X-RateLimit-Reset
