@@ -4,13 +4,26 @@ redactions = ["DB_PASSWORD"]
 uv = "0.12.7"
 atlas = "1.3.0"
 
-shellcheck = "0.11.0"
-shfmt = "3.14.0"
-
-dprint = "0.57.0"
-
 yq = "4.53.6"
 hurl = "8.0.1"
+
+# Linting and Formatting
+kubeconform = "0.8.0"
+
+shellcheck = "0.11.0"
+shfmt = "3.14.0"
+dprint = "0.57.0"
+
+# Kubernetes-related
+helm = "4.2.4"
+
+kubectl = "1.37.0"
+k3d = "5.9.0"
+k9s = "0.51.0"
+
+# Encryption
+sops = "3.13.3"
+age = "1.3.2"
 
 
 [settings]
@@ -169,22 +182,43 @@ docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down -v=True
 """
 
 [tasks."yaml:lint"]
+alias = ["k8s:lint"]
 description = "Lints through YAML files via yamllint"
 env._.path = ".venv/bin"
 dir = "{{ config_root }}"
 run = "yamllint --strict ."
 
 [tasks."yaml:format"]
+alias = ["k8s:fmt"]
 description = "Formats YAML files via dprint"
 run = "dprint fmt {{ config_root }}"
 
 [tasks."yaml:format:check"]
+alias = ["k8s:fmt:check"]
 description = "Checks for formatting via dprint"
 run = "dprint check {{ config_root }}"
 
 [tasks."yaml:check"]
 description = "Lints and formats YAML files"
 run = [ {task = "yaml:lint" }, { task = "yaml:format" }]
+
+[tasks."k8s:up"]
+description = "Creates the local k3d cluster from deploy/kubernetes/k3d.yml and waits for its node to report Ready"
+dir = "{{ config_root }}"
+run = [
+  "k3d cluster create --config deploy/kubernetes/k3d.yml",
+  "kubectl wait --for=condition=Ready nodes --all --timeout=300s",
+  "kubectl get nodes",
+]
+
+[tasks."k8s:down"]
+description = "Deletes the local k3d cluster"
+dir = "{{ config_root }}"
+run = "k3d cluster delete --config deploy/kubernetes/k3d.yml"
+
+[tasks."k8s:reset"]
+description = "Destroys the local k3d cluster and creates it again from scratch"
+run = [{ task = "k8s:down" }, { task = "k8s:up" }]
 
 [tasks."garage:generate:keys"]
 description = "Generate Garage RPC/admin/metrics secrets into docker/.env. Appends — re-run to rotate."

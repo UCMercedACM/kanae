@@ -1,0 +1,52 @@
+name: Kubernetes
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  Changes:
+    name: Determine Changes
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      kubernetes: ${{ steps.filter.outputs.kubernetes }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed files
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        id: filter
+        with:
+          filters: |
+            kubernetes:
+              - '.github/workflows/kubernetes.yml'
+              - 'deploy/kubernetes/**'
+              - 'docker/ory/**'
+              - 'scripts/seed/**'
+              - 'src/schema.sql'
+              - 'config.dist.yml'
+
+  Check:
+    name: Check
+    runs-on: ubuntu-24.04
+
+    needs: Changes
+    if: ${{ needs.Changes.outputs.kubernetes == 'true' }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

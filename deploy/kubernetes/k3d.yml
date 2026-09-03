@@ -1,0 +1,32 @@
+# Hostname: kanae
+# Make sure to add an alias for 127.0.0.1 within /etc/hosts for Phase 8
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: kanae
+
+servers: 1
+agents: 0
+
+image: docker.io/rancher/k3s:v1.36.4-k3s1
+
+ports:
+  - port: 80:80
+    nodeFilters:
+      - loadbalancer
+  - port: 443:443
+    nodeFilters:
+      - loadbalancer
+
+options:
+  k3d:
+    wait: true
+    timeout: "300s"
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
