@@ -12,7 +12,7 @@
     "deploy/kubernetes/src/templates/**",
     "deploy/kubernetes/src/files/**",
     "deploy/kubernetes/dist/**",
-    "**/*.sops.yaml"
+    "**/*.sops.{yaml,yml}"
   ],
   "plugins": [
     "npm:dprint-plugin-yaml@0.6.0"
