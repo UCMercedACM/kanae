@@ -36,11 +36,11 @@ kanae:
 
     # The host that the Prometheus exporter will bind to. By default,
     # it will always be set to 127.0.0.1
-    host: "localhost        "
+    host: "localhost"
 
     # The port used for the Prometheus exporter. By default,
     # it will always be set to 9555
-    port: 9555
+      port: 9555
 
   # Settings for Kanae's custom rate limiters
   limiter:
