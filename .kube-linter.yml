@@ -1,0 +1,40 @@
+checks:
+  doNotAutoAddDefaults: true
+  addAllBuiltIn: false
+
+  include:
+    - run-as-non-root
+    - unset-memory-requirements
+    - unset-cpu-request
+    - set-cpu-limit
+    - no-rendered-secret
+
+  exclude:
+    - unset-cpu-requirements
+
+customChecks:
+  - name: unset-cpu-request
+    description: Every container declares a CPU request.
+    remediation: Set resources.requests.cpu on the container. See the CPU budget.
+    template: cpu-requirements
+    params:
+      requirementsType: request
+      lowerBoundMillis: 0
+      upperBoundMillis: 0
+
+  - name: set-cpu-limit
+    description: No container sets a CPU limit.
+    remediation: Remove resources.limits.cpu from the container. See the CPU budget.
+    template: cpu-requirements
+    params:
+      requirementsType: limit
+      lowerBoundMillis: 1
+
+  - name: no-rendered-secret
+    description: No Secret reaches deploy/kubernetes/dist/.
+    remediation: Keep the Secret out of the chart. Phase 3 decides where Secrets go.
+    template: disallowed-api-obj
+    params:
+      group: ""
+      version: v1
+      kind: Secret

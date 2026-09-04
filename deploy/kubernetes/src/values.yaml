@@ -1,0 +1,36 @@
+namespace: kanae
+
+image:
+  repository: ghcr.io/ucmercedacm/kanae
+  tag: "0.3.1@sha256:368bd2951dffc1025ed9d0de16e977ec2c38451a0b74245f76a886eae57c8b19"
+  pullPolicy: IfNotPresent
+
+kanae:
+  granianWorkers: 2
+
+postgres:
+  image:
+    repository: postgres
+    tag: "18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+
+valkey:
+  image:
+    repository: valkey/valkey
+    tag: "9-alpine@sha256:d9819bc7411a4d024fcc08e7fb2768eff65b438bb6b9ef19839ecd7e599b87b4"
+
+ory:
+  kratos:
+    image:
+      repository: oryd/kratos
+      tag: "v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
+
+  keto:
+    image:
+      repository: oryd/keto
+      tag: "v26.2.0@sha256:bfdb8b9e283aedbd9e1d005c44eb1bbefd2096b2cb5b5aa0b7360b6e39c178d2"
+
+migrate:
+  atlas:
+    image:
+      repository: arigaio/atlas
+      tag: "latest@sha256:07f3f92fa46e684ed789d5ef344a25494a4fa6844ef1ea1fa4e138522c2c37ac"
