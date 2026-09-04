@@ -1629,9 +1629,9 @@ Tick a phase only when its exit gate has passed on a real cluster.
 
 **Layer A. Foundation**
 
-- [ ] Phase 1. Tools pinned, dprint and yamllint wired up, `k8s:up` and
+- [x] Phase 1. Tools pinned, dprint and yamllint wired up, `k8s:up` and
       `k8s:down` work, CI runs both checks behind a path filter
-- [ ] Phase 2. `values.schema.json` written, `deploy/kubernetes/dist/` committed
+- [x] Phase 2. `values.schema.json` written, `deploy/kubernetes/dist/` committed
       and applicable, image pinned to a digest, CI renders
       and fails on a stale render
 
