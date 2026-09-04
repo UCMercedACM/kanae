@@ -538,21 +538,21 @@ manifests in git is exactly their input format.
 
 ### Tasks
 
-- [ ] Write `deploy/kubernetes/src/values.schema.json`. Helm validates values
+- [x] Write `deploy/kubernetes/src/values.schema.json`. Helm validates values
       against this file on every `helm template`, which is every render, with no
       extra tooling. Give every key a type. Mark as `required` every key that
       has no safe default. Add a `pattern` for anything with a format, including
       `secrets.kratosSmtpUri`, which must match `^smtps?://`. Finding 4 in
       POC_FINDINGS.md is exactly this bug: a placeholder that did not look like
       a URI stopped Kratos from booting.
-- [ ] Set `"additionalProperties": false` on every object in that schema. JSON
+- [x] Set `"additionalProperties": false` on every object in that schema. JSON
       Schema accepts unknown keys otherwise, so `kanae.granianWorkerss: 3`
       would validate cleanly and render the default, which is the misspelling
       this file exists to catch.
-- [ ] Create `deploy/kubernetes/dist/` and write
+- [x] Create `deploy/kubernetes/dist/` and write
       `deploy/kubernetes/dist/README.md` in it: what generates this directory,
       what applies it, and do not edit it by hand.
-- [ ] Add the mise task `k8s:render`, which regenerates
+- [x] Add the mise task `k8s:render`, which regenerates
       `deploy/kubernetes/dist/` from the production values. Do not use `helm
       template --output-dir`: it writes one file per template and appends, so
       `postgres.yml` arrives holding four resources. Pipe through the `yq`
@@ -563,11 +563,11 @@ manifests in git is exactly their input format.
       otherwise writes into the current directory. Delete
       the target directory first, or a resource you removed from the chart
       lingers as a stale file.
-- [ ] Add the mise task `k8s:render:local`, which renders the local values into
+- [x] Add the mise task `k8s:render:local`, which renders the local values into
       `.k8s-local/`. Add `.k8s-local/` to `.gitignore`. A laptop render is a
       build artifact and does not belong in the repository.
-- [ ] Add `kapp = "0.65.4"` to `[tools]` in `mise.toml`.
-- [ ] Keep Secrets out of `deploy/kubernetes/dist/`. Everything else renders
+- [x] Add `kapp = "0.65.4"` to `[tools]` in `mise.toml`.
+- [x] Keep Secrets out of `deploy/kubernetes/dist/`. Everything else renders
       into it, but a rendered Secret holds a base64 credential, and this
       directory exists to be read. Phase 3 decides where Secrets go instead.
 - [ ] Set `namespace: kanae` on every resource in the chart, and pass
@@ -575,11 +575,11 @@ manifests in git is exactly their input format.
       lands wherever the kubeconfig points while every exit gate from Phase 4
       onward reads `-n kanae`. Phase 11 still creates the Namespace itself as
       cluster setup, so kapp never owns it.
-- [ ] Add the mise task `k8s:render:check`, which regenerates into a temporary
+- [x] Add the mise task `k8s:render:check`, which regenerates into a temporary
       directory and fails if the result differs from what is committed. Print
       the diff and the words `run 'mise run k8s:render' and commit the result`,
       matching how `helm:check` already reports drift.
-- [ ] Add the mise task `k8s:apply`, wrapping `kapp deploy -a kanae -n kanae -c
+- [x] Add the mise task `k8s:apply`, wrapping `kapp deploy -a kanae -n kanae -c
       -f deploy/kubernetes/dist/`. `-c` is not optional: without it kapp prints
       a summary table of resource names, and the field-level diff this phase is
       built around is opt-in. kapp still asks before it changes anything, so the
@@ -602,11 +602,11 @@ manifests in git is exactly their input format.
 
       Each rule names only the wave before it, as `upsert after upserting
       kanae/config`. Wave 6 needs no group, because nothing points at it.
-- [ ] Give `k8s:apply:local` a no-wait mode. kapp blocks until every resource is
+- [x] Give `k8s:apply:local` a no-wait mode. kapp blocks until every resource is
       healthy, and Phases 4 through 7 each deploy a stack that is deliberately
       incomplete. The phase exit gates check readiness instead. Drop the mode
       from Phase 8 on.
-- [ ] Pin `image.tag` to a digest and let Renovate move it.
+- [x] Pin `image.tag` to a digest and let Renovate move it.
       `deploy/kubernetes/dist/` is generated, so a manifest that does not change
       deploys nothing: a push to main rebuilds `edge`, the rendered Deployment
       comes out byte-identical, kapp sees no diff, and the pod keeps the old
@@ -641,7 +641,7 @@ manifests in git is exactly their input format.
       `.github/workflows/kubernetes.yml`. Turn on the check for containers running as
       root. Finding 3 in POC_FINDINGS.md was a container that crashed because it
       ran as root under dropped privileges, and this check names that pattern.
-- [ ] Turn on kube-linter's `unset-memory-requirements` check. Rule 7 puts a
+- [x] Turn on kube-linter's `unset-memory-requirements` check. Rule 7 puts a
       memory request and limit on every container from Phase 4 onward, so
       nothing needs an exemption and the check never becomes noise.
 - [ ] Leave kube-linter's `unset-cpu-requirements` off, since it demands a
