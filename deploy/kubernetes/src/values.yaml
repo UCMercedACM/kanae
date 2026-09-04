@@ -33,4 +33,4 @@ migrate:
   atlas:
     image:
       repository: arigaio/atlas
-      tag: "latest@sha256:07f3f92fa46e684ed789d5ef344a25494a4fa6844ef1ea1fa4e138522c2c37ac"
+      tag: "latest@sha256:d08183f70aa37ae1668ded9e3d88a028c867824168cd2262e69874d59bcff0a0"
