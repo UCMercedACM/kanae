@@ -21,11 +21,13 @@ WAIT=${WAIT:-false}
 KEEP=${KEEP:-0}
 
 step() {
-	printf '\n==> %s\n' "$1"
+	local message=$1
+	printf '\n==> %s\n' "$message"
 }
 
 note() {
-	printf '    %s\n' "$1"
+	local message=$1
+	printf '    %s\n' "$message"
 }
 
 teardown() {

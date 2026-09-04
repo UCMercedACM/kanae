@@ -89,9 +89,9 @@ jobs:
             KUBE_LINTER_ARCH="_$ARCH"
           fi
 
-          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-${OS}-${ARCH}.tar.gz" \
+          curl --proto "=https" -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-${OS}-${ARCH}.tar.gz" \
             | tar -xz -C /tmp kubeconform
-          curl -fsSL "https://github.com/stackrox/kube-linter/releases/download/v${KUBE_LINTER_VERSION}/kube-linter-${OS}${KUBE_LINTER_ARCH}" \
+          curl --proto "=https" -fsSL "https://github.com/stackrox/kube-linter/releases/download/v${KUBE_LINTER_VERSION}/kube-linter-${OS}${KUBE_LINTER_ARCH}" \
             -o /tmp/kube-linter
 
           sudo install -m 0755 /tmp/kubeconform /tmp/kube-linter /usr/local/bin/
