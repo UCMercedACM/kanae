@@ -7,6 +7,15 @@
   ],
   "dependencyDashboard": false,
   "separateMajorMinor": false,
+  "kubernetes": {
+    "managerFilePatterns": [
+      "deploy/kubernetes/k3d.yml"
+    ],
+    "versioning": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-k3s(?<build>\\d+)$"
+  },
+  "docker-compose": {
+    "pinDigests": true
+  },
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true
@@ -25,7 +34,7 @@
       "automerge": true
     },
     {
-      "matchManagers": [
+      "matchDatasources": [
         "docker"
       ],
       "groupName": "docker digests",
