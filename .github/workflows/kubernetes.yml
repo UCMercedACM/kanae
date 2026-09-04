@@ -20,6 +20,7 @@ jobs:
 
     outputs:
       kubernetes: ${{ steps.filter.outputs.kubernetes }}
+      chart: ${{ steps.filter.outputs.chart }}
 
     steps:
       - name: Checkout Repository
@@ -187,8 +188,8 @@ jobs:
       - name: Look up the bot's user ID
         id: bot_user
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          APP_SLUG: ${{ steps.app_token.outputs.app-slug }}
         run: echo "id=$(gh api "/users/$APP_SLUG[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
 
       - name: Commit the render
@@ -197,4 +198,4 @@ jobs:
           commit_message: Render Kubernetes changes
           file_pattern: deploy/kubernetes/dist
           commit_user_name: ${{ steps.app_token.outputs.app-slug }}[bot]
-          commit_user_email: ${{ steps.bot-user.outputs.id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com
+          commit_user_email: ${{ steps.bot_user.outputs.id }}+${{ steps.app_token.outputs.app-slug }}[bot]@users.noreply.github.com
