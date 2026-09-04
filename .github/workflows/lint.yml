@@ -91,6 +91,6 @@ jobs:
           uv run --frozen yamllint --strict .
 
       - name: Check for formatting
-        uses: dprint/check@9cb3a2b17a8e606d37aae341e49df3654933fc23 # v2
+        uses: dprint/check@9cb3a2b17a8e606d37aae341e49df3654933fc23 # v2.3
         with:
           dprint-version: ${{ env.DPRINT_VERSION }}
