@@ -22,7 +22,7 @@ dependencies = [
     "pyvips[binary]~=3.2.0",
     "pyyaml~=6.0.3",
     "uvloop~=0.22.1 ; sys_platform != 'win32'",
-    "valkey-glide==2.5.1",
+    "valkey-glide==2.5.2",
     "winloop~=0.6.2 ; sys_platform == 'win32'",
 ]
 
@@ -35,7 +35,7 @@ dev = [
 lint = [
     "yamllint~=1.38.0",
     "ruff~=0.16.0",
-    "ty==0.0.75",
+    "ty==0.0.78",
     { include-group = "types" },
 ]
 types = [
