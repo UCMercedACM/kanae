@@ -186,3 +186,7 @@ garage
 tests/integration/secrets.env
 
 deploy/docker/.deploy.env
+!deploy/kubernetes/dist
+
+# Rendered locally by k8s:render:local — a laptop render is a build artifact
+.k8s-local/

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "image", "kanae", "postgres", "valkey", "ory", "migrate"],
+  "$defs": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$" },
+        "tag": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*(@sha256:[a-f0-9]{64})?$" }
+      }
+    }
+  },
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$" },
+        "tag": { "type": "string", "pattern": "^(dev|[A-Za-z0-9._-]+@sha256:[a-f0-9]{64})$" },
+        "pullPolicy": { "enum": ["IfNotPresent", "Always", "Never"] }
+      }
+    },
+    "kanae": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["granianWorkers"],
+      "properties": {
+        "granianWorkers": { "type": "integer", "minimum": 1, "maximum": 16 }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image"],
+      "properties": { "image": { "$ref": "#/$defs/image" } }
+    },
+    "valkey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image"],
+      "properties": { "image": { "$ref": "#/$defs/image" } }
+    },
+    "ory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kratos", "keto"],
+      "properties": {
+        "kratos": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": { "image": { "$ref": "#/$defs/image" } }
+        },
+        "keto": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": { "image": { "$ref": "#/$defs/image" } }
+        }
+      }
+    },
+    "migrate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["atlas"],
+      "properties": {
+        "atlas": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": { "image": { "$ref": "#/$defs/image" } }
+        }
+      }
+    }
+  }
+}
