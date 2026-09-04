@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import http
+import inspect
 import itertools
 import logging
 import mimetypes
@@ -1246,7 +1247,7 @@ class PrometheusInstrumentator:
 
         for func in instrumentation_function:
             if func:
-                if asyncio.iscoroutinefunction(func):
+                if inspect.iscoroutinefunction(func):
                     self.async_instrumentations.append(
                         cast(
                             "Callable[[metrics.Info], Awaitable[None]]",
