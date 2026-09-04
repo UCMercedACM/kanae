@@ -210,6 +210,7 @@ dir = "{{ config_root }}"
 run = [
   "k3d cluster create --config deploy/kubernetes/k3d.yml",
   "kubectl wait --for=condition=Ready nodes --all --timeout=300s",
+  "kubectl create namespace kanae",
   "kubectl get nodes",
 ]
 
