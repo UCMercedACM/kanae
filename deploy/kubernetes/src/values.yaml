@@ -6,7 +6,7 @@ image:
   pullPolicy: IfNotPresent
 
 kanae:
-  granianWorkers: 2
+  granianWorkers: 3
 
 postgres:
   image:
