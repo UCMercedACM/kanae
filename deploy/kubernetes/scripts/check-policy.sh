@@ -5,7 +5,8 @@ TEMPLATES=deploy/kubernetes/src/templates
 FILES=deploy/kubernetes/src/files
 
 reject() {
-	echo "check-policy: $1" >&2
+	local message=$1
+	echo "check-policy: $message" >&2
 	exit 1
 }
 

@@ -64,20 +64,23 @@ fi
 KEYS=()
 declare -A SECRETS=()
 put() {
-	[[ -n $2 ]] || abort "$1 cannot be empty"
-	KEYS+=("$1")
-	SECRETS[$1]=$2
+	local key=$1 value=$2
+	[[ -n $value ]] || abort "$key cannot be empty"
+	KEYS+=("$key")
+	SECRETS[$key]=$value
 }
 
 generate() {
-	put "$1" "${EXISTING[$1]:-$(openssl rand -hex "$2")}"
+	local key=$1 bytes=$2
+	put "$key" "${EXISTING[$key]:-$(openssl rand -hex "$bytes")}"
 }
 
 ask() {
-	local value=${EXISTING[$1]:-${LOCAL:+$3}}
+	local key=$1 prompt=$2 default=${3:-} placeholder=${4:-}
+	local value=${EXISTING[$key]:-${LOCAL:+$default}}
 	[[ -n $value ]] || value=$(gum input --password --no-show-help \
-		--prompt "$2: " --placeholder "${4:-}" --placeholder.foreground 245 </dev/tty)
-	put "$1" "$value"
+		--prompt "$prompt: " --placeholder "$placeholder" --placeholder.foreground 245 </dev/tty)
+	put "$key" "$value"
 }
 
 generate dbPassword 32
