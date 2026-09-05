@@ -1,0 +1,1 @@
+../../../../../../docker/ory/config/kratos/hooks/payload.jsonnet

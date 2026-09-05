@@ -1,0 +1,9 @@
+# This is the public keys btw
+keys:
+  - &noelle age1gfw0l0jf8m4j2fmpwldqm6ckxvvlwmvy8t3563yh3xc8rscp4ssszmykyf
+
+creation_rules:
+  - path_regex: '\.sops\.yml$'
+    key_groups:
+      - age:
+          - *noelle

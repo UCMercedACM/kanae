@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["namespace", "image", "kanae", "postgres", "valkey", "ory", "migrate"],
+  "required": ["namespace", "serviceNames", "image", "kanae", "postgres", "valkey", "ory", "migrate", "renderSecrets", "secrets"],
   "$defs": {
     "image": {
       "type": "object",
@@ -12,13 +12,27 @@
         "repository": { "type": "string", "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$" },
         "tag": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*(@sha256:[a-f0-9]{64})?$" }
       }
-    }
+    },
+    "secret": { "type": "string" },
+    "serviceName": { "type": "string", "maxLength": 63, "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
   },
   "properties": {
     "namespace": {
       "type": "string",
       "maxLength": 63,
       "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    },
+    "serviceNames": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kanae", "database", "valkey", "kratos", "keto"],
+      "properties": {
+        "kanae": { "$ref": "#/$defs/serviceName" },
+        "database": { "$ref": "#/$defs/serviceName" },
+        "valkey": { "$ref": "#/$defs/serviceName" },
+        "kratos": { "$ref": "#/$defs/serviceName" },
+        "keto": { "$ref": "#/$defs/serviceName" }
+      }
     },
     "image": {
       "type": "object",
@@ -80,6 +94,25 @@
           "required": ["image"],
           "properties": { "image": { "$ref": "#/$defs/image" } }
         }
+      }
+    },
+    "renderSecrets": { "type": "boolean" },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dbPassword": { "$ref": "#/$defs/secret" },
+        "kratosSecretsCookie": { "$ref": "#/$defs/secret" },
+        "kratosSecretsCipher": { "$ref": "#/$defs/secret" },
+        "kratosWebhookMasterKey": { "$ref": "#/$defs/secret" },
+        "kratosWebhookTokenRegistration": { "$ref": "#/$defs/secret" },
+        "kratosWebhookTokenSettings": { "$ref": "#/$defs/secret" },
+        "kratosSmtpUri": { "type": "string", "pattern": "^(|smtps?://.+)$" },
+        "storageKeyId": { "$ref": "#/$defs/secret" },
+        "storageSecretKey": { "$ref": "#/$defs/secret" },
+        "borgPassphrase": { "$ref": "#/$defs/secret" },
+        "borgS3AccessKey": { "$ref": "#/$defs/secret" },
+        "borgS3SecretKey": { "$ref": "#/$defs/secret" }
       }
     }
   }

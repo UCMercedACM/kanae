@@ -97,6 +97,9 @@ jobs:
 
           sudo install -m 0755 /tmp/kubeconform /tmp/kube-linter /usr/local/bin/
 
+      - name: Check symlinks
+        run: deploy/kubernetes/scripts/check-symlinks.sh
+
       - name: Check production values against schema
         run: helm lint deploy/kubernetes/src
 
@@ -124,13 +127,14 @@ jobs:
             -ignore-filename-pattern 'kubernetes/src/' \
             -ignore-filename-pattern 'k3d\.yml$' \
             -ignore-filename-pattern 'values.*\.(ya?ml|json)$' \
+            -ignore-filename-pattern 'secrets.*\.ya?ml$' \
             deploy/kubernetes
 
       - name: Validate local manifests
         run: kubeconform -strict -summary .k8s-local
 
-      - name: Check manifests against policy
-        run: kube-linter lint --config .kube-linter.yml deploy/kubernetes/dist .k8s-local
+      - name: Check chart sources and manifests against policy
+        run: deploy/kubernetes/scripts/check-policy.sh
 
       - name: Check for manifest drift
         run: |

@@ -190,3 +190,8 @@ deploy/docker/.deploy.env
 
 # Rendered locally by k8s:render:local — a laptop render is a build artifact
 .k8s-local/
+
+# Decrypted secrets never touch disk inside the repository. Nothing writes this
+# file: init.sh pipes the plaintext straight into SOPS and k8s:apply decrypts
+# secrets.sops.yml in memory. It is ignored in case someone decrypts by hand
+deploy/kubernetes/secrets.yml

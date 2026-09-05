@@ -155,3 +155,45 @@ so a person can change or copy any of the three. A GitHub account ID is neither
 configurable nor transferable.
 
 Decided 2026-09-04.
+
+## The chart reaches its sources through symlinks, not copies
+
+`deploy/kubernetes/src/files/` holds one symlink per file the chart reads from
+elsewhere in the repository: the Ory configs, the Postgres initdb script, the
+schema, `config.dist.yml`, and the seed data. Nothing moves and no Compose
+bind mount changes.
+
+Two programs producing the same file drift eventually, and `.Files.Get` makes
+that drift silent: a path it cannot resolve renders an empty string and exits
+0. Helm follows symlinks, so a link removes the copy without changing the
+render. `mise run helm:files` runs before every render and checks each link is
+relative, points where it should, resolves, and names a source CI watches.
+
+Decided 2026-09-04.
+
+## Secrets go through kapp, decrypted in memory
+
+`deploy/kubernetes/secrets.sops.yml` holds the values. `mise run k8s:apply`
+decrypts it with SOPS, renders `templates/secrets.yml` alone with
+`renderSecrets` on, and hands the result to kapp beside `dist/`. Nothing
+decrypts to disk and `k8s:render` never sees a secret value.
+
+Piping Secrets to `kubectl apply` would put them outside kapp, where nothing
+prunes them and nothing diffs them. kapp masks Secret values in its diff, so it
+reports which Secret changed without printing what it changed to.
+
+Committing them encrypted into `dist/` fails too. SOPS uses a fresh data key on
+every run, so identical content encrypts to different bytes and the drift check
+never passes.
+
+`scripts/apply.sh` decrypts and renders them into a variable, then hands that
+to kapp. It is two steps rather than one pipeline because a failure inside
+`<(...)` is invisible to the outer command: kapp would read an empty file and
+treat all three Secrets as removed from the app.
+
+Windows is the exception. `scripts/apply.ps1` writes them to a file in the
+per-user temp directory, which no other account can read, and removes it in a
+`finally` block. PowerShell has no process substitution, and handing kapp the
+manifest on stdin instead leaves it reading EOF at its confirmation prompt.
+
+Decided 2026-09-04, Windows note added 2026-09-05.

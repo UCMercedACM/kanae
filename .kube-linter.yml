@@ -32,7 +32,7 @@ customChecks:
 
   - name: no-rendered-secret
     description: No Secret reaches deploy/kubernetes/dist/.
-    remediation: Keep the Secret out of the chart. Phase 3 decides where Secrets go.
+    remediation: Guard the Secret with renderSecrets. Only k8s:apply turns it on, and it never writes to dist/.
     template: disallowed-api-obj
     params:
       group: ""
