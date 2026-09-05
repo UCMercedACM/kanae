@@ -49,8 +49,8 @@ jobs:
     name: Check
     runs-on: ubuntu-24.04
 
-    # needs: Changes
-    # if: ${{ needs.Changes.outputs.kubernetes == 'true' }}
+    needs: Changes
+    if: ${{ needs.Changes.outputs.kubernetes == 'true' }}
 
     permissions:
       contents: read
