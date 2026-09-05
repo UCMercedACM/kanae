@@ -1,5 +1,12 @@
 namespace: kanae
 
+serviceNames:
+  kanae: kanae
+  database: database
+  valkey: valkey
+  kratos: kratos
+  keto: keto
+
 image:
   repository: ghcr.io/ucmercedacm/kanae
   tag: "0.3.1@sha256:368bd2951dffc1025ed9d0de16e977ec2c38451a0b74245f76a886eae57c8b19"
@@ -34,3 +41,22 @@ migrate:
     image:
       repository: arigaio/atlas
       tag: "latest@sha256:d08183f70aa37ae1668ded9e3d88a028c867824168cd2262e69874d59bcff0a0"
+
+# We do not render any secrets as we would be commiting secrets
+# Rendering the secrets is the last step, and we pipe in our decrypted
+# secrets in order to produce a final build that can be applied correctly
+renderSecrets: false
+
+secrets:
+  dbPassword: ""
+  kratosSecretsCookie: ""
+  kratosSecretsCipher: ""
+  kratosWebhookMasterKey: ""
+  kratosWebhookTokenRegistration: ""
+  kratosWebhookTokenSettings: ""
+  kratosSmtpUri: ""
+  storageKeyId: ""
+  storageSecretKey: ""
+  borgPassphrase: ""
+  borgS3AccessKey: ""
+  borgS3SecretKey: ""

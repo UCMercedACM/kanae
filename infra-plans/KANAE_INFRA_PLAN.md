@@ -205,7 +205,6 @@ deploy/kubernetes/
       kratos.yml
       keto.yml
       routing.yml              Gateway and HTTPRoute
-      secrets.yml
       jobs-migrate.yml
       job-seed.yml
       backup-borgmatic.yml
@@ -229,7 +228,7 @@ deploy/kubernetes/
     vars.env
   values-local.yml
   secrets.sops.yml
-  secrets.example.yml
+  secrets.dist.yml
   k3d.yml
   namespace.yml
   storage.yml
@@ -708,34 +707,37 @@ the one part of the deployment you cannot read out of git.
 
 ### Tasks
 
-- [ ] Replace every copy under `deploy/kubernetes/src/files/` with a symlink to
+- [x] Replace every copy under `deploy/kubernetes/src/files/` with a symlink to
       its original. The `helm:sync` task in `mise.toml` names all seventeen and
       where each came from, so it is the checklist: `docker/ory/config/**`,
       `docker/ory/init.sh`, `src/schema.sql`, `config.dist.yml`, and
       `scripts/seed/**`. Nothing moves and no Compose bind mount changes.
-- [ ] Delete the `helm:sync` and `helm:check` tasks from `mise.toml`. With no
+- [x] Delete the `helm:sync` and `helm:check` tasks from `mise.toml`. With no
       copies there is nothing to sync and nothing to check. `helm:check` only
       ever existed because the copies did.
-- [ ] Replace them with a hidden `helm:files` task, and make `k8s:render`,
+- [x] Replace them with a hidden `helm:files` task, and make `k8s:render`,
       `k8s:render:local`, and `k8s:schema` declare `depends = ["helm:files"]`.
       Hold the seventeen entries as `link|source` pairs and compute each
       relative target with `realpath -s --relative-to`, so nobody hand-counts
       `../`. Nothing renders without it having passed.
-- [ ] Assert four things per entry: it is a symlink, its target is relative, its
+      Changed while building it: the pairs live in `deploy/kubernetes/files.map`
+      rather than in `mise.toml`, because the task grew a `run_windows` branch
+      and a list held twice is the drift this phase deletes.
+- [x] Assert four things per entry: it is a symlink, its target is relative, its
       target is the expected one, and it resolves. A link that resolves to the
       wrong existing file passes every other check in this plan. Check the
       source exists too, so a renamed source names itself rather than producing
       a mysteriously dangling link.
-- [ ] Assert a fifth: every source is covered by a pattern in the `infra` path
+- [x] Assert a fifth: every source is covered by a pattern in the `infra` path
       filter from Phase 1. Otherwise a newly linked file changes the render
       while triggering no CI, and the checks that would have caught it never
       run.
-- [ ] Have `helm:files` fail with instructions rather than fall back to copying
+- [x] Have `helm:files` fail with instructions rather than fall back to copying
       when the checkout has no symlink support. Copying would put content in
       `files/` that differs from what is committed, which is the drift this
       phase removes. The instructions are `git config core.symlinks true` and
       re-checkout, or clone with `git clone -c core.symlinks=true`.
-- [ ] Write the Windows situation in `deploy/kubernetes/dist/README.md` rather
+- [x] Write the Windows situation in `deploy/kubernetes/dist/README.md` rather
       than pretending it away. Git cannot be made to fix this from inside the
       repository: `core.symlinks` lives in `.git/config`, which `clone` creates
       and never fetches, and there is no `.gitattributes` equivalent. What git
@@ -743,84 +745,92 @@ the one part of the deployment you cannot read out of git.
       files, so a Windows clone cannot silently replace the links. That was
       checked: `git status` reads clean and `git add -A` leaves every entry at
       mode `120000`.
-- [ ] Cut `deploy/kubernetes/seed-k8s.sh` down to one job: generate secret
-      values and write them to a plain YAML file for SOPS to encrypt. Delete the
+- [x] Cut `deploy/kubernetes/seed-k8s.sh` down to one job: generate secret
+      values and write them to a plain YAML file for SOPS to encrypt.
+      Changed while building it: the script pipes the plaintext into SOPS
+      itself and writes only `secrets.sops.yml`. Printing the encrypt command
+      for a human to paste leaves a plaintext file on disk until they get
+      round to it, and the pipe means it is never written at all. Delete the
       `yq` config rendering at line 247 and the `kubectl create secret` calls at
       lines 310 to 334. Rename it `deploy/kubernetes/init.sh`. The old name was
       also misleading, since a Job named `seed` already creates test members.
-- [ ] Keep the `secrets.create` value, rename it `renderSecrets`, and say what
+- [x] Keep the `secrets.create` value, rename it `renderSecrets`, and say what
       it does in `values.yaml` beside it. Under rendered manifests there really
       are two render modes: `k8s:render` runs with it off and emits no Secret,
       `k8s:apply`'s Secret step runs with it on and emits nothing else.
       Deleting it would make every render require the secret values, putting
       the age key on every pull request.
-- [ ] Extend `k8s:apply` from Phase 2 with the Secret step: decrypt
+- [x] Extend `k8s:apply` from Phase 2 with the Secret step: decrypt
       `deploy/kubernetes/secrets.sops.yml` with SOPS, render
       `--show-only templates/secrets.yml`, and pass the result to kapp as a
       second `-f -`. Keep it out of `deploy/kubernetes/dist/` and add the file
       to the repository's list of things never to decrypt to disk.
-- [ ] Do not pipe Secrets to `kubectl apply`. That puts them outside kapp, where
+- [x] Do not pipe Secrets to `kubectl apply`. That puts them outside kapp, where
       nothing prunes them and nothing diffs them. kapp masks Secret values in
       its diff, so it reports which Secret changed without printing what it
       changed to.
-- [ ] Have `k8s:apply` check for the age key first and fail naming it. Without
+- [x] Have `k8s:apply` check for the age key first and fail naming it. Without
       that, a missing key makes SOPS error, the pipe carries something useless
       into `helm template`, and the failure reports a missing value rather than
       a missing key.
-- [ ] Put `kapp.k14s.io/delete-strategy: "orphan"` on all three Secrets:
+- [x] Put `kapp.k14s.io/delete-strategy: "orphan"` on all three Secrets:
       `kanae-env`, `kanae-config` and `kanae-borg`. Only the first and third
       carry `helm.sh/resource-policy: keep` today, and kapp reads neither.
-- [ ] Keep the property that made `seed-k8s.sh` safe to re-run: if a secret
+- [x] Keep the property that made `seed-k8s.sh` safe to re-run: if a secret
       already has a value, keep it. One of those keys encrypts user data at
       rest, and regenerating it makes existing accounts unreadable.
-- [ ] Split `scripts/derive-webhook-tokens.py` into a function that takes a
+- [x] Split `scripts/derive-webhook-tokens.py` into a function that takes a
       master key and returns the two tokens, plus the CLI it has now. Today it
       reads the key out of a config.yml inside the repo root and writes into
       two dotenv files, none of which `deploy/kubernetes/init.sh` has or wants.
-- [ ] Have `deploy/kubernetes/init.sh` call that function rather than
+- [x] Have `deploy/kubernetes/init.sh` call that function rather than
       recomputing the blake3 tokens itself. One implementation.
-- [ ] Replace the placeholder age keys in `.sops.yaml` and drop the `ci`
+- [x] Replace the placeholder age keys in `.sops.yaml` and drop the `ci`
       recipient. All of them read `REPLACE` today, and nothing CI runs decrypts
       anything: `k8s:render` emits no Secret, and only `k8s:apply` does.
-- [ ] Replace both `creation_rules` with one suffix rule,
+- [x] Replace both `creation_rules` with one suffix rule,
       `path_regex: '\.sops\.yml$'`. Both currently name `deploy/helm/`,
       which this plan moves, and a path rule goes stale on every move. No guard
       against matching the config file is needed: the encrypted files end in
       `.sops.yml`, while the config stays `.sops.yaml`, which is the only name
       SOPS looks for.
-- [ ] Delete the `secrets-local.enc.yml` rule and rename
-      `secrets-prod.example.yml` to `secrets.example.yml`. Nothing reads a
+- [x] Delete the `secrets-local.enc.yml` rule and rename
+      `secrets-prod.example.yml` to `secrets.dist.yml`, matching
+      `config.dist.yml` and `deploy.dist.env`. Nothing reads a
       local secrets file; local overrides go through plaintext
       `values-local.yml`. The example is plaintext and must not match the rule.
-- [ ] Encrypt a throwaway file to prove the rule matches. `creation_rules` are
+- [x] Encrypt a throwaway file to prove the rule matches. `creation_rules` are
       read only on first encrypt, so a wrong rule stays silent until Phase 11
       generates the real secrets and SOPS refuses with `no matching creation
       rules found`.
-- [ ] Declare the fixed Service names once. Add a `serviceNames` block to
+- [x] Declare the fixed Service names once. Add a `serviceNames` block to
       `values.yaml` holding `kanae`, `database`, `valkey`, `kratos`, and `keto`,
       and reference it through `_helpers.tpl` everywhere. The names stay fixed,
       for the reason HANDOFF.md gives, but they become a documented list in one
       file instead of strings typed into ten templates.
-- [ ] Add three checks to `k8s:policy`. Fail if any file in
+- [x] Add three checks to `k8s:policy`. Fail if any file in
       `deploy/kubernetes/src/templates/` contains a hardcoded `database:5432` or
       `kanae:8000`. Fail if
       `find deploy/kubernetes/src/files \( -type f -o -xtype l \) -print` prints
       anything, which catches a copy creeping back and a link whose target was
       renamed; the parentheses are load-bearing, since `-print` otherwise binds
       to the last term alone. Fail on any `.Files.Get` outside `_helpers.tpl`.
-- [ ] Route every read of `files/` through a `kanae.file` helper that fails the
+- [x] Route every read of `files/` through a `kanae.file` helper that fails the
       render when the content is empty or is a bare path. `.Files.Get` returns
       an empty string and exits 0 for a path it cannot resolve, so an unguarded
       read turns a broken link into an empty ConfigMap and a clean render.
       Convert all nineteen call sites, including the two `checksum/config`
       reads, which would otherwise hash the empty string and produce a stable
       checksum that never restarts anything.
-- [ ] Add `imagePullSecrets` to `values.yaml` and to every pod spec, naming a
+- [x] Add `imagePullSecrets` to `values.yaml` and to every pod spec, naming a
       Secret Phase 11 creates as cluster setup. `ghcr.io/ucmercedacm/kanae` is
       a private package, and nothing in `deploy/` currently mentions a pull
       secret. Finding 6 in POC_FINDINGS.md is what happens without one, and it
       is nasty because `docker pull` on your laptop succeeds using credentials
       the cluster does not have.
+      Checked 2026-09-04: the package is public now. An anonymous pull of the
+      `0.3.1` manifest from `ghcr.io` returns 200, so no pull secret is needed
+      and none was added.
 
 ### Exit gate
 

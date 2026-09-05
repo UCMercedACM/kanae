@@ -2,7 +2,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 from blake3 import blake3
@@ -26,7 +26,37 @@ HOOKS: dict[str, bytes] = {
 _log = logging.getLogger(__name__)
 
 
-def main(config_path: Path) -> None:
+class TokensOutput(TypedDict):
+    name: str
+
+
+def derive_tokens(master_hex: bytes) -> TokensOutput:
+    try:
+        master_key = bytes.fromhex(master_hex)
+    except (TypeError, ValueError):
+        sys.exit("error: ory.kratos_webhook_master_key must be hex-encoded")
+
+    if len(master_key) != KEY_SIZE:
+        sys.exit(f"error: ory.kratos_webhook_master_key must be {KEY_SIZE} bytes")
+
+    return TokensOutput(
+        {
+            name: blake3(context, key=master_key).hexdigest()
+            for name, context in HOOKS.items()
+        }
+    )
+
+
+def main(config_path: Path, *, stdin: bool) -> None:
+    if stdin:
+        _hex = sys.stdin.read()
+        derived_tokens = derive_tokens(_hex)
+
+        for name, digest in derived_tokens.items():
+            print(f"{name}={digest}")  # noqa: T201
+
+        return
+
     config_path = config_path.resolve()
     if not config_path.is_relative_to(ROOT_PATH):
         sys.exit(f"error: config must live inside {ROOT_PATH}: {config_path}")
@@ -39,16 +69,9 @@ def main(config_path: Path) -> None:
 
     _hex = config["ory"]["kratos_webhook_master_key"]
 
-    try:
-        master_key = bytes.fromhex(_hex)
-    except (TypeError, ValueError):
-        sys.exit("error: ory.kratos_webhook_master_key must be hex-encoded")
+    tokens = derive_tokens(_hex)
 
-    if len(master_key) != KEY_SIZE:
-        sys.exit(f"error: ory.kratos_webhook_master_key must be {KEY_SIZE} bytes")
-
-    for name, context in HOOKS.items():
-        digest = blake3(context, key=master_key).hexdigest()
+    for name, digest in tokens.items():
         set_key(DOCKER_ENV_PATH, name, digest, quote_mode="never")
 
         if PROD_ENV_PATH.exists():
@@ -65,6 +88,11 @@ if __name__ == "__main__":
         default=CONFIG_PATH,
         help=f"Path of the config file. Defaults to {CONFIG_PATH}",
     )
+    parser.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read the hex master key from stdin and print the tokens to stdout",
+    )
     args = parser.parse_args()
 
-    main(args.config)
+    main(args.config, stdin=args.stdin)

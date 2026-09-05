@@ -1,0 +1,24 @@
+# The symlinks under deploy/kubernetes/src/files/, as link|source pairs. Links
+# are relative to that directory, sources to the repository root.
+
+config.dist.yml|config.dist.yml
+init.sh|docker/ory/init.sh
+schema.sql|src/schema.sql
+
+keto/keto.yml|docker/ory/config/keto/keto.yml
+keto/namespaces.keto.ts|docker/ory/config/keto/namespaces.keto.ts
+
+kratos/kratos.yml|docker/ory/config/kratos/kratos.yml
+kratos/kratos.prod.yml|docker/ory/config/kratos/kratos.prod.yml
+kratos/identity.schema.json|docker/ory/config/kratos/identity.schema.json
+kratos/hooks/payload.jsonnet|docker/ory/config/kratos/hooks/payload.jsonnet
+kratos/templates/recovery/valid/email.body.gotmpl|docker/ory/config/kratos/templates/recovery/valid/email.body.gotmpl
+kratos/templates/recovery/valid/email.body.plaintext.gotmpl|docker/ory/config/kratos/templates/recovery/valid/email.body.plaintext.gotmpl
+kratos/templates/recovery/valid/email.subject.gotmpl|docker/ory/config/kratos/templates/recovery/valid/email.subject.gotmpl
+
+seed/init.sh|scripts/seed/init.sh
+seed/vars.env|scripts/seed/vars.env
+seed/data/events.json|scripts/seed/data/events.json
+seed/data/members.json|scripts/seed/data/members.json
+seed/data/projects.json|scripts/seed/data/projects.json
+seed/data/tags.json|scripts/seed/data/tags.json

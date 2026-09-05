@@ -1,0 +1,1 @@
+../../../../../docker/ory/config/keto/namespaces.keto.ts
