@@ -17,6 +17,7 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
             runAsUser: 999
@@ -52,8 +53,10 @@ spec:
                 requests:
                   memory: 64Mi
                   cpu: 50m
+                  ephemeral-storage: 32Mi
                 limits:
                   memory: 64Mi
+                  ephemeral-storage: 64Mi
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:

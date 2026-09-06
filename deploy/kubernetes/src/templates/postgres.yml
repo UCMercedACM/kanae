@@ -61,6 +61,7 @@ spec:
       labels:
         app: {{ .Values.serviceNames.database }}
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
@@ -97,8 +98,10 @@ spec:
             requests:
               memory: 64Mi
               cpu: 50m
+              ephemeral-storage: 32Mi
             limits:
               memory: 64Mi
+              ephemeral-storage: 64Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -133,8 +136,10 @@ spec:
             requests:
               memory: 512Mi
               cpu: 250m
+              ephemeral-storage: 128Mi
             limits:
               memory: 512Mi
+              ephemeral-storage: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -170,6 +175,7 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
             runAsUser: 999
@@ -205,8 +211,10 @@ spec:
                 requests:
                   memory: 64Mi
                   cpu: 50m
+                  ephemeral-storage: 32Mi
                 limits:
                   memory: 64Mi
+                  ephemeral-storage: 64Mi
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:

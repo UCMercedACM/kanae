@@ -19,6 +19,7 @@ spec:
       labels:
         app: valkey
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
@@ -42,8 +43,10 @@ spec:
             requests:
               memory: 256Mi
               cpu: 50m
+              ephemeral-storage: 128Mi
             limits:
               memory: 256Mi
+              ephemeral-storage: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
