@@ -1,0 +1,221 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.serviceNames.database }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Values.serviceNames.database }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+data:
+  init.sh: |
+    {{- include "kanae.file" (list . "init.sh") | nindent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-data
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/delete-strategy: "orphan"
+    kapp.k14s.io/change-group: "kanae/databases"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/config"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.postgres.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storage }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.serviceNames.database }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/databases"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/config"
+spec:
+  serviceName: {{ .Values.serviceNames.database }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.serviceNames.database }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.serviceNames.database }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      initContainers:
+        - name: check-version
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              shopt -s nullglob
+
+              if [[ -f $PGDATA/PG_VERSION ]]; then
+                echo "found a PostgreSQL $PG_MAJOR cluster in $PGDATA"
+                exit 0
+              fi
+
+              clusters=(/var/lib/postgresql/*/docker/PG_VERSION)
+
+              if ((${#clusters[@]})); then
+                printf '%s\n' \
+                  "$PGDATA does not exist, but ${clusters[0]} does." \
+                  "This volume holds a cluster from another major version, and" \
+                  "starting would initdb an empty one beside it. Run" \
+                  "pg_upgrade --link into $PGDATA, or restore into it, first." >&2
+                exit 1
+              fi
+
+              echo "empty volume, the entrypoint will initdb $PGDATA"
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+              ephemeral-storage: 32Mi
+            limits:
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kanae-env
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              value: kanae
+            - name: POSTGRES_INITDB_ARGS
+              value: "--data-checksums"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "--username=postgres"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 250m
+              ephemeral-storage: 128Mi
+            limits:
+              memory: 512Mi
+              ephemeral-storage: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: database-data
+        - name: initdb
+          configMap:
+            name: postgres-initdb
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-checksum
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+spec:
+  schedule: "17 4 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+          containers:
+            - name: checksum
+              image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+              imagePullPolicy: IfNotPresent
+              command: ["bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  psql --tuples-only --no-align \
+                    --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database' \
+                    | tee /dev/stderr | grep -qx 0
+              env:
+                - name: PGHOST
+                  value: {{ .Values.serviceNames.database | quote }}
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  value: "postgres"
+                - name: PGDATABASE
+                  value: "postgres"
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: kanae-env
+                      key: DB_PASSWORD
+                - name: PGCONNECT_TIMEOUT
+                  value: "10"
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 50m
+                  ephemeral-storage: 32Mi
+                limits:
+                  memory: 64Mi
+                  ephemeral-storage: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]

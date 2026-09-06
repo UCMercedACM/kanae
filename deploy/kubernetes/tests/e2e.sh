@@ -64,13 +64,17 @@ helm template kanae "$CHART" --namespace "$NAMESPACE" --values "$VALUES" \
 
 step "applying $RENDER as $APP"
 if compgen -G "$RENDER/*.yml" >/dev/null; then
-	kapp deploy -a "$APP" -n "$NAMESPACE" -c -f "$RENDER" --wait="$WAIT" --yes
+	RENDER=$RENDER APP=$APP NAMESPACE=$NAMESPACE WAIT=$WAIT VALUES=$VALUES CHART=$CHART \
+		deploy/kubernetes/scripts/apply-local.sh
 else
 	note "the chart renders nothing yet"
 fi
 
 step "what is running"
 kubectl -n "$NAMESPACE" get all
+
+step "what each container used"
+deploy/kubernetes/scripts/measure.sh --namespace "$NAMESPACE"
 
 step "running the gates"
 if compgen -G "$GATES/*.hurl" >/dev/null; then

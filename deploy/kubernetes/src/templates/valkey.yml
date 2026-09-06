@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.serviceNames.valkey }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Values.serviceNames.valkey }}
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.serviceNames.valkey }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/databases"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/config"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Values.serviceNames.valkey }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.serviceNames.valkey }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: valkey
+          image: "{{ .Values.valkey.image.repository }}:{{ .Values.valkey.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args: ["valkey-server", "--maxmemory", "{{ .Values.valkey.maxmemory }}", "--maxmemory-policy", "volatile-ttl"]
+          ports:
+            - name: valkey
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "PING"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 50m
+              ephemeral-storage: 128Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}

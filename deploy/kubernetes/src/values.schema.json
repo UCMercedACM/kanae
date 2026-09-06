@@ -55,14 +55,21 @@
     "postgres": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image"],
-      "properties": { "image": { "$ref": "#/$defs/image" } }
+      "required": ["image", "storageClass", "storage"],
+      "properties": {
+        "image": { "$ref": "#/$defs/image" },
+        "storageClass": { "type": "string", "maxLength": 253, "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" },
+        "storage": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$" }
+      }
     },
     "valkey": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image"],
-      "properties": { "image": { "$ref": "#/$defs/image" } }
+      "required": ["image", "maxmemory"],
+      "properties": {
+        "image": { "$ref": "#/$defs/image" },
+        "maxmemory": { "type": "string", "pattern": "^[1-9][0-9]*(kb|mb|gb)$" }
+      }
     },
     "ory": {
       "type": "object",
