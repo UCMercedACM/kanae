@@ -1,0 +1,56 @@
+# Source: kanae/templates/valkey.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/databases"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/config"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: valkey
+          image: "valkey/valkey:9-alpine@sha256:ccfa19b0d743e48927e1c8c14e39e0acb97b5cea347fef0bfe340247fea920cd"
+          imagePullPolicy: IfNotPresent
+          args: ["valkey-server", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-ttl"]
+          ports:
+            - name: valkey
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "PING"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}

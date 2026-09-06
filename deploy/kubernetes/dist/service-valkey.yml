@@ -1,0 +1,16 @@
+# Source: kanae/templates/valkey.yml
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  type: ClusterIP
+  selector:
+    app: valkey
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey

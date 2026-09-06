@@ -29,32 +29,47 @@ else
 	BLUE='' RED='' RESET=''
 fi
 
-log() { printf '%s==>%s %s\n' "$BLUE" "$RESET" "$*"; }
+log() { [[ -n ${LOCAL:-} ]] || printf '%s==>%s %s\n' "$BLUE" "$RESET" "$*" >&2; }
 abort() {
 	printf '%serror:%s %s\n' "$RED" "$RESET" "$*" >&2
 	exit 1
 }
 
+usage() {
+	printf 'usage: %s [--local] [--help]\n\n' "${0##*/}"
+	printf '  --local  take the default for every asked value instead of prompting,\n'
+	printf '           and print the values to stdout instead of encrypting them.\n'
+	printf '           For k3d, where the Secrets go with the cluster\n'
+	printf '  --help   show this help\n'
+}
+
 LOCAL=
-while getopts ':lh' opt; do
-	case $opt in
-		l) LOCAL=1 ;;
-		h)
-			printf 'usage: %s [-l] [-h]\n\n' "${0##*/}"
-			printf '  -l  take the default for every asked value instead of prompting, for k3d\n'
-			printf '  -h  show this help\n'
+while [[ $# -gt 0 ]]; do
+	case $1 in
+		--local)
+			LOCAL=1
+			shift
+			;;
+		--help)
+			usage
 			exit 0
 			;;
-		*) abort "unknown option: -$OPTARG" ;;
+		*)
+			usage >&2
+			abort "unknown option: $1"
+			;;
 	esac
 done
 
-for cmd in gum openssl sops uv yq; do
+REQUIRED=(openssl uv yq)
+[[ -n $LOCAL ]] || REQUIRED+=(gum sops)
+
+for cmd in "${REQUIRED[@]}"; do
 	command -v "$cmd" >/dev/null || abort "$cmd is required"
 done
 
 declare -A EXISTING=()
-if [[ -f $ENCRYPTED ]]; then
+if [[ -z $LOCAL && -f $ENCRYPTED ]]; then
 	log "reading the values already in $ENCRYPTED"
 	while IFS= read -r -d '' key && IFS= read -r -d '' value; do
 		EXISTING[$key]=$value
@@ -102,6 +117,14 @@ ask storageSecretKey 'S3 Secret Key ID' "$(openssl rand -hex 32)"
 generate borgPassphrase 32
 ask borgS3AccessKey 'Borg Repository S3 Access Key ID' local-borg-key-id
 ask borgS3SecretKey 'Borg Repository S3 Secret Key' local-borg-secret-key
+
+if [[ -n $LOCAL ]]; then
+	for key in "${KEYS[@]}"; do
+		printf '%s = %s\n' "$key" "${SECRETS[$key]}"
+	done \
+		| yq -p props -o yaml '{"secrets": .}'
+	exit 0
+fi
 
 umask 077
 TMP=$(mktemp "$ENCRYPTED.XXXXXX")

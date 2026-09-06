@@ -1,0 +1,17 @@
+# Source: kanae/templates/postgres.yml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-data
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/delete-strategy: "orphan"
+    kapp.k14s.io/change-group: "kanae/databases"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/config"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: scw-bssd-retain
+  resources:
+    requests:
+      storage: 10Gi

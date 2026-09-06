@@ -1,3 +1,7 @@
 image:
   tag: "dev"
   pullPolicy: Never
+
+postgres:
+  storageClass: local-path
+  storage: 2Gi

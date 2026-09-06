@@ -19,11 +19,14 @@ postgres:
   image:
     repository: postgres
     tag: "18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+  storageClass: scw-bssd-retain
+  storage: 10Gi
 
 valkey:
   image:
     repository: valkey/valkey
     tag: "9-alpine@sha256:ccfa19b0d743e48927e1c8c14e39e0acb97b5cea347fef0bfe340247fea920cd"
+  maxmemory: 128mb
 
 ory:
   kratos:

@@ -270,12 +270,12 @@ run_windows = "pwsh -NoProfile -File deploy/kubernetes/scripts/powershell/apply.
 raw = true
 
 [tasks."k8s:apply:local"]
-description = "Applies .k8s-local/ under its own app name, so a local render and production cannot be confused"
+description = "Applies .k8s-local/ under its own app name, with throwaway Secrets from init.sh --local, so a local render and production cannot be confused"
 dir = "{{ config_root }}"
 usage = '''
 flag "--wait <wait>" help="Wait for every resource to become healthy" default="true"
 '''
-run = "kapp deploy -a kanae-local -n kanae -c -f .k8s-local --wait=${usage_wait?}"
+run = "WAIT=${usage_wait?} deploy/kubernetes/scripts/apply-local.sh"
 
 [tasks."k8s:validate"]
 description = "Validates the manifests against the Kubernetes schemas via kubeconform"
@@ -296,6 +296,15 @@ run = [
   "helm lint deploy/kubernetes/src",
   "helm lint deploy/kubernetes/src --values deploy/kubernetes/values.local.yml",
 ]
+
+[tasks."k8s:measure"]
+description = "Reports the peak memory the kernel recorded for every container, against the limit it was given, and its average CPU. Phase 10 sets the limits from it"
+dir = "{{ config_root }}"
+usage = '''
+flag "--namespace <namespace>" help="Namespace to read" default="kanae"
+'''
+run = "deploy/kubernetes/scripts/measure.sh --namespace ${usage_namespace?}"
+run_windows = "pwsh -NoProfile -File deploy/kubernetes/scripts/powershell/measure.ps1"
 
 [tasks."garage:generate:keys"]
 description = "Generate Garage RPC/admin/metrics secrets into docker/.env. Appends — re-run to rotate."

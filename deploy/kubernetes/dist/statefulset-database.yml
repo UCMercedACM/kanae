@@ -1,0 +1,110 @@
+# Source: kanae/templates/postgres.yml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/databases"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/config"
+spec:
+  serviceName: database
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      initContainers:
+        - name: check-version
+          image: "postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              shopt -s nullglob
+
+              if [[ -f $PGDATA/PG_VERSION ]]; then
+                echo "found a PostgreSQL $PG_MAJOR cluster in $PGDATA"
+                exit 0
+              fi
+
+              clusters=(/var/lib/postgresql/*/docker/PG_VERSION)
+
+              if ((${#clusters[@]})); then
+                printf '%s\n' \
+                  "$PGDATA does not exist, but ${clusters[0]} does." \
+                  "This volume holds a cluster from another major version, and" \
+                  "starting would initdb an empty one beside it. Run" \
+                  "pg_upgrade --link into $PGDATA, or restore into it, first." >&2
+                exit 1
+              fi
+
+              echo "empty volume, the entrypoint will initdb $PGDATA"
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+      containers:
+        - name: postgres
+          image: "postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kanae-env
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              value: kanae
+            - name: POSTGRES_INITDB_ARGS
+              value: "--data-checksums"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "--username=postgres"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 250m
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: database-data
+        - name: initdb
+          configMap:
+            name: postgres-initdb

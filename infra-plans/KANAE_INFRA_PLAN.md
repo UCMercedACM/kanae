@@ -799,6 +799,9 @@ the one part of the deployment you cannot read out of git.
       `config.dist.yml` and `deploy.dist.env`. Nothing reads a
       local secrets file; local overrides go through plaintext
       `values-local.yml`. The example is plaintext and must not match the rule.
+      Superseded in Phase 4, once resources existed that mount a Secret:
+      throwaway values come from `deploy/kubernetes/init.sh -l` on stdout, not
+      from the committed `values.local.yml`. See DECISIONS.md.
 - [x] Encrypt a throwaway file to prove the rule matches. `creation_rules` are
       read only on first encrypt, so a wrong rule stays silent until Phase 11
       generates the real secrets and SOPS refuses with `no matching creation
@@ -873,25 +876,45 @@ recorded.
 
 ### Tasks
 
-- [ ] Rewrite the Postgres readiness probe as `pg_isready` and nothing else.
-- [ ] Move the checksum query it currently runs into a separate CronJob that
+- [x] Rewrite the Postgres readiness probe as `pg_isready` and nothing else.
+- [x] Move the checksum query it currently runs into a separate CronJob that
       alerts.
-- [ ] Change the `database` Service from headless to a normal ClusterIP Service.
-- [ ] Set an explicit non-root `runAsUser`, `runAsGroup`, and `fsGroup` on the
+      Changed while building it: the alert is the failed Job itself, kept by
+      `failedJobsHistoryLimit: 3`, because nothing in the cluster yet has
+      somewhere to send one. Phase 10 gives it a destination. It runs daily at
+      04:17 at 64Mi and 50m, off the deploy window and off the backup window,
+      which is why it is in neither budget table.
+- [x] Change the `database` Service from headless to a normal ClusterIP Service.
+- [x] Set an explicit non-root `runAsUser`, `runAsGroup`, and `fsGroup` on the
       Valkey pod. Finding 3 is Valkey crash-looping on
       `chown: .: Operation not permitted`, because its startup script takes
       ownership of its data directory when it runs as root and the chart had
       removed the privilege that needs.
-- [ ] Move the Retain-policy StorageClass out of the comment in
+      Changed while building it: Valkey's own user is uid 999 and gid 1000, and
+      Postgres got the same treatment at 999 and 999, since kube-linter's
+      `run-as-non-root` check covers every container and the same failure was
+      waiting there. One consequence: the Postgres claim mounts
+      `/var/lib/postgresql`, the parent of `PGDATA`. `fsGroup` leaves the volume
+      root group-writable and `initdb` refuses a data directory that is not
+      0700, so the entrypoint has to create `PGDATA` itself inside the mount.
+      That is also the layout the image declares as its `VOLUME`, and since 18
+      `PGDATA` carries the major version so that `pg_upgrade --link` can run
+      between two clusters on one filesystem. The cost is that a bumped image
+      tag would otherwise `initdb` an empty cluster beside the old one and come
+      up Ready; a single-shot `check-version` init container refuses that.
+- [x] Move the Retain-policy StorageClass out of the comment in
       `deploy/kubernetes/src/templates/postgres.yml` into
       `deploy/kubernetes/storage.yml`, and add a step for it in Phase 11. It
       is cluster-wide setup, not part of a release.
-- [ ] Put `kapp.k14s.io/delete-strategy: "orphan"` on the Postgres claim. The
+      Phase 11 already carried that step. `deploy/kubernetes/values.local.yml`
+      points the claim at k3d's `local-path`, since nothing provisions
+      `scw-bssd-retain` on a laptop.
+- [x] Put `kapp.k14s.io/delete-strategy: "orphan"` on the Postgres claim. The
       `helm.sh/resource-policy: keep` it carries today is a Helm annotation, and
       Helm no longer installs, so nothing reads it. Orphan and the Retain-policy
       StorageClass cover different accidents: orphan stops kapp deleting the
       claim, Retain stops the disk going if the claim does.
-- [ ] Declare the apply order. Kubernetes has no `depends_on` and kapp applies
+- [x] Declare the apply order. Kubernetes has no `depends_on` and kapp applies
       everything at once unless told otherwise. Annotate resources into six
       waves with `kapp.k14s.io/change-group` and `kapp.k14s.io/change-rule`.
       This phase writes the first of them; later phases annotate what they
@@ -912,28 +935,39 @@ recorded.
       Write both annotations literally in each template. A helper that derives
       the previous wave saves one edit when a wave is inserted, and costs every
       reader of a template a lookup to learn what a resource waits for.
-- [ ] Annotate Postgres, Valkey and the Postgres PVC into the `kanae/databases`
+      Changed while building it: the checksum CronJob is in no wave. Nothing
+      waits for it, so it takes a rule naming `kanae/databases` and no group of
+      its own, the shape wave 6 has.
+- [x] Annotate Postgres, Valkey and the Postgres PVC into the `kanae/databases`
       wave. Keep the claim in the same wave as the StatefulSet: a
       `WaitForFirstConsumer` storage class leaves it `Pending` until a pod needs
       it, so a claim alone in an earlier wave has nothing to trigger binding.
-- [ ] Set a memory request and limit, equal to each other, on the Postgres and
+- [x] Set a memory request and limit, equal to each other, on the Postgres and
       Valkey containers. Start at 512Mi for Postgres and 256Mi for Valkey and
       correct both in Phase 10.
-- [ ] Set a CPU request of 250m on Postgres and 50m on Valkey, and no CPU limit
+- [x] Set a CPU request of 250m on Postgres and 50m on Valkey, and no CPU limit
       on either. Postgres carries the larger share because it is what must not
       starve under contention. See the CPU budget.
-- [ ] Set Valkey's `maxmemory` to `128mb`, half its container limit. Valkey
+- [x] Set Valkey's `maxmemory` to `128mb`, half its container limit. Valkey
       evicts keys when it reaches `maxmemory`, and the gap covers its own
       process, fragmentation and client buffers, none of which count toward
       that figure. At `256mb` under a 256Mi limit the kernel kills the
       container before Valkey ever evicts anything.
-- [ ] Add the mise task `k8s:measure`, which samples `kubectl top pod` on a
+- [x] Add the mise task `k8s:measure`, which samples `kubectl top pod` on a
       loop and appends to a file for Phase 10. Keep both columns, since the
       same output feeds the memory table and the CPU budget.
-- [ ] Sample for the duration of `deploy/kubernetes/tests/e2e.sh` and take the
+- [x] Sample for the duration of `deploy/kubernetes/tests/e2e.sh` and take the
       maximum per container. `kubectl top` reports the latest metrics-server
       window, so one invocation cannot observe a peak, and the peaks that matter
       happen when nobody is at a terminal.
+      Changed while building it: it does not sample at all. cgroup v2 keeps
+      `memory.peak` as a high-water mark for the life of a container, so
+      `k8s:measure` reads that once, beside the limit from `memory.max` and the
+      average CPU from `cpu.stat`, and `e2e.sh` runs it before it deletes the
+      cluster. Sampling was measured against it and lost: `kubectl top` reported
+      43Mi for Postgres where the kernel had recorded 138Mi, because the peak
+      happens during initdb and each sample only shows the latest
+      metrics-server window.
 
 ### Exit gate
 

@@ -1,0 +1,60 @@
+# Source: kanae/templates/postgres.yml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-checksum
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+spec:
+  schedule: "17 4 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+          containers:
+            - name: checksum
+              image: "postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+              imagePullPolicy: IfNotPresent
+              command: ["bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  psql --tuples-only --no-align \
+                    --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database' \
+                    | tee /dev/stderr | grep -qx 0
+              env:
+                - name: PGHOST
+                  value: "database"
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  value: "postgres"
+                - name: PGDATABASE
+                  value: "postgres"
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: kanae-env
+                      key: DB_PASSWORD
+                - name: PGCONNECT_TIMEOUT
+                  value: "10"
+              resources:
+                requests:
+                  memory: 64Mi
+                  cpu: 50m
+                limits:
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
