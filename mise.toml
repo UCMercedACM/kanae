@@ -31,6 +31,8 @@ age = "1.3.2"
 
 [settings]
 experimental = true
+lockfile = true
+locked_verify_provenance = true
 pin = true
 
 
