@@ -45,6 +45,14 @@ if [[ ! -f "$ENV_FILE" ]]; then
 	sed -i "s|^KRATOS_SECRETS_COOKIE=.*|KRATOS_SECRETS_COOKIE=$(openssl rand -hex 32)|" "$ENV_FILE"
 	sed -i "s|^KRATOS_SECRETS_CIPHER=.*|KRATOS_SECRETS_CIPHER=$(openssl rand -hex 16)|" "$ENV_FILE"
 
+	sed -i "s|^KANAE_PASSWORD=.*|KANAE_PASSWORD=$(openssl rand -hex 32)|" "$ENV_FILE"
+	sed -i "s|^KANAE_MIGRATE_PASSWORD=.*|KANAE_MIGRATE_PASSWORD=$(openssl rand -hex 32)|" "$ENV_FILE"
+	sed -i "s|^POSTGRES_MONITOR_PASSWORD=.*|POSTGRES_MONITOR_PASSWORD=$(openssl rand -hex 32)|" "$ENV_FILE"
+	sed -i "s|^KRATOS_PASSWORD=.*|KRATOS_PASSWORD=$(openssl rand -hex 32)|" "$ENV_FILE"
+	sed -i "s|^KRATOS_MIGRATE_PASSWORD=.*|KRATOS_MIGRATE_PASSWORD=$(openssl rand -hex 32)|" "$ENV_FILE"
+	sed -i "s|^KETO_PASSWORD=.*|KETO_PASSWORD=$(openssl rand -hex 32)|" "$ENV_FILE"
+	sed -i "s|^KETO_MIGRATE_PASSWORD=.*|KETO_MIGRATE_PASSWORD=$(openssl rand -hex 32)|" "$ENV_FILE"
+
 	{
 		printf '\nGARAGE_RPC_SECRET=%s\n' "$(openssl rand -hex 32)"
 		printf 'GARAGE_ADMIN_TOKEN=%s\n' "$(openssl rand -base64 32)"
@@ -77,7 +85,11 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 	yq -i '.ory.keto_write_url   = "http://keto:4467"' "$CONFIG_FILE"
 	yq -i '.storage.url          = "http://garage:3900"' "$CONFIG_FILE"
 	yq -i '.storage.presign_url  = "http://localhost:3900"' "$CONFIG_FILE"
-	yq -i '.postgres_uri = "postgresql://postgres:password@database:5432/kanae"' "$CONFIG_FILE"
+
+	# shellcheck source=/dev/null
+	source "$ENV_FILE"
+	uri="postgresql://kanae:${KANAE_PASSWORD}@database:5432/kanae" \
+		yq -i '.postgres_uri = strenv(uri)' "$CONFIG_FILE"
 
 	fresh_config=1
 else
@@ -90,7 +102,7 @@ uv run --with python-dotenv python scripts/derive-webhook-tokens.py
 
 ### 4. Bring up the docker stack and wait for healthchecks.
 log "bringing up $COMPOSE_FILE"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --wait
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up --build --wait -d
 
 if [[ -f "$HURL_SECRETS_FILE" ]]; then
 	PASSWORD=$(grep '^PASSWORD=' "$HURL_SECRETS_FILE" | cut -d= -f2)
@@ -230,7 +242,7 @@ _garage_pid=$!
 		email="${!email_var}"
 		id="${IDS[$role]}"
 		docker compose -f "$COMPOSE_FILE" exec -T database \
-			psql -U "$DB_USERNAME" -d "$DB_DATABASE_NAME" -v ON_ERROR_STOP=1 -q -c \
+			psql -U kanae -d "$DB_DATABASE_NAME" -v ON_ERROR_STOP=1 -q -c \
 			"INSERT INTO members (id, name, display_name, email)
 		 VALUES ('$id', '$role', '$role', '$email')
 		 ON CONFLICT (id) DO UPDATE

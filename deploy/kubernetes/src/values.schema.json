@@ -109,6 +109,13 @@
       "additionalProperties": false,
       "properties": {
         "dbPassword": { "$ref": "#/$defs/secret" },
+        "kanaePassword": { "$ref": "#/$defs/secret" },
+        "kratosPassword": { "$ref": "#/$defs/secret" },
+        "ketoPassword": { "$ref": "#/$defs/secret" },
+        "postgresMonitorPassword": { "$ref": "#/$defs/secret" },
+        "kanaeMigratePassword": { "$ref": "#/$defs/secret" },
+        "kratosMigratePassword": { "$ref": "#/$defs/secret" },
+        "ketoMigratePassword": { "$ref": "#/$defs/secret" },
         "kratosSecretsCookie": { "$ref": "#/$defs/secret" },
         "kratosSecretsCipher": { "$ref": "#/$defs/secret" },
         "kratosWebhookMasterKey": { "$ref": "#/$defs/secret" },

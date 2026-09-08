@@ -23,7 +23,18 @@ metadata:
     kapp.k14s.io/change-group: "kanae/config"
 data:
   init.sh: |
-    {{- include "kanae.file" (list . "init.sh") | nindent 4 }}
+    {{- include "kanae.file" (list . "postgres/init.sh") | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-hba
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+data:
+  pg_hba.conf: |
+    {{- include "kanae.file" (list . "postgres/pg_hba.conf") | nindent 4 }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -113,32 +124,73 @@ spec:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
           imagePullPolicy: IfNotPresent
+          args:
+            - postgres
+            - "-c"
+            - hba_file=/etc/postgresql/pg_hba.conf
+            - "-c"
+            - max_connections=150
           env:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: kanae-env
+                  name: postgres-db
                   key: DB_PASSWORD
             - name: POSTGRES_DB
               value: kanae
             - name: POSTGRES_INITDB_ARGS
               value: "--data-checksums"
+            - name: KANAE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kanae-db
+                  key: KANAE_PASSWORD
+            - name: KRATOS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kratos-db
+                  key: KRATOS_PASSWORD
+            - name: KETO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keto-db
+                  key: KETO_PASSWORD
+            - name: POSTGRES_MONITOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-monitor-db
+                  key: POSTGRES_MONITOR_PASSWORD
+            - name: KANAE_MIGRATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kanae-migrate-db
+                  key: KANAE_MIGRATE_PASSWORD
+            - name: KRATOS_MIGRATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kratos-migrate-db
+                  key: KRATOS_MIGRATE_PASSWORD
+            - name: KETO_MIGRATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keto-migrate-db
+                  key: KETO_MIGRATE_PASSWORD
           ports:
             - name: postgres
               containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "--username=postgres"]
+              command: ["pg_isready", "--username=postgres_monitor", "--dbname=postgres"]
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
           resources:
             requests:
-              memory: 512Mi
+              memory: 1Gi
               cpu: 250m
               ephemeral-storage: 128Mi
             limits:
-              memory: 512Mi
+              memory: 1Gi
               ephemeral-storage: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
@@ -149,6 +201,9 @@ spec:
               mountPath: /var/lib/postgresql
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
+            - name: hba
+              mountPath: /etc/postgresql
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -156,6 +211,9 @@ spec:
         - name: initdb
           configMap:
             name: postgres-initdb
+        - name: hba
+          configMap:
+            name: postgres-hba
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -197,14 +255,14 @@ spec:
                 - name: PGPORT
                   value: "5432"
                 - name: PGUSER
-                  value: "postgres"
+                  value: "postgres_monitor"
                 - name: PGDATABASE
                   value: "postgres"
                 - name: PGPASSWORD
                   valueFrom:
                     secretKeyRef:
-                      name: kanae-env
-                      key: DB_PASSWORD
+                      name: postgres-monitor-db
+                      key: POSTGRES_MONITOR_PASSWORD
                 - name: PGCONNECT_TIMEOUT
                   value: "10"
               resources:

@@ -99,6 +99,13 @@ ask() {
 }
 
 generate dbPassword 32
+generate kanaePassword 32
+generate kratosPassword 32
+generate ketoPassword 32
+generate postgresMonitorPassword 32
+generate kanaeMigratePassword 32
+generate kratosMigratePassword 32
+generate ketoMigratePassword 32
 generate kratosSecretsCookie 32
 generate kratosSecretsCipher 16
 generate kratosWebhookMasterKey 32

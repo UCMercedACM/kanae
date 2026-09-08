@@ -38,8 +38,8 @@ pin = true
 
 [env]
 _.file = [{ path = "{{ config_root }}/docker/.env" }]
-DATABASE_URL = "postgres://{{env.DB_USERNAME}}:{{env.DB_PASSWORD}}@localhost:5432/{{env.DB_DATABASE_NAME}}?search_path=public&sslmode=disable"
-DEV_DATABASE_URL = "postgres://{{env.DB_USERNAME}}:{{env.DB_PASSWORD}}@localhost:5432/postgres?search_path=public&sslmode=disable"
+DATABASE_URL = "postgres://kanae_migrate:{{env.KANAE_MIGRATE_PASSWORD}}@localhost:5432/{{env.DB_DATABASE_NAME}}?search_path=public&sslmode=disable"
+DEV_DATABASE_URL = "postgres://kanae_migrate:{{env.KANAE_MIGRATE_PASSWORD}}@localhost:5432/postgres?search_path=public&sslmode=disable"
 
 # Docker
 [tasks."docker:preview"]
@@ -129,6 +129,37 @@ run = [{ task = "scripts:lint" }, { task = "scripts:format" }]
 hide = true
 run = "test -f {{ config_root }}/docker/.env"
 run_windows = "Test-Path {{ config_root }}/docker/.env"
+
+[tasks."server:generate:passwords"]
+description = "Generate the Postgres superuser and per-role passwords into docker/.env. Appends — re-run to rotate."
+dir = "{{ config_root }}"
+run = """
+  {
+    echo "DB_PASSWORD=$(openssl rand -hex 32)"
+    echo "KANAE_PASSWORD=$(openssl rand -hex 32)"
+    echo "KANAE_MIGRATE_PASSWORD=$(openssl rand -hex 32)"
+    echo "POSTGRES_MONITOR_PASSWORD=$(openssl rand -hex 32)"
+    echo "KRATOS_PASSWORD=$(openssl rand -hex 32)"
+    echo "KRATOS_MIGRATE_PASSWORD=$(openssl rand -hex 32)"
+    echo "KETO_PASSWORD=$(openssl rand -hex 32)"
+    echo "KETO_MIGRATE_PASSWORD=$(openssl rand -hex 32)"
+  } >> docker/.env
+"""
+run_windows = """
+  if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+      throw "openssl is not available on PATH. Install OpenSSL for Windows (e.g. via winget, scoop, or chocolatey) and retry."
+  }
+  @"
+  DB_PASSWORD=$(openssl rand -hex 32)
+  KANAE_PASSWORD=$(openssl rand -hex 32)
+  KANAE_MIGRATE_PASSWORD=$(openssl rand -hex 32)
+  POSTGRES_MONITOR_PASSWORD=$(openssl rand -hex 32)
+  KRATOS_PASSWORD=$(openssl rand -hex 32)
+  KRATOS_MIGRATE_PASSWORD=$(openssl rand -hex 32)
+  KETO_PASSWORD=$(openssl rand -hex 32)
+  KETO_MIGRATE_PASSWORD=$(openssl rand -hex 32)
+  "@ | Add-Content -Path docker\\.env
+"""
 
 [tasks."server:schema:plan"]
 depends = ["server:check-env"]
