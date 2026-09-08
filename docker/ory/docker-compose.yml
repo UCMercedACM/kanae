@@ -12,9 +12,7 @@ services:
     container_name: kanae_kratos_migrate
     image: oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643
     environment:
-      DB_USERNAME: ${DB_USERNAME}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+      DSN: postgres://kratos_migrate:${KRATOS_MIGRATE_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
       SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE}
       SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER}
     command: migrate sql -c /etc/config/kratos.yml --read-from-env --yes
@@ -33,9 +31,7 @@ services:
     container_name: kanae_kratos
     image: oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643
     environment:
-      DB_USERNAME: ${DB_USERNAME}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+      DSN: postgres://kratos:${KRATOS_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
 
       SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE}
       SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER}
@@ -77,9 +73,7 @@ services:
     container_name: kanae_keto_migrate
     image: oryd/keto:v26.2.0@sha256:bfdb8b9e283aedbd9e1d005c44eb1bbefd2096b2cb5b5aa0b7360b6e39c178d2
     environment:
-      DB_USERNAME: ${DB_USERNAME}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
+      DSN: postgres://keto_migrate:${KETO_MIGRATE_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
     command: migrate up -c /etc/config/keto.yml --yes
     networks:
       - default
@@ -96,9 +90,7 @@ services:
     container_name: kanae_keto
     image: oryd/keto:v26.2.0@sha256:bfdb8b9e283aedbd9e1d005c44eb1bbefd2096b2cb5b5aa0b7360b6e39c178d2
     environment:
-      DB_USERNAME: ${DB_USERNAME}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DSN: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
+      DSN: postgres://keto:${KETO_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
     command: serve -c /etc/config/keto.yml
     ports:
       - "127.0.0.1:4466:4466"

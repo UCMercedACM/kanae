@@ -1,1 +1,0 @@
-../../../../docker/ory/init.sh

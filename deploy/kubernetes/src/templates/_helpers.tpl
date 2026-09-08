@@ -11,5 +11,5 @@
 
 
 {{- define "kanae.postgresUri" }}
-{{- printf "postgresql://postgres:%s@%s:5432/kanae" .Values.secrets.dbPassword .Values.serviceNames.database }}
+{{- printf "postgresql://kanae:%s@%s:5432/kanae" .Values.secrets.kanaePassword .Values.serviceNames.database }}
 {{- end }}

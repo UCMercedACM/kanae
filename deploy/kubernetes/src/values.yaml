@@ -52,6 +52,13 @@ renderSecrets: false
 
 secrets:
   dbPassword: ""
+  kanaePassword: ""
+  kratosPassword: ""
+  ketoPassword: ""
+  postgresMonitorPassword: ""
+  kanaeMigratePassword: ""
+  kratosMigratePassword: ""
+  ketoMigratePassword: ""
   kratosSecretsCookie: ""
   kratosSecretsCipher: ""
   kratosWebhookMasterKey: ""

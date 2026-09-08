@@ -693,7 +693,7 @@ and rename it `deploy/kubernetes/init.sh`.
 
 Six files here are called `init.sh`, so always write the full path.
 `deploy/kubernetes/init.sh` generates secrets and is this phase.
-`docker/ory/init.sh` is the Postgres initdb script and is Phase 5.
+`docker/postgres-init.sh` is the Postgres initdb script and is Phase 5.
 
 Third, the smaller cleanup: real age keys, service names declared once, and the
 image pull secret, which looks trivial and is not.
@@ -710,7 +710,7 @@ the one part of the deployment you cannot read out of git.
 - [x] Replace every copy under `deploy/kubernetes/src/files/` with a symlink to
       its original. The `helm:sync` task in `mise.toml` names all seventeen and
       where each came from, so it is the checklist: `docker/ory/config/**`,
-      `docker/ory/init.sh`, `src/schema.sql`, `config.dist.yml`, and
+      `docker/postgres-init.sh`, `src/schema.sql`, `config.dist.yml`, and
       `scripts/seed/**`. Nothing moves and no Compose bind mount changes.
 - [x] Delete the `helm:sync` and `helm:check` tasks from `mise.toml`. With no
       copies there is nothing to sync and nothing to check. `helm:check` only

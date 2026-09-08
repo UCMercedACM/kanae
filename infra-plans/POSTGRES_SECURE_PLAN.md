@@ -1,0 +1,905 @@
+# Securing Postgres with roles and least privilege
+
+Status: largely applied. See the task list for what landed, what changed on the way, and what
+is deliberately deferred. The prose below is the original proposal and still uses the earlier
+names in places; the task list is the accurate record.
+
+Every consumer of our Postgres instance connects as the `postgres` superuser with the same
+password. This document says what that actually costs us, what the replacement looks like, and
+what breaks on the way there. Every privilege claim below was checked in a scratch container
+against the real images we run, `postgres:18`, `oryd/kratos:v26.2.0`, `oryd/keto:v26.2.0`, and
+`arigaio/atlas:latest`. The evidence is in the last section.
+
+## What one leaked password gets today
+
+`DB_PASSWORD` is the superuser password. It is handed to Kanae, Kratos, Keto, Atlas, the seed
+script, and the k8s checksum CronJob:
+
+- `docker/docker-compose.yml:59` sets `POSTGRES_USER: ${DB_USERNAME}` where `DB_USERNAME=postgres`
+- `docker/ory/docker-compose.yml:17` builds the Kratos DSN from the same pair
+- `deploy/kubernetes/src/templates/_helpers.tpl:14` hardcodes `postgresql://postgres:...` for Kanae
+- `deploy/kubernetes/src/templates/postgres.yml:199` runs the checksum CronJob as `PGUSER=postgres`
+
+I stood the current stack up and attacked it over the network with nothing but that password.
+All ten probes succeeded. The one that mattered most:
+
+```
+$ psql -h db -U postgres -d kanae -c \
+    "CREATE TEMP TABLE x(l text); COPY x FROM PROGRAM 'id'; SELECT l FROM x"
+uid=999(postgres) gid=999(postgres) groups=999(postgres),101(ssl-cert)
+```
+
+That is arbitrary command execution inside the database container, reachable from any container
+that holds the password. The same credential also read `postgresql.conf` off disk, dumped every
+role's SCRAM hash out of `pg_authid`, ran `ALTER SYSTEM`, and connected to the `kratos` and `keto`
+databases. So a bug in a Kanae route that leaks config is not a Kanae incident. It is a full
+cluster compromise, including every user's password hash and recovery address in Kratos.
+
+Worth being precise about the shape of this: superusers bypass all `GRANT` checks and all
+row-level security. As long as services connect as `postgres`, no amount of grant tuning does
+anything at all. Splitting the roles is the prerequisite for every other control.
+
+Two more things the container showed:
+
+The shipped `pg_hba.conf` starts with `local all all trust` and `host all all 127.0.0.1/32 trust`.
+Anything that gets code running inside the container is superuser with no password, and
+`docker exec ... psql -U postgres` needs no credential at all.
+
+Every DSN in the repo sets `sslmode=disable`.
+
+## The role model
+
+Three databases, three owners, and no service holding more than it needs.
+
+| Role | Purpose | Rights |
+| --- | --- | --- |
+| `kanae` | the API at runtime | `SELECT`, `INSERT`, `UPDATE`, `DELETE` only |
+| `kanae_migrate` | Atlas | owns the `kanae` database and everything in it |
+| `kanae_monitor` | the checksum CronJob | `CONNECT` on `postgres`, nothing else |
+| `kratos` | `kratos serve` | rows only, in the `kratos` database |
+| `kratos_migrate` | `kratos migrate sql` | owns the `kratos` database |
+| `keto` | `keto serve` | rows only, in the `keto` database |
+| `keto_migrate` | `keto migrate up` | owns the `keto` database |
+
+Three databases, `kanae`, `kratos` and `keto`, each owned by its own migrate role. Atlas computes
+its diff in the `postgres` maintenance database, which is where it points today.
+
+`postgres` stays as the break-glass superuser, but it has no password at all. `pg_hba` rejects it
+over TCP, the local socket is `trust`, so a password could never be used and would only be a
+credential to leak. `POSTGRES_PASSWORD` is needed for the one `initdb` and nothing after.
+
+### How to actually administer this
+
+Admin work splits in two, and neither half needs a superuser password.
+
+Routine work goes through the migrate role over a normal TCP connection, because it already owns
+the database. `psql`, DBeaver, TablePlus and the rest all work as `kanae_migrate`: `CREATE INDEX`,
+`ALTER TABLE`, reading and updating any table, `VACUUM`, `ANALYZE`, `REINDEX`, table sizes, and
+`pg_dump`. I checked all of those. Same for `kratos_migrate` and `keto_migrate` on their databases.
+
+Everything else is `docker exec`, or `kubectl exec` in the cluster:
+
+```
+docker exec -it kanae_postgres psql -U postgres
+kubectl exec -it database-0 -- psql -U postgres
+```
+
+That is full superuser with no credential, and it is the only path to `ALTER SYSTEM`, `CREATE ROLE`,
+untrusted extensions, reading server files, seeing every session's query, querying across databases
+in one session, and resetting a role's password if one is lost. That last one is the recovery path,
+so there is no chicken-and-egg if a service credential goes missing. The image ships `psql`,
+`pg_dump`, `pg_restore`, `vacuumdb` and `reindexdb`, so it is a real shell.
+
+One thing you genuinely lose: a GUI client can never connect as `postgres`, not even through a port
+forward or an SSH tunnel. The reject rule matches on the role name rather than the address, so
+`127.0.0.1` from inside the container is refused too. I tested that. Use the migrate role for what a
+GUI is good at and exec for the rest.
+
+The trade-off worth naming: anyone who can exec into that container is superuser without a
+credential. Access control moves from "who holds the Postgres password" to "who can exec into the
+pod", which makes the Docker socket and Kubernetes RBAC the thing guarding the database. For a small
+team that is usually a step up, since both are already managed. It should be a deliberate choice
+rather than a surprise.
+
+### Two roles I removed after testing them
+
+I originally gave `kanae_monitor` the `pg_monitor` role and added a `kanae_backup` role holding
+`pg_read_all_data`. Both were wrong, and the second was badly wrong.
+
+`pg_read_all_data` is not "read the application tables". The manual defines it as reading "all data
+(tables, views, sequences), as if having `SELECT` rights on those objects", and system catalogs are
+tables, so it reaches them too. The manual separately says `pg_authid` "must not be publicly
+readable" and that `pg_roles` exists as the safe view with the password column blanked. Those two
+statements collide. I checked on a role holding `pg_read_all_data` and nothing else, not a
+superuser: it returned `SCRAM-SHA-256$4096:...` from both `pg_authid` and `pg_shadow` for the
+`postgres` role, while a plain role got `permission denied for table pg_authid`. `pg_authid`'s own
+ACL grants to `postgres` alone, so the predefined role is overriding it. It also read Kratos
+identity rows from a second database. That is two of the baseline attacks,
+reopened by a role I had listed as contained. A backup credential with that grant is roughly as
+valuable to an attacker as the superuser password. There is also no backup job in the chart yet,
+only a `kanae-borg` Secret, so the role was being created ahead of any consumer. It is out until
+the backup job lands. To be clear about what that is: a deferral, not a design. When the job
+arrives it needs its own pass, and the shape I would start from is explicit `SELECT` on the
+application tables plus `CONNECT` on only the databases being dumped, with the same containment
+probes run against it. Nothing here proves that role is safe, because it does not exist yet.
+
+`pg_monitor` turned out to be unnecessary. The only monitoring query in the repo is
+`SELECT SUM(checksum_failures) FROM pg_stat_database`, and a role holding nothing but `CONNECT`
+reads that fine. I tested it. What `pg_monitor` adds is `pg_read_all_stats`, which unmasks
+`pg_stat_activity.query` for every session: the plain role saw one query, the `pg_monitor` role saw
+nine. Since the bootstrap runs `ALTER ROLE ... PASSWORD` with plaintext in the statement text, a
+monitoring credential that can read other sessions' queries is a credential that can harvest the
+others during a rotation. Dropped.
+
+Both of these are the same mistake, which is worth naming: I reached for a built-in role because it
+was named after the job, without checking what it actually grants.
+
+### Why the migrate role owns the database
+
+An earlier draft of this had ten roles: a `kanae_owner` that could not log in, a `kanae_migrate`
+that was a member of it, and `ALTER ROLE kanae_migrate SET role TO kanae_owner` so that every
+migration created objects as the group. That is one identity wearing two names, and it reads as
+exactly that confusing.
+
+What the split would have bought is real but unused here: you could rotate or drop the migrate
+credential without changing who owns the tables, and you could revoke the membership to freeze DDL
+outside a deploy window. There is no credential rotation automation in this repo and no deploy
+window gate, so it was paying for capabilities nothing uses. It also brought a failure mode worth
+avoiding: `ALTER ROLE ... SET role` is applied at login at `WARNING` level, so if the membership
+ever went missing the session would quietly carry on as the wrong role and the next migration would
+create tables the app has no rights on.
+
+So `kanae_migrate` owns the `kanae` database and its objects directly. Seven roles, no indirection.
+
+The one thing to know: because ownership now sits on a login role, dropping or recreating
+`kanae_migrate` means reassigning ownership first. That is a `REASSIGN OWNED BY kanae_migrate TO ...`
+away, and it is a thing you would do deliberately, not by accident.
+
+### Why the app gets four verbs and nothing else
+
+`kanae` gets `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `USAGE` on the schema. No `CREATE`, no
+`TRUNCATE`, no `REFERENCES`, no `TEMP` beyond the default. `TRUNCATE` is withheld on purpose. It is
+the one DML-adjacent verb that empties a table without leaving per-row work for point-in-time
+recovery to replay.
+
+New tables are the failure mode people hit here. If you only `GRANT ... ON ALL TABLES`, the next
+Ory upgrade adds a table, the app has no rights on it, and you find out in production. So the
+grants are attached to the owner as defaults:
+
+```sql
+ALTER DEFAULT PRIVILEGES FOR ROLE kanae_migrate IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kanae;
+```
+
+I confirmed this holds: after Atlas created the schema, `kanae` had exactly those four
+privileges on `members` with no grant statement run after the migration.
+
+### Atlas keeps using the maintenance database
+
+Atlas needs a scratch database to materialize the desired schema in before diffing it. Today
+`--dev-url` points at `postgres`, and it stays there. `kanae_migrate` gets `CONNECT` on that
+database and `CREATE` on its `public` schema, plus `pg_trgm`, which is exactly what the current
+`init.sh` already sets up and why it carries that "Apparently Atlas requires this" comment.
+
+I briefly had a dedicated `the maintenance database` database for this, on the theory that a migration credential
+should not hold `CREATE` rights next to other databases' metadata. That reasoning does not hold up.
+`CREATE` on the `postgres` database's `public` schema gives no access to `kanae`, `kratos` or
+`keto`, because `CONNECT` to those is revoked. I checked: `kanae_migrate` is refused on both Ory
+databases. The extra database bought nothing and was one more name to explain.
+
+A scratch schema inside `kanae` does not work, for the record. Atlas needs the schema to exist
+first, and once it does, `gin_trgm_ops` is not on the search path so `src/schema.sql` fails on its
+first trigram index.
+
+### Staying in the `public` schema
+
+I considered moving the app to a dedicated `app` schema and rejected it. Postgres 15 already
+removed `CREATE` on `public` from `PUBLIC`, and the plan asserts the revoke explicitly rather than
+inheriting it. The remaining gain over a locked-down `public` is small, and the cost is real:
+`search_path=public` is baked into the Atlas URLs in three compose files plus `mise.toml`, and
+every query in `src/routes/` is unqualified. Not worth it. Revisit if a second application ever shares the
+database.
+
+## The bootstrap
+
+It replaces `dockpostgres-init.sh` and works the same way: one script in
+`/docker-entrypoint-initdb.d`, run once when the volume is empty. Because it runs before anything
+else exists, every object is created by the right owner from the start. Nothing needs adopting,
+nothing needs to be idempotent, and there is no rerun to guard against. Passwords come in as
+environment variables, the way the container already gets `POSTGRES_PASSWORD`.
+
+```bash
+#!/usr/bin/env bash
+# Runs once from /docker-entrypoint-initdb.d on an empty volume.
+# Assumes POSTGRES_DB=kanae.
+set -e
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
+	-- Each service gets a role that owns its database, and a role that only
+	-- reads and writes rows.
+	CREATE ROLE kanae_migrate  LOGIN PASSWORD '${KANAE_MIGRATE_PW:?}';
+	CREATE ROLE kratos_migrate LOGIN PASSWORD '${KRATOS_MIGRATE_PW:?}';
+	CREATE ROLE keto_migrate   LOGIN PASSWORD '${KETO_MIGRATE_PW:?}';
+
+	CREATE ROLE kanae   LOGIN PASSWORD '${KANAE_PW:?}'  CONNECTION LIMIT 120;
+	CREATE ROLE kratos  LOGIN PASSWORD '${KRATOS_PW:?}';
+	CREATE ROLE keto    LOGIN PASSWORD '${KETO_PW:?}';
+	CREATE ROLE kanae_monitor LOGIN PASSWORD '${KANAE_MONITOR_PW:?}' CONNECTION LIMIT 5;
+
+	ALTER ROLE kanae         SET statement_timeout = '30s';
+	ALTER ROLE kanae_monitor SET statement_timeout = '15s';
+
+	-- The entrypoint already created kanae, owned by postgres.
+	ALTER DATABASE kanae OWNER TO kanae_migrate;
+	CREATE DATABASE kratos OWNER kratos_migrate;
+	CREATE DATABASE keto   OWNER keto_migrate;
+
+	-- CONNECT is granted to PUBLIC by default; revoking it is what keeps
+	-- kratos out of the kanae database.
+	REVOKE CONNECT ON DATABASE kanae, kratos, keto, postgres, template1 FROM PUBLIC;
+	GRANT  CONNECT ON DATABASE kanae    TO kanae,  kanae_migrate;
+	GRANT  CONNECT ON DATABASE kratos   TO kratos, kratos_migrate;
+	GRANT  CONNECT ON DATABASE keto     TO keto,   keto_migrate;
+	GRANT  CONNECT ON DATABASE postgres TO kanae_monitor;
+
+	-- Atlas needs a scratch database to compute its diff in, and uses the
+	-- maintenance database for it, as it does today. It creates and drops
+	-- objects there; it still cannot reach kratos or keto, which is what
+	-- the CONNECT revokes above are for.
+	GRANT  CONNECT ON DATABASE postgres TO kanae_migrate;
+	GRANT  CREATE  ON SCHEMA   public   TO kanae_migrate;
+EOSQL
+
+# Per database: the migrate role owns the schema, the service role only uses it.
+harden() {
+	psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$1" <<-EOSQL
+		ALTER SCHEMA public OWNER TO $2;
+		REVOKE ALL   ON SCHEMA public FROM PUBLIC;
+		GRANT  ALL   ON SCHEMA public TO $2;
+		GRANT  USAGE ON SCHEMA public TO $3;
+
+		-- Tables a future migration adds inherit these.
+		ALTER DEFAULT PRIVILEGES FOR ROLE $2 IN SCHEMA public
+		  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $3;
+		ALTER DEFAULT PRIVILEGES FOR ROLE $2 IN SCHEMA public
+		  GRANT USAGE, SELECT ON SEQUENCES TO $3;
+
+		-- PUBLIC gets EXECUTE on new functions by default. Omitting IN SCHEMA
+		-- is required here; the per-schema form of this REVOKE does nothing.
+		ALTER DEFAULT PRIVILEGES FOR ROLE $2 REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+	EOSQL
+}
+
+harden kanae kanae_migrate kanae
+harden kratos kratos_migrate kratos
+harden keto keto_migrate keto
+
+# src/schema.sql uses gin_trgm_ops. Atlas needs it in its scratch database too,
+# which is why the original init.sh created it in postgres as well.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname kanae -c 'CREATE EXTENSION pg_trgm'
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres -c 'CREATE EXTENSION pg_trgm'
+
+# Drop the superuser's password. pg_hba rejects `postgres` over TCP, and the
+# local socket is `trust`, so the password can never be used and is only a
+# credential to leak. Admin access is `docker exec ... psql -U postgres`, or
+# `kubectl exec`. POSTGRES_PASSWORD is then only needed for this one initdb.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres -c 'ALTER ROLE postgres PASSWORD NULL'
+```
+
+That is the whole thing. I booted a container with only this script and nothing else: Atlas applied
+`src/schema.sql` in 38 statements, Kratos ran its 338 migrations, Keto migrated, all 14 kanae tables
+came out owned by `kanae_migrate`, and the containment harness passed 20 of 20.
+
+An earlier draft ran four databases through one `while` loop, which forced a row for Atlas's scratch
+database granting privileges to a role that already had them. The loop was inventing work to keep
+its own shape. Three explicit calls read better and do less.
+
+The `pg_trgm` lines matter more than they look. This script is the only place in the repo that
+creates it, `src/schema.sql` does not, and without it Atlas hits the first
+`USING gin (name gin_trgm_ops)` index and fails with `operator class "gin_trgm_ops" does not exist`.
+
+One thing to know rather than plan around: an initdb script only runs on an empty volume, so a
+database that already holds data will not pick this up. If that is the case when you roll this out,
+the fix is to run the same statements by hand once, plus `ALTER ... OWNER TO` for the tables that
+already exist and belong to `postgres`. That is a one-time console session during the rollout, not
+something that needs to live in the repo.
+
+### One wrinkle if you migrate an existing cluster
+
+Extensions cannot be re-owned. `ALTER EXTENSION pg_trgm OWNER TO kanae_migrate` is a parse error, and
+`REASSIGN OWNED BY postgres` is refused outright. So on a database that already exists, `pg_trgm`
+stays owned by `postgres`, along with anything Kratos installed during its migrations.
+
+Day to day that costs nothing, and it is why the app's `%` queries keep working. It bites only on a
+major-version upgrade, where `ALTER EXTENSION ... UPDATE` needs the extension's owner. Accept it and
+treat extension updates as a break-glass operation, or drop and recreate the extension as the owner
+during a maintenance window, which rebuilds the four trigram indexes. I would accept it.
+
+On a fresh volume none of this applies: the init script creates `pg_trgm` as the superuser
+alongside everything else, which is what the entrypoint runs as anyway.
+
+### Limits that need arithmetic
+
+Two of these settings look like round numbers and are not.
+
+`CONNECTION LIMIT 120` comes from the pool, not from taste. `src/core.py:1442` calls
+`asyncpg.create_pool(dsn=..., init=init)` with no `min_size` or `max_size`, so it takes asyncpg's
+defaults of 10 and 10, and `min_size` connections open eagerly at startup. Granian forks one
+process per worker, each running its own lifespan and its own pool. `docker/example.env` ships
+`KANAE_WORKERS=8`, so the app asks for 80 connections before it serves a request. My first draft of
+this plan said 40, which would not have degraded under load, it would have failed to boot with
+`FATAL: too many connections for role "kanae"`. Fix the arithmetic at the source by pinning
+`max_size` in `create_pool`, then set the limit from `workers × max_size` with headroom. Until
+then, 120 covers the 8-worker default with room for the migrator.
+
+While you are in there: the server's `max_connections` is still the stock 100. Eight Kanae workers
+at 80, plus Kratos and Keto at `max_conns=20` each, already oversubscribes it. That is true today
+and is not caused by this plan, but per-role limits will turn a vague failure into a clear one.
+
+`idle_in_transaction_session_timeout` is deliberately not set, and this is the change I most
+nearly shipped by accident. `src/routes/events.py:357` and `src/routes/projects.py` both hold an
+open transaction across two `await request.app.ory.grant(...)` calls, which are HTTP requests to
+Keto. `core.py:1443` builds the session as a bare `aiohttp.ClientSession()`, so those requests
+inherit aiohttp's 300s default timeout. A 60s idle-in-transaction timeout would let Postgres kill
+the transaction while Keto is still being waited on: the event rows roll back, Keto keeps the
+relation tuples it already accepted, and the two stores disagree. Set it only after the session
+gets an explicit timeout comfortably below it. A 10s `ClientTimeout` and a 60s database timeout
+would be a sound pair, but that is an application change and belongs in its own commit.
+
+The enum loop matters for us specifically. `src/schema.sql` declares seven enum types, and Atlas
+needs to own them to alter them later.
+
+Note there is no matching `GRANT EXECUTE ... TO :"app"`. I had one, and it undid the point: the
+app could still call any function the owner created, `SECURITY DEFINER` ones included, which is the
+exact escalation the revoke exists to stop. `src/schema.sql` defines no functions today, so the
+strict version costs nothing. When a function does get added, grant `EXECUTE` on that function to
+that role, deliberately. I checked what the app still needs and it is all unaffected: the `%`
+operator, `similarity()`, `gen_random_uuid()`, the generated `media.kind` column, and trigram index
+scans all keep working, because those functions belong to `pg_catalog` or to `postgres` rather than
+to `kanae_migrate`.
+
+The missing `IN SCHEMA` on the function line is not a typo, and it is not my discovery either. Write
+`ALTER DEFAULT PRIVILEGES FOR ROLE kanae_migrate IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM
+PUBLIC` and Postgres reports `ALTER DEFAULT PRIVILEGES`, stores no row in `pg_default_acl`, and
+changes nothing. I hit it while testing, then found the manual documents it with almost exactly this
+example: per-schema default privileges are added to the global defaults, so "you cannot revoke
+privileges per-schema if they are granted globally", and the manual's own sample of the mistake is
+the `public` schema plus `REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`. Drop `IN SCHEMA` and the row
+appears as `{kanae_migrate=X/kanae_migrate}`. It fails silently in the direction that looks secure,
+which is the worst way for it to fail.
+
+This does not break trigram search. `src/routes/projects.py` leans on the `%` operator, and
+`pg_trgm`'s functions stay owned by `postgres` even when a non-superuser installs it, because a
+trusted extension's script runs as the bootstrap superuser. The default-privilege change is scoped
+to the owner role, so it never touches them. I checked the `%` query still returns from `kanae`
+after the revoke.
+
+## Locking down pg_hba
+
+This ships in two revisions, and the order is not optional. Revision one, alongside the role
+cutover:
+
+```
+# TYPE   DATABASE  USER      ADDRESS  METHOD
+local    all       all                trust
+host     all       postgres  all      reject
+host     all       all       all      scram-sha-256
+```
+
+Revision two, in the same deploy that turns `ssl=on`:
+
+```
+# TYPE   DATABASE  USER      ADDRESS  METHOD
+local    all       all                trust
+host     all       postgres  all      reject
+hostssl  all       all       all      scram-sha-256
+```
+
+```yaml
+command: ["-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+```
+
+I had these as one file and one rollout step, and it was an outage. The manual is explicit: a
+`hostssl` record is "ignored except for logging a warning that it cannot match any connections"
+unless the `ssl` parameter is on. And records are matched in order with "no fall-through or backup",
+so with `hostssl` as the only TCP rule and `ssl` still off, there is nothing left to match. Every consumer loses TCP access at once, not just the superuser,
+and `sslmode=require` does not save them either. The failure text is
+`no pg_hba.conf entry for host "...", user "...", no encryption`. Three of the four reviewers who
+read this plan caught it independently, which is a fair signal about how easy it is to miss. So
+`hostssl` only lands once `ssl=on` is already live in the same change.
+
+Mounting the file beats writing it from an init script, and the reason is ordering. Init scripts
+only run on an empty volume, and the entrypoint appends its own `host all all all scram-sha-256`
+before they run. `pg_hba` is first match wins, so a `reject` line appended afterwards can never
+fire. A mounted file also applies to the volume we already have.
+
+The `reject` line is the cheap win. The superuser becomes unreachable over TCP even with the right
+password, from any container, so a leaked break-glass credential is not remotely exploitable. I
+verified it rejects `postgres` over both plaintext and TLS while normal roles connect fine.
+
+One caveat on that line: it is a denylist keyed to a role name. It is right for today's single
+superuser and it fails open for any future role created with `SUPERUSER`, or granted
+`pg_execute_server_program` or `pg_read_server_files`. If more privileged roles ever appear, invert
+it into an allowlist that names the service roles and rejects everything else. The `USER` column
+takes a `+groupname` form that matches any member of a role, which makes that allowlist short.
+
+I also dropped `local all all scram-sha-256`, which was in my first draft. The argument for it was
+weak to begin with, since anyone who can `docker exec` into the container can read the data files
+directly. The argument against turned out to be concrete. The compose healthcheck, the seed script
+at `scripts/seed/init.sh:89`, and `tests/integration/init.sh:233` all reach Postgres over the local
+socket with no password, and none of them can prompt. Making them work would mean putting a live
+service credential inside the database container, which is worse than what it fixes. `trust` on the
+local socket stays. Use `peer` if you want the tighter version, but do not pay a credential to get
+there.
+
+## TLS
+
+Every DSN in the repo says `sslmode=disable`. With `hostssl` above plus:
+
+```yaml
+command:
+  - "-c"
+  - "hba_file=/etc/postgresql/pg_hba.conf"
+  - "-c"
+  - "ssl=on"
+  - "-c"
+  - "ssl_cert_file=/tls/server.crt"
+  - "-c"
+  - "ssl_key_file=/tls/server.key"
+```
+
+plaintext is refused outright and sessions negotiate TLS 1.3. One trap that cost me a container:
+Postgres refuses to start if the key file is not owned by root or the database user, and it also
+rejects a key that is group- or world-readable. A k8s Secret mounts root-owned at `defaultMode`
+0644, which fails the second check.
+
+The manual's rule is `0600` when the key is owned by the database user, or `0640` when it is owned
+by root, and in the root case the server's user must be a member of the group that can read it. The
+server refuses to start if the permissions are more liberal than that.
+
+In the StatefulSet that means a Secret plus a mount, and the existing `securityContext` already
+does the work:
+
+```yaml
+volumes:
+  - name: tls
+    secret:
+      secretName: kanae-postgres-tls
+      defaultMode: 0640
+volumeMounts:
+  - name: tls
+    mountPath: /tls
+    readOnly: true
+```
+
+`postgres.yml` already sets `fsGroup: 999`, so the mounted files come out group-owned by the
+postgres gid, which satisfies the root-owned-plus-group-read case exactly. That is currently true by
+luck rather than by intent, so it is worth a comment in the manifest.
+
+### Let's Encrypt is the wrong tool here
+
+Worth stating plainly, because it is the first thing people reach for. Let's Encrypt only issues
+certificates for public DNS names it can validate. Every client in this repo connects to
+`database`, which is a Docker service name and a Kubernetes ClusterIP name. It resolves only inside
+your own network, so there is nothing for Let's Encrypt to check and it will never issue for it.
+
+There is one path that technically works: buy or reuse a real domain, get a certificate for
+something like `db.internal.yourdomain.com` over DNS-01 validation (which does not require exposing
+the server), and point every client at that name. But look at what it costs. Ninety-day
+certificates, so renewal automation you must not let break. DNS provider credentials living in the
+cluster. Split-horizon DNS so the public name resolves to a private address. A reload hook wired
+into Postgres. All of that to protect traffic that never leaves a Docker bridge or a single
+Kubernetes node.
+
+A private CA is less work, not more, and it is the standard answer for service-to-service TLS.
+Three `openssl` commands produce a CA and a server certificate valid for ten years, with
+`subjectAltName=DNS:database,DNS:localhost` so it matches the names actually in use. Mount the
+server key and certificate into the database, mount the CA certificate into each client, done. No
+renewal treadmill and no external dependency.
+
+I ran it end to end. A ten-year certificate for `database`, `ssl=on`, `hostssl` in pg_hba, and both
+`psql` and asyncpg connecting at `sslmode=verify-full` with the CA: TLS 1.3, connection accepted.
+Without the CA the client refuses to connect, and plaintext is rejected by pg_hba. asyncpg reads
+`sslmode` and `sslrootcert` straight out of the DSN, so this is a `postgres_uri` change in
+`config.yml` and nothing in `src/core.py`.
+
+Keep the CA key offline, not in the cluster. It signs once and is not needed again until you add a
+host. If cert-manager ever lands for other reasons its CA issuer does the same job with automatic
+rotation, and that is a fine reason to switch, but it is not a prerequisite.
+
+Clients should end at `sslmode=verify-full` with the CA mounted. `require` alone encrypts and
+authenticates nothing, so it stops passive sniffing and not an attacker who can answer for the
+`database` service name.
+
+## What changes where
+
+`DB_USERNAME` is the thing to be careful with. Nineteen files read it or hardcode `postgres`, and
+every DSN in the repo is built as `postgres://${DB_USERNAME}:${DB_PASSWORD}@...`. Deleting the
+variable turns those into `postgres://:pw@...` and every service fails to connect. So the rule is:
+each DSN gets its role name written in literally, and the password comes from a per-role variable
+next to it. No `DB_USERNAME` survives, and no new `*_USER` variables are introduced either. One
+role per connection string, spelled out, so grepping for a role finds every place it is used.
+
+| File | Change |
+| --- | --- |
+| `docker/example.env` | drop `DB_USERNAME`; add `KANAE_APP_PW`, `KANAE_MIGRATOR_PW`, `KRATOS_APP_PW`, `KRATOS_MIGRATOR_PW`, `KETO_APP_PW`, `KETO_MIGRATOR_PW`, `KANAE_MONITOR_PW`, `KANAE_BACKUP_PW`, `POSTGRES_SUPERUSER_PW` |
+| `docker/.env` | same, local and gitignored, has to be regenerated by hand |
+| `docker/docker-compose.yml` | `database` keeps `POSTGRES_USER: postgres` with the superuser password; `migrate` uses `kanae_migrate` with `--dev-url` on `the maintenance database`; `kanae` uses `kanae`; healthcheck uses `kanae_monitor`; publish on `127.0.0.1:5432:5432` |
+| `docker/docker-compose.dev.yml` | same `database` and healthcheck changes |
+| `docker/docker-compose.test.yml` | same, plus the `migrate` service's `--url` and `--dev-url` |
+| `docker/docker-compose.seed.yml` | `DB_USER` becomes `kanae`; seeding writes application rows |
+| `docker/docker-compose.web.yml` | `DB_USER` becomes `kanae` |
+| `docker/ory/docker-compose.yml` | `kratos-migrate` and `keto-migrate` get the migrator DSNs, `kratos` and `keto` the app DSNs |
+| `docker/ory/docker-compose.prod.yml` | same split |
+| `docker/ory/config/kratos/kratos.yml` | the `dsn:` on line 4 is currently shadowed by the `DSN` env var; update it or delete it rather than leaving a stale superuser DSN in the file |
+| `docker/ory/config/kratos/kratos.prod.yml` | same |
+| `docker/ory/config/keto/keto.yml` | same |
+| `docker/postgres-init.sh` | replaced by the bootstrap above; it currently creates the Ory databases as superuser-owned |
+| `config.dist.yml:177` | `postgres_uri` switches to `kanae` |
+| `deploy/docker/deploy.dist.env` and `.deploy.env` | drop `DB_USERNAME`, add the per-role passwords |
+| `deploy/docker/docker-compose.yml` | same as the dev compose, and remove the `ports:` block on `database` entirely since every consumer is on `db_bridge` |
+| `deploy/kubernetes/src/templates/_helpers.tpl:14` | `postgresUri` switches from `postgres:` to `kanae:` with its own secret key |
+| `deploy/kubernetes/src/templates/secrets.yml` | see below |
+| `deploy/kubernetes/src/templates/postgres.yml` | checksum CronJob runs as `kanae_monitor`; mount `pg_hba.conf` and the TLS pair |
+| `deploy/kubernetes/dist/**` | generated. `mise run k8s:render` picks these up, and `k8s:render:check` fails CI if you forget |
+| `scripts/seed/vars.env:9` and `scripts/seed/init.sh:36` | `DB_USER` becomes `kanae`; `DB_PASSWORD` becomes the per-role variable |
+| `tests/integration/init.sh:80,233` | the hardcoded `postgres:password` DSN and the `psql -U "$DB_USERNAME"` insert both move to `kanae` |
+| `mise.toml:41-42` | `DATABASE_URL` and `DEV_DATABASE_URL` move to `kanae_migrate`, dev URL to `the maintenance database` |
+| `deploy/docker/init.sh:160` | generates a single `DB_PASSWORD`; extend to the per-role set |
+| `deploy/kubernetes/init.sh:101` | same, `generate dbPassword 32` becomes one call per role |
+| `deploy/kubernetes/src/values.yaml`, `secrets.dist.yml`, `secrets.sops.yml` | add the per-role keys; sops file needs re-encrypting |
+| `deploy/kubernetes/src/values.schema.json` | `additionalProperties: false` on `secrets` means new keys fail validation until the schema declares them |
+
+On the k8s secrets, split by consumer rather than adding keys to one blob. Today `kanae-env` holds
+`DB_PASSWORD` alongside the Kratos cookie and cipher secrets, so any pod that mounts it holds
+everything. Three Secrets, `kanae-db`, `kratos-db`, and `keto-db`, each with the two credentials
+its pods need, means a compromised Kanae pod never sees a Kratos credential. That is the whole
+point of the role split, and keeping one Secret would undo it at the k8s layer. The superuser
+password goes in a fourth Secret that no Deployment mounts.
+
+The Kanae Deployment has not landed in the chart yet, so doing this before it does means no pod
+spec has to be rewritten later.
+
+The database is currently attached to both the `default` and `db_bridge` networks, so Mailpit and
+Garage can reach it for no reason. Putting it on `db_bridge` alone, with only Kanae, Atlas, Kratos,
+and Keto joining, is free segmentation.
+
+## Verifying it worked
+
+The design has one silent failure mode worth a check.
+`ALTER ROLE ... SET role` is applied at login through a path whose error level is `WARNING`. If the
+group membership is ever missing, the session logs a warning nobody reads and proceeds as
+`kanae_migrate`. Atlas then creates tables owned by the credential, `ALTER DEFAULT PRIVILEGES FOR
+ROLE kanae_migrate` never fires, and `kanae` has no rights on the new tables. You find out in
+production. I reproduced it: after revoking the membership, login succeeded with
+`WARNING: permission denied to set role "kanae_migrate"`, and the DDL then failed with
+`no schema has been selected to create in`, which points at nothing useful.
+
+So assert the invariant after every migration, in CI:
+
+```sql
+-- Must return zero rows.
+SELECT c.relname, pg_get_userbyid(c.relowner) AS owner
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+  AND (pg_get_userbyid(c.relowner) <> 'kanae_migrate'
+       OR NOT has_table_privilege('kanae', c.oid, 'SELECT,INSERT,UPDATE,DELETE'));
+```
+
+One query catches a missing `SET role`, a half-applied bootstrap, and a table that slipped past the
+default privileges.
+
+## Rollout
+
+Each phase leaves a working system. Step 6 is the one that did not, in the first draft.
+
+1. Land the new `init.sh` and the verifier query.
+2. Recreate staging from an empty volume so the script runs. Services keep using `postgres` for
+   now, so nothing changes behaviourally. Run the verifier.
+3. Move Kratos and Keto to their four roles. Ory is the risky pair, so it goes first while the
+   superuser path still exists as a fallback.
+4. Move Atlas to `kanae_migrate` with `the maintenance database`, then Kanae to `kanae`.
+5. Move the checksum CronJob to `kanae_monitor`.
+6. Swap in pg_hba revision one. Superuser over TCP dies here, once nothing needs it.
+7. TLS and pg_hba revision two in the same deploy, then `sslmode=verify-full` on the clients.
+8. Rotate the old `DB_PASSWORD` and cut it down to break-glass.
+
+Rolling back is a `SET` of DSNs plus reverting `pg_hba`, up until step 8.
+
+Step 8 is not a one-liner, which is how I first wrote it. Kubernetes does not re-inject env vars
+into running containers when a Secret changes, and every consumer reads its credential through
+`secretKeyRef`. Changing the password in the database without rolling the pods locks out everything
+still holding the old value. The order is: write the new Secret, roll each Deployment and
+StatefulSet in dependency order, confirm every pod is on the new credential, and only then
+invalidate the old password. Compose needs the same care, a `down` and `up` on every container that
+reads the changed variable. If you want a grace window instead, `ALTER ROLE ... VALID UNTIL` on a
+second credential is the usual trick.
+
+## Tasks
+
+Grouped by what they touch. The rollout above says when each group lands; this says what the work
+actually is. Names below are the ones that shipped, which differ from the prose above in two places:
+`kanae_monitor` became `postgres_monitor`, and the `*_PW` variables became `*_PASSWORD`.
+
+### Roles and ownership
+
+- [x] Rewrite the bootstrap as `docker/postgres/init.sh`, picked up by the k8s ConfigMap through
+      the symlink at `deploy/kubernetes/src/files/postgres/init.sh`
+- [x] Pass the per-role passwords into the database container's environment, in compose and in the
+      StatefulSet
+- [x] If the target cluster already has data, run the equivalent statements by hand once, plus
+      `ALTER ... OWNER TO` for the existing tables
+
+### Credentials and secrets
+
+- [x] `docker/example.env` and `docker/.env`: add `KANAE_PASSWORD`, `KANAE_MIGRATE_PASSWORD`,
+      `POSTGRES_MONITOR_PASSWORD`, `KRATOS_PASSWORD`, `KRATOS_MIGRATE_PASSWORD`, `KETO_PASSWORD`,
+      `KETO_MIGRATE_PASSWORD`. `DB_USERNAME` stays after all: no DSN is built from it any more, and
+      it only names the bootstrap superuser for `POSTGRES_USER` and the readiness probe
+- [x] `deploy/docker/deploy.dist.env`: same
+- [x] `deploy/docker/init.sh` and `deploy/kubernetes/init.sh`: generate one secret per role
+- [x] `values.yaml`, `values.schema.json`, `secrets.dist.yml`, `secrets.sops.yml`: add the keys and
+      re-encrypt. The schema has `additionalProperties: false`, so it fails validation until updated
+- [x] Split `kanae-env` into one Secret per role rather than the three this plan proposed:
+      `postgres-superuser-db`, `kanae-db`, `kanae-migrate-db`, `kratos-db`, `kratos-migrate-db`,
+      `keto-db`, `keto-migrate-db`, `postgres-monitor-db`, each holding exactly one key. `kanae-env`
+      keeps only the non-database secrets
+- [x] Add a `server:generate:passwords` mise task that generates the whole set into `docker/.env`
+
+### Service wiring
+
+Every DSN gets its role name written in literally. No `DB_USERNAME`, no new `*_USER` variables.
+
+- [x] `docker/docker-compose.yml`, `.dev.yml`, `.test.yml` (including the Atlas `--url`/`--dev-url`)
+- [x] `docker/docker-compose.seed.yml` and `.web.yml`: `DB_USER` becomes `kanae`
+- [x] `docker/ory/docker-compose.yml` and `.prod.yml`: migrator DSNs for migrate, app DSNs for serve
+- [x] `docker/ory/config/kratos.yml`, `kratos.prod.yml`, `keto.yml`: the `dsn:` line
+- [x] Drop the now-unreferenced `DB_USERNAME`/`DB_PASSWORD` from all eight Ory containers
+- [x] `deploy/docker/docker-compose.yml`
+- [x] `deploy/kubernetes/src/templates/_helpers.tpl`: `postgresUri` to `kanae`
+- [x] `deploy/kubernetes/src/templates/postgres.yml`: CronJob to `postgres_monitor`, and the
+      `readinessProbe` off `postgres` while we are in there
+- [x] `config.dist.yml`
+- [x] `mise.toml`: `kanae_migrate`, dev URL on the maintenance database
+- [x] `scripts/seed/vars.env` and `scripts/seed/init.sh`
+- [x] `tests/integration/init.sh`
+- [x] Re-render `deploy/kubernetes/dist/` with `mise run k8s:render`
+
+### Network
+
+- [x] Ship pg_hba revision one via `-c hba_file=`, from `docker/postgres/pg_hba.conf`, mounted in
+      compose and rendered into a `postgres-hba` ConfigMap for k8s. It also tightens the loopback
+      rules initdb ships as `trust`, which the revision in this plan left alone
+- [x] Bind the dev port to `127.0.0.1:5432:5432`; drop the `ports:` block in `deploy/docker`
+- [ ] Put `database` on `db_bridge` only, not `default`. Deferred deliberately; every database
+      client is already on `db_bridge`, so this is a one-line change whenever it is wanted
+- [ ] Add a k8s NetworkPolicy: default deny, then allow the app, migrators, and CronJob. Deferred
+      to kubescape
+
+### TLS
+
+Lands after the roles are in, not before. All deferred: traffic is loopback in compose and stays
+inside the cluster in Kubernetes, so this buys little against what it costs to run.
+
+- [ ] Generate the private CA and a server cert for `DNS:database,DNS:localhost`
+- [ ] Store `ca.key` offline; ship `server.crt`/`server.key` as a Secret at `defaultMode: 0640`
+- [ ] Mount them, add `ssl=on` and the cert paths to the `command:`
+- [ ] pg_hba revision two (`host` to `hostssl`) in the *same* deploy as `ssl=on`
+- [ ] Move clients to `sslmode=verify-full` with the CA mounted
+
+### App changes these depend on
+
+- [x] Raise `max_connections` above the stock 100. It is now 150, set through the server `command:`
+      in all four compose files and the StatefulSet `args:`, with the Postgres container's memory
+      limit raised from 512Mi to 1Gi to match. 512Mi could not have carried even the stock 100
+- [ ] Pin `min_size`/`max_size` in `create_pool` (`src/core.py:1442`). Measured on the running test
+      stack: eight workers held 53 connections while never exceeding 9 concurrently non-idle, and
+      3 under sustained load. `min_size=1, max_size=10` is the sizing that follows
+- [ ] Give the `aiohttp.ClientSession` an explicit timeout (`src/core.py:1443`) before adding
+      `idle_in_transaction_session_timeout`, or the Keto calls inside open transactions will break
+
+The `CONNECTION LIMIT` arithmetic in this plan is now a measurement rather than a guess. `kanae` is
+85, which is 8 workers times a `max_size` of 10 plus 5 headroom, and it binds: at 85 connections the
+86th is refused with `too many connections for role "kanae"`. The previous 120 sat above the
+server's own ceiling and could never fire. The `statement_timeout` settings this plan proposed were
+dropped, as was the second, since neither defended a case the code actually has.
+
+### Verification
+
+Deferred. Everything below was checked by hand in throwaway containers, so none of it is
+repeatable today.
+
+- [ ] Land the ownership and grants query as a script
+- [ ] Run it in CI after every migration
+- [ ] Land the baseline and containment harnesses so the checks are rerunnable
+
+## What this breaks
+
+The k8s checksum CronJob at `deploy/kubernetes/src/templates/postgres.yml:199` connects as
+`PGUSER=postgres` over TCP, which the `reject` line kills. Move it to `kanae_monitor`. Its
+`readinessProbe` is `pg_isready`, which never authenticates, so that is unaffected. The compose
+healthcheck is fine as long as the local socket stays `trust`, which is why it does.
+
+`mise.toml:41` and `:42` are the local `db:apply` and `db:plan` workflow. Both build a superuser DSN
+from `DB_USERNAME`, both go over TCP, and `DEV_DATABASE_URL` points `--dev-url` at the `postgres`
+maintenance database, which loses `CONNECT` for `PUBLIC` in the bootstrap. Two separate reasons this
+stops working. It moves to `kanae_migrate` and `the maintenance database`.
+
+`tests/integration/init.sh:233` writes into `members` as `psql -U "$DB_USERNAME"` through
+`docker compose exec -T`, and line 80 hardcodes `postgresql://postgres:password@database:5432/kanae`
+outright. The script runs `set -euo pipefail`, so once `DB_USERNAME` is gone from the env it aborts
+on the unbound variable before it reaches Postgres. It should use `kanae`, which already holds
+the `INSERT` and `UPDATE` it needs.
+
+`scripts/seed/init.sh` has the same shape. `vars.env:9` defaults `DB_USER=postgres` and line 36
+reads a single `DB_PASSWORD`; both need per-role values, and the writes it performs are covered by
+`kanae`'s four verbs. I checked the `sudo_grants` upsert specifically, since
+`INSERT ... ON CONFLICT DO UPDATE` needs both `INSERT` and `UPDATE`, and it does hold.
+
+The app's connection math, covered above, is the one that fails at boot rather than at a boundary.
+
+`deploy/kubernetes/src/values.schema.json` sets `"additionalProperties": false` on the `secrets`
+object. Adding password keys to `secrets.yml` without editing the schema makes `helm template` fail
+validation, so the schema, `values.yaml`, `secrets.dist.yml`, and the sops-encrypted
+`secrets.sops.yml` all move together or none of them do.
+
+## What is still open after this
+
+Least privilege is not the same as safe, and three things stay open.
+
+A compromised `kanae_migrate` can bait the break-glass superuser. It can `SET ROLE kanae_migrate`,
+and the owner holds `ALL` on schema `public`, so it can create a function or a table whose name
+shadows an unqualified reference. The next time an operator opens a break-glass superuser session
+against the `kanae` database and types an unqualified query, the shadowing object runs with
+superuser rights, and `COPY FROM PROGRAM` is back. The `reject` line stops an attacker from using
+the superuser; it does not stop them from setting a trap for one. The mitigation is procedural:
+break-glass sessions connect to the `postgres` database, not to an application database, and run
+`SET search_path = pg_catalog` before anything else. Worth writing on the runbook rather than
+trusting to memory.
+
+There is no NetworkPolicy in the chart. `deploy/kubernetes/src/templates/` holds `postgres.yml`,
+`valkey.yml`, `secrets.yml`, and `_helpers.tpl`, and the database is a ClusterIP Service on 5432 in
+a shared namespace. So the compose half of the segmentation story lands and the Kubernetes half
+does not: any pod in the namespace can still reach 5432. A default-deny policy with explicit
+allowances for the app, the migrators, and the CronJob is the missing piece, and it is a separate
+change rather than something to bolt onto this one.
+
+`PUBLIC` keeps `TEMP` on each database. Removing it is defensible, but Ory's use of temp tables
+across future migrations is not something I tested, and a broken login flow is worse than a
+temp-file DoS from a role that already authenticated.
+
+## Deliberate omissions
+
+No row-level security. One role owns every row in `kanae` and there is no second tenant, so RLS
+would add policy surface and no isolation. It becomes worth it the day a role should see a subset
+of rows.
+
+No separate read-only role for the API. Kanae's routes both read and write and share one pool, so
+splitting would mean two pools and a per-route decision about which to use. Real, but it is
+application work, not database work.
+
+Revoking `CONNECT` on the maintenance databases does not hide database or role names.
+`pg_database` and `pg_roles` are cluster-shared and readable from inside `kanae` regardless. I
+checked. It closes a foothold, not an information leak, and I would rather say so than oversell it.
+
+## Is this more machinery than the problem needs
+
+Worth asking directly, because the answer is partly yes. Nine of the ten baseline attacks are
+consequences of superuser-ness alone, and every one of them closes the moment services stop
+connecting as `postgres`. That is six login roles and one `reject` line. The tenth, the passwordless
+local socket, is not closed by any of this and is deliberately left open. The owner groups,
+`the maintenance database`, and the default-privilege plumbing close nothing on that list.
+
+What the owner groups buy is protection against a class of problem the list does not cover:
+a migration credential that can drop the schema it migrates, and ownership that survives credential
+rotation. Both are real, and neither has a consumer in this repo today. There is no rotation
+automation, and no deploy-window gate on migrations. So that layer is paying now for capabilities
+nothing uses yet, and it brings the `SET role` failure mode that needs a CI verifier to catch.
+
+I would still keep it, for one reason: the ownership decision is the expensive one to reverse.
+Changing which role owns a table on a live database, after Atlas and 338 Kratos migrations have run
+against it, is a maintenance window. Adding roles later is not. Structural decisions that are cheap
+now and expensive later are the ones worth making early, and this is one.
+
+That argument is weaker than it looks in one place, and it is worth saying so. Extensions cannot be
+re-owned, so on a cluster upgraded in place the owner roles never fully own their database's
+objects, and the "ownership survives credential rotation" claim holds for tables, sequences, types,
+and routines but not for extensions. If that exception bothers you more than it bothers me, it is a
+fair reason to prefer the smaller version below.
+
+But if you want the smaller version, it is coherent and I would not argue hard against it: six
+login roles, each migrator owning its own database directly, no owner group, no `SET role`, keep
+`ALTER DEFAULT PRIVILEGES FOR ROLE <migrator>`, keep the `CONNECT` revokes, keep the `reject` line
+and the network changes. That is roughly a third of the SQL and it passes the same containment
+probes. The verifier is still worth having.
+
+## Evidence
+
+Everything above was run against real containers, with two harnesses sharing the same probe set.
+The baseline harness runs ten probes and nine passed on the first attempt; the tenth was a
+mis-written assertion of mine, not a control that held, and it passed once I fixed the regex. So
+the honest score against the current configuration is ten for ten. The containment harness covers
+the same ground in 20 assertions, because several probes split into a positive and a negative case
+and the four maintenance-database connections are asserted separately.
+
+Baseline, current configuration, attacking as `postgres` with the shared password. All ten
+succeeded:
+
+| Probe | Result |
+| --- | --- |
+| app credential is superuser | succeeded |
+| enumerate every database | succeeded |
+| connect to `kratos` and `keto` | succeeded |
+| `COPY FROM PROGRAM` command execution | succeeded, `uid=999(postgres)` |
+| `pg_read_file('postgresql.conf')` | succeeded |
+| read SCRAM hashes from `pg_authid` | succeeded |
+| `ALTER SYSTEM` | succeeded |
+| `DROP SCHEMA` in another service's database | succeeded |
+| superuser reachable over TCP | succeeded |
+| passwordless superuser on the local socket | succeeded |
+
+After the plan, the same ground as `kanae` unless noted, 20 of 20 assertions passed:
+
+| Probe | Result |
+| --- | --- |
+| superuser over TCP | rejected by `pg_hba` |
+| superuser on local socket | still works, break-glass intact |
+| app is superuser | false |
+| app DML | works |
+| connect to `kratos` / `keto` / `postgres` / `template1` | `permission denied for database` |
+| `COPY FROM PROGRAM` | permission denied |
+| `pg_read_file` | permission denied |
+| `pg_authid` | permission denied |
+| `ALTER SYSTEM` | permission denied |
+| `CREATE TABLE` / `DROP TABLE` / `TRUNCATE` | denied |
+| `CREATE ROLE` / `CREATE EXTENSION` | denied |
+| monitor reads checksum counters | works |
+| monitor reads table rows | denied |
+| `statement_timeout` on app | 30s |
+
+Functional checks on the real images:
+
+- Atlas applied `src/schema.sql` as `kanae_migrate` against `the maintenance database`. 38 statements, 14 tables,
+  all owned by `kanae_migrate`, and `kanae` picked up its four privileges with no grant run
+  afterwards.
+- Atlas does not disturb the grants. I ran it four times: the initial apply, a no-op resync, an
+  added index, and a brand new table. `kanae` kept exactly its four privileges on `members`
+  throughout, and the new table came back owned by `kanae_migrate` with those same four privileges
+  already attached. The app inserted into it with no grant statement in between. This is the part
+  of the design I most expected to break.
+- Keto applied 4 migrations as `keto_migrate`, then served on `keto`. Writing and reading a
+  relation tuple both returned 201 and the row. Zero permission errors in its log.
+- Kratos applied 338 migrations as `kratos_migrate`, then served on `kratos`. Health ready,
+  identity created through the admin API across four tables, login flow persisted. Zero permission
+  errors in its log.
+- `pg_trgm` installed as `kanae_migrate`. `file_fdw` refused.
+- Rerunning the whole bootstrap on the populated cluster left the data intact and both Ory services
+  live, and containment still passed in full. A rerun does not rotate credentials: the app kept
+  connecting on its existing password, and only a run with the rotate flag set changed it.
+- The final pass re-extracted the SQL from this document and ran it on clean clusters, rather than
+  trusting the earlier harness copy that had drifted from the text. On the first: Atlas applied 38
+  statements, Keto migrated and served, Kratos applied 338 migrations and served, and an identity
+  and a relation tuple both came back 201, with zero permission errors in either Ory log. On the
+  second, Atlas plus the containment harness, 20 of 20.
+- A `SECURITY DEFINER` function created by `kanae_migrate` is refused to `kanae`
+  (`permission denied for function`), while the app's trigram operator, `similarity()`,
+  `gen_random_uuid()`, and the generated `media.kind` column all still work.
+
+The two Ory results are the ones I would have bet against. A DML-only runtime role is the part of
+this plan most likely to fail at the next upgrade, so it is worth rerunning these checks when
+Kratos or Keto is bumped.
+
+### What is not proven
+
+Naming these is more useful than a clean scorecard.
+
+The fresh-`initdb` path was never run end to end with the mounted `hba_file` and `ssl=on` together.
+I tested the mounted hba on a fresh container and TLS on a separate one, but not the combination
+alongside the entrypoint's own temporary-server startup, which is exactly the kind of interaction
+that bites.
+
+The connection-limit arithmetic is arithmetic, not a measurement. I did not boot eight Granian
+workers against a capped role.
+
+The bootstrap rerun was tested against a populated cluster, not against one mid-rollout with some
+services already moved and others not.

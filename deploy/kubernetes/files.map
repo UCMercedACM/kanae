@@ -2,7 +2,8 @@
 # are relative to that directory, sources to the repository root.
 
 config.dist.yml|config.dist.yml
-init.sh|docker/ory/init.sh
+postgres/init.sh|docker/postgres/init.sh
+postgres/pg_hba.conf|docker/postgres/pg_hba.conf
 schema.sql|src/schema.sql
 
 keto/keto.yml|docker/ory/config/keto/keto.yml

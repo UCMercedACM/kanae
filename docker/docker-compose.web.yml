@@ -34,10 +34,10 @@ services:
       KETO_WRITE: http://keto:4467
       KANAE: http://kanae:8000
       DB_HOST: database
-      DB_NAME: ${DB_DATABASE_NAME}
-      DB_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
       VALKEY_HOST: valkey
+      DB_USER: kanae
+      DB_NAME: ${DB_DATABASE_NAME}
+      POSTGRES_PASSWORD: ${KANAE_PASSWORD}
     volumes:
       - ../scripts/seed:/seed:ro
     networks:

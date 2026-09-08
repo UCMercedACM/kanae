@@ -158,6 +158,13 @@ generate_secret() {
 }
 
 generate_secret DB_PASSWORD 32
+generate_secret KANAE_PASSWORD 32
+generate_secret KRATOS_PASSWORD 32
+generate_secret KETO_PASSWORD 32
+generate_secret POSTGRES_MONITOR_PASSWORD 32
+generate_secret KANAE_MIGRATE_PASSWORD 32
+generate_secret KRATOS_MIGRATE_PASSWORD 32
+generate_secret KETO_MIGRATE_PASSWORD 32
 generate_secret KRATOS_SECRETS_COOKIE 32
 generate_secret KRATOS_SECRETS_CIPHER 16
 

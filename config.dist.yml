@@ -174,4 +174,4 @@ storage:
 # The PostgreSQL connection URI that is used to connect to the database
 # The URI must be valid, and components will need to be quoted.
 # See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
-postgres_uri: "postgresql://postgres:password@localhost:5432/kanae"
+postgres_uri: "postgresql://kanae:password@localhost:5432/kanae"

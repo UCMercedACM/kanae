@@ -1,7 +1,10 @@
 $schema: https://raw.githubusercontent.com/ory/keto/v26.2.0/.schema/config.schema.json
 version: v26.2.0
 
-dsn: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
+# Overridden by the DSN environment variable in every deployment, which is what
+# lets the migrate container connect as keto_migrate while this one serves as
+# keto. Kept least-privileged here so an unoverridden read cannot get DDL.
+dsn: postgres://keto:${KETO_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
 
 serve:
   read:

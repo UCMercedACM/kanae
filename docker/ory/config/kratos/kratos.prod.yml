@@ -1,7 +1,10 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ory/kratos/v26.2.0/.schemastore/config.schema.json
 version: v26.2.0
 
-dsn: postgres://${DB_USERNAME}:${DB_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+# Overridden by the DSN environment variable in every deployment, which is what
+# lets the migrate container connect as kratos_migrate while this one serves as
+# kratos. Kept least-privileged here so an unoverridden read cannot get DDL.
+dsn: postgres://kratos:${KRATOS_PASSWORD}@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
 
 serve:
   public:

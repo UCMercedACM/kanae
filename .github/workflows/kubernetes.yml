@@ -38,6 +38,7 @@ jobs:
               - '.kube-linter.yml'
               - 'deploy/kubernetes/**'
               - 'docker/ory/**'
+              - 'docker/postgres/**'
               - 'scripts/seed/**'
               - 'src/schema.sql'
               - 'config.dist.yml'
