@@ -7,6 +7,7 @@
   ],
   "dependencyDashboard": false,
   "separateMajorMinor": false,
+  "ignoreDeps": ["kapp"],
   "kubernetes": {
     "managerFilePatterns": [
       "deploy/kubernetes/k3d.yml"
