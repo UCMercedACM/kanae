@@ -365,3 +365,61 @@ The read is `kubectl exec … -- cat`, with no shell, so an image that ships non
 still answers. An image with no `cat` reports `?` rather than failing the run.
 
 Decided 2026-09-06.
+
+## The migration Jobs are `kapp.k14s.io/versioned`, so `dist/` does not match the cluster on four names
+
+`kanae-migrate`, `kratos-migrate` and `keto-migrate` carry
+`kapp.k14s.io/versioned` with `kapp.k14s.io/num-versions: "2"`. kapp applies
+them as `kanae-migrate-ver-1` and so on, creates a new version when the content
+changes, and prunes the old ones.
+
+This is a deliberate exception to the promise that `deploy/kubernetes/dist/` is
+what runs in the cluster, and it is bounded to these three names. It buys the one
+thing a Job cannot otherwise do: a pod template is immutable, so re-applying the
+same Job name with new contents fails outright, and without versioning a changed
+migration cannot be deployed at all.
+
+Each Job also carries a checksum of the file it mounts on its pod template. The
+schema and the two Ory configs live in ConfigMaps, not in the Jobs, so a
+schema-only change otherwise leaves the Job byte-identical, produces no new
+version, and never runs. On a Deployment the annotation alone would be enough;
+here it works only because `versioned` turns the update into a new Job.
+
+Pruning lags by one deploy. The deploy that creates a new version leaves the
+older ones alone, and the deploy after it reports `0 create, 1 delete` on a
+diff nobody wrote. Measured on k3d with three versions of `kanae-migrate`
+present under `num-versions: "2"`: the fourth deploy is what removed `ver-1`.
+That delete is kapp catching up, not drift.
+
+A Job that ends in `Failed` is not retried by a later deploy either. The content
+is unchanged, so kapp produces no new version, applies nothing, and reports the
+deploy green. Recovering from that means changing the file the Job mounts, or
+deleting the failed version so kapp recreates it.
+
+Decided 2026-09-08.
+
+## Migrations are forward-only
+
+There is no down migration in this system and no plan to add one. `git revert`
+on the manifests returns the code to the previous version and leaves the
+database migrated, because nothing un-runs a migration.
+
+Atlas makes that sharper than it sounds. It applies a declarative diff between
+`src/schema.sql` and the live database, so a column deleted from that file
+becomes a `DROP COLUMN`, and reverting the commit afterwards does not bring the
+column or its data back.
+
+Roll forward instead. Write the change that returns the schema to where you want
+it, apply that, and let the audit trail show both steps.
+
+This is not theoretical. Adding a column to `tags` on k3d produced
+`kanae-migrate-ver-2` and the column; putting `src/schema.sql` back produced
+`ver-3`, and the column was gone. Neither run printed the statement anywhere a
+person would see it, because the Job applies with `--auto-approve`.
+
+The consequence for a rollback under pressure is that the database is the part
+that does not roll back. If a release has to be reverted after a destructive
+migration, the schema change has to be reverted as a new forward migration
+first, or the previous version of the code has to tolerate the new schema.
+
+Decided 2026-09-08.

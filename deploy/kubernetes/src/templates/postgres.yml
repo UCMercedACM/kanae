@@ -180,7 +180,7 @@ spec:
               containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "--username=postgres_monitor", "--dbname=postgres"]
+              command: ["pg_isready", "-h", "127.0.0.1", "--username=postgres_monitor", "--dbname=postgres"]
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5

@@ -1,0 +1,57 @@
+# Source: kanae/templates/jobs-migrate.yml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keto-migrate
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/versioned: ""
+    kapp.k14s.io/num-versions: "2"
+    kapp.k14s.io/change-group: "kanae/schemas"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      annotations:
+        checksum/config: d88726b41ce366590d4f3db5b01c87f973478c09ecdb41d50a7b85ebcfcecece
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+      containers:
+        - name: keto
+          image: "oryd/keto:v26.2.0@sha256:bfdb8b9e283aedbd9e1d005c44eb1bbefd2096b2cb5b5aa0b7360b6e39c178d2"
+          imagePullPolicy: IfNotPresent
+          args: ["migrate", "up", "-c", "/etc/config/keto.yml", "--yes"]
+          env:
+            - name: KETO_MIGRATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keto-migrate-db
+                  key: KETO_MIGRATE_PASSWORD
+            - name: DSN
+              value: "postgres://keto_migrate:$(KETO_MIGRATE_PASSWORD)@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4"
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: keto-config

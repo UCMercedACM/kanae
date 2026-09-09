@@ -191,7 +191,13 @@ deploy/docker/.deploy.env
 # Rendered locally by k8s:render:local — a laptop render is a build artifact
 .k8s-local/
 
-# Decrypted secrets never touch disk inside the repository. Nothing writes this
-# file: init.sh pipes the plaintext straight into SOPS and k8s:apply decrypts
+# Decrypted production secrets never touch disk. Nothing writes this file:
+# init.sh pipes the plaintext straight into SOPS and k8s:apply decrypts
 # secrets.sops.yml in memory. It is ignored in case someone decrypts by hand
 deploy/kubernetes/secrets.yml
+
+# Written by init.sh --local, in plaintext, and read back on the next apply.
+# The k3d Postgres volume is initialised with these once and keeps them, so
+# regenerating them would leave the Secrets disagreeing with the database.
+# Throwaway credentials for a local cluster; never used anywhere else
+deploy/kubernetes/secrets.local.yml

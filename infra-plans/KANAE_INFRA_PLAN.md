@@ -1001,79 +1001,137 @@ no such mode.
 
 Atlas needs the most thought and the least code. It compares `src/schema.sql`
 against the live database and generates the difference, so a column you delete
-from that file becomes a `DROP COLUMN` that nobody read. The dry-run job puts
-that statement in front of a human first, and it is the cheapest safety measure
-in this plan.
+from that file becomes a `DROP COLUMN` that nobody read. Nothing in this phase
+puts that statement in front of a human first. The review happens on the pull
+request that edits `src/schema.sql`, and the safety net is the pre-migration
+backup in Phase 9.
 
 The apply order from Phase 4 holds kanae back until the migrations finish, so an
 `Init:Error` here is a real fault rather than normal startup.
 
 ### Tasks
 
-- [ ] Replace `deploy/kubernetes/src/files/init.sh`, the Postgres initdb script,
+- [x] ~~Replace `deploy/kubernetes/src/files/init.sh`, the Postgres initdb script,
       with an idempotent Job. Postgres runs scripts in
       `/docker-entrypoint-initdb.d/` only when the data directory is empty, so
       on an existing volume this one silently never runs. It creates the
       `kratos` and `keto` databases and the `pg_trgm` extension, and nothing
-      else does.
-- [ ] Keep migrations as Jobs rather than init containers. Init containers run
+      else does.~~
+      Not done, deliberately. The work this Job would do needs the superuser,
+      and `docker/postgres/pg_hba.conf` rejects `postgres` on every host
+      address while `init.sh` ends by setting its password to null, so a Job in
+      its own pod cannot reach the database as a role that could create one.
+      Every way around that either puts the superuser on the network or adds
+      grants to the migrate roles that the initdb script never had. Database
+      creation therefore stays in `init.sh`, and the migrations this phase
+      builds are the atlas one for kanae and the Kratos and Keto migrate
+      commands. Revisit when a fourth database is actually needed on a volume
+      that already exists.
+- [x] Keep migrations as Jobs rather than init containers. Init containers run
       once per pod, so two replicas race two copies of a schema migration.
-- [ ] Strip the Helm hook annotations off the migration Jobs. Nothing reads them
+- [x] Strip the Helm hook annotations off the migration Jobs. Nothing reads them
       any more. Hooks are executed by `helm install` and `helm upgrade`, and
       neither runs in this design, so a hook annotation on an applied manifest
       is an inert comment that misleads whoever reads it next.
-- [ ] Mark the migration Jobs `kapp.k14s.io/versioned` with
+      Already true. Phase 3 removed the last Helm-only annotation, and no
+      `helm.sh/hook` survives anywhere in the repository.
+- [x] Mark the migration Jobs `kapp.k14s.io/versioned` with
       `kapp.k14s.io/num-versions: "2"`. Re-applying an identical Job is a no-op,
       but a Job's pod template is immutable, so applying the same name with new
       contents fails. kapp creates a new version when the content changes and
       prunes the old ones itself.
-- [ ] Put a checksum of the mounted content on each migration Job's pod
+      Changed while building it: pruning lags by one deploy. With three
+      versions of `kanae-migrate` present, the fourth deploy is what deleted
+      `ver-1`, which reads as `0 create, 1 delete` on an otherwise unchanged
+      apply. A Job left in `Failed` is likewise not retried by a deploy that
+      changes nothing.
+- [x] Put a checksum of the mounted content on each migration Job's pod
       template: `schema.sql` for atlas, `kratos.prod.yml` for Kratos,
       `keto.yml` for Keto. The schema lives in a ConfigMap, not in the Job, so
       without this a schema-only change leaves the Job byte-identical, produces
       no new version, and never runs. On a Deployment such an annotation would
       be enough on its own; here it works only because `versioned` turns the
       update into a new Job.
-- [ ] Record in `deploy/kubernetes/DECISIONS.md` that `versioned` renames a
+      Changed while building it: Keto's checksum covers `namespaces.keto.ts` as
+      well as `keto.yml`. `keto migrate up` stats the path in
+      `namespaces.location` while it loads its config and exits 255 without it,
+      so both files are mounted and both have to move the checksum.
+- [x] Record in `deploy/kubernetes/DECISIONS.md` that `versioned` renames a
       resource and rewrites what points at it, so `deploy/kubernetes/dist/` no
       longer matches the cluster byte for byte on those names. It is a
       deliberate, bounded exception to this plan's central promise, and it
       applies to the migration Jobs alone.
-- [ ] Do not set `ttlSecondsAfterFinished`. Anything that deletes a resource
+      The file is `deploy/kubernetes/docs/DECISIONS.md`.
+- [x] Do not set `ttlSecondsAfterFinished`. Anything that deletes a resource
       kapp owns behind its back makes the next deploy recreate it, so a TTL here
       re-runs the migration days later.
-- [ ] Annotate the database-creation Job into `kanae/database-init` and the
+- [x] Annotate the database-creation Job into `kanae/database-init` and the
       three migration Jobs into `kanae/schemas`. The Kratos migration needs the
       `kratos` database to exist already, so the two cannot share a wave.
-- [ ] Adopt a forward-only migration policy and write it in
+      Changed while building it: there is no database-creation Job, so
+      `kanae/database-init` has no members and wave 3 is empty. The three
+      migration Jobs are `kanae/schemas` and wait on `kanae/databases`, which
+      is Postgres itself; the databases exist by the time it is Ready because
+      initdb made them.
+- [x] Adopt a forward-only migration policy and write it in
       `deploy/kubernetes/DECISIONS.md`. Rolling the manifests back with `git
       revert` returns the code to the previous version and leaves the database
       migrated, because nothing un-runs a migration. Since Atlas applies a
       declarative diff that can drop a column, a rollback after a destructive
       migration does not bring the column back.
-- [ ] Add a CI job on any pull request touching `src/schema.sql` that posts the
-      DDL as a comment, in two steps. Start a scratch Postgres with `pg_trgm`
-      and apply the schema from the merge base to it, then run
-      `atlas schema apply --dry-run` from the branch against that.
-- [ ] Do not skip the baseline step. Against an empty scratch database the
+      Demonstrated rather than argued: adding a column to `tags` produced
+      `kanae-migrate-ver-2` and the column, and putting `src/schema.sql` back
+      produced `ver-3` and dropped it, with nothing printed where a person
+      would see it.
+- [ ] ~~Add a CI job on any pull request touching `src/schema.sql` that posts
+      the DDL as a comment, in two steps. Start a scratch Postgres with
+      `pg_trgm` and apply the schema from the merge base to it, then run
+      `atlas schema apply --dry-run` from the branch against that.~~
+      Dropped, along with the two tasks below. The job stands up a throwaway
+      Postgres, replays the merge-base schema into it, and needs `pg_trgm`
+      installed by hand in two databases, because `src/schema.sql` uses
+      `gin_trgm_ops` without ever declaring the extension. That is a standing
+      piece of machinery to maintain in order to print a diff a reviewer can
+      already read off the pull request.
+- [ ] ~~Do not skip the baseline step. Against an empty scratch database the
       dry-run emits the whole schema as `CREATE TABLE` rather than the
       incremental change, so the `DROP COLUMN` this job exists to surface would
-      be buried in two hundred lines nobody reads by the third pull request.
-- [ ] Fail the job, or label the pull request, when the DDL contains `DROP`.
+      be buried in two hundred lines nobody reads by the third pull request.~~
+      Dropped with the job it qualifies.
+- [ ] ~~Fail the job, or label the pull request, when the DDL contains `DROP`.
       The cluster applies with `--auto-approve`, so this comment is the audit
-      record, and a destructive change should not be able to pass by silence.
-- [ ] Keep passing arguments straight to the atlas entrypoint, never through
+      record, and a destructive change should not be able to pass by silence.~~
+      Dropped with the job it qualifies. Worth recording if it is ever
+      revisited: atlas does flag a destructive change, but withholds the detail
+      behind `atlas login`, so the guard would have had to grep the generated
+      DDL itself rather than rely on atlas to report it.
+- [x] Keep passing arguments straight to the atlas entrypoint, never through
       `sh -c`. Finding 2 is an image that ships no shell, which the chart cannot
       check for.
-- [ ] Keep every startup gate single-shot. No `until` loops, no
+      Confirmed against the pinned digest: `sh` is not in the image at all, and
+      the password reaches the argument as a `$(VAR)` that Kubernetes expands
+      from the environment, so no shell is needed to build the URL and no
+      secret value reaches the rendered manifest.
+- [x] Keep every startup gate single-shot. No `until` loops, no
       `for i in $(seq ...)`. Kubernetes already retries a failed init container
       with a backoff. An earlier unbounded `until` loop here could never exit
       non-zero, so `backoffLimit` never tripped and a stuck Postgres hung the
       deploy.
-- [ ] Add the Ory migration Jobs: `kratos migrate sql` and `keto migrate up`.
-- [ ] Set memory and CPU on the Jobs this phase builds: 256Mi and 250m for
+- [x] Add the Ory migration Jobs: `kratos migrate sql` and `keto migrate up`.
+      Changed while building it: the Keto image declares `USER ory` rather than
+      a uid, which Kubernetes cannot check against root, so `runAsNonRoot`
+      alone refuses to start it; the Job sets uid 100 explicitly, and Kratos
+      10000. `kratos migrate sql` also needs no cookie or cipher secret, so
+      each migration Job holds exactly one credential, which is the second half
+      of Finding 2.
+- [x] Set memory and CPU on the Jobs this phase builds: 256Mi and 250m for
       atlas, 50m for the database-creation Job, 100m for the seed Job. No CPU
       limits. See the CPU budget.
+      Atlas took 256Mi and 250m. There is no database-creation Job to give
+      50m to, and the seed Job is not built here: it is wave 6, and Phase 11
+      publishes the image it runs. The Ory migration Jobs took 256Mi and 100m
+      each, matching the rows the CPU budget files under Phase 6. Every Job
+      completed on its first attempt, so none of the three exceeded 256Mi.
 
 ### Exit gate
 
@@ -1516,9 +1574,9 @@ are six real messages that will happen again.
       `kapp.k14s.io/versioned`, and give it a change-group before
       `kanae/schemas`.
 - [ ] Treat that Job as part of the migration safety story, not the backup
-      story. It is the other half of Phase 5's dry-run review: the review
-      catches a destructive change before merge, this catches one that got
-      through.
+      story. Phase 5 dropped its pre-merge DDL review, so this is the only
+      thing between an `--auto-approve` diff and a column that is already
+      gone.
 - [ ] Set 250m CPU on both borgmatic pods. See the CPU budget.
 - [ ] Confirm the backup credential environment variable names against the
       image. HANDOFF.md records that `AWS_ACCESS_KEY_ID` and
@@ -1686,10 +1744,10 @@ Tick a phase only when its exit gate has passed on a real cluster.
       program renders each generated file, real age keys in `.sops.yaml`
 - [ ] Phase 4. Postgres and Valkey Ready, apply order declared, data survives
       deleting the Postgres pod
-- [ ] Phase 5. Three databases with their tables, migration Jobs versioned by
+- [x] Phase 5. Three databases with their tables, migration Jobs versioned by
       kapp, a written forward-only migration policy, a schema change proven to
-      re-run the migration, schema changes reviewed as incremental DDL before
-      they run
+      re-run the migration. Database creation stays in the initdb script, and
+      the DDL review job is dropped rather than deferred
 
 **Layer C. Services**
 

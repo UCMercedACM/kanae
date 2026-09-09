@@ -1,0 +1,57 @@
+# Source: kanae/templates/jobs-migrate.yml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kratos-migrate
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/versioned: ""
+    kapp.k14s.io/num-versions: "2"
+    kapp.k14s.io/change-group: "kanae/schemas"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      annotations:
+        checksum/config: c08081ba997bff189f38ffc7aec2865db77955af3a18dd445a0833c87408726e
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 101
+      containers:
+        - name: kratos
+          image: "oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
+          imagePullPolicy: IfNotPresent
+          args: ["migrate", "sql", "-c", "/etc/config/kratos.yml", "--read-from-env", "--yes"]
+          env:
+            - name: KRATOS_MIGRATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kratos-migrate-db
+                  key: KRATOS_MIGRATE_PASSWORD
+            - name: DSN
+              value: "postgres://kratos_migrate:$(KRATOS_MIGRATE_PASSWORD)@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4"
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: kratos-config
