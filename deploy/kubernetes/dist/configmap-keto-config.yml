@@ -1,0 +1,89 @@
+# Source: kanae/templates/jobs-migrate.yml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keto-config
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+data:
+  keto.yml: |
+    $schema: https://raw.githubusercontent.com/ory/keto/v26.2.0/.schema/config.schema.json
+    version: v26.2.0
+
+    # Overridden by the DSN environment variable in every deployment, which is what
+    # lets the migrate container connect as keto_migrate while this one serves as
+    # keto. Kept least-privileged here so an unoverridden read cannot get DDL.
+    dsn: postgres://keto:${KETO_PASSWORD}@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4
+
+    serve:
+      read:
+        host: 0.0.0.0
+        port: 4466
+      write:
+        host: 0.0.0.0
+        port: 4467
+      metrics:
+        host: 0.0.0.0
+        port: 4468
+
+    namespaces:
+      location: file:///etc/config/namespaces.keto.ts
+
+    log:
+      level: info
+      format: json
+  namespaces.keto.ts: |
+    import { Namespace, Context, SubjectSet } from "@ory/permission-namespace-types"
+
+    class User implements Namespace {}
+
+    class Role implements Namespace {
+      related: {
+        member: User[]
+      }
+    }
+
+    class Project implements Namespace {
+      related: {
+        viewers: (User | SubjectSet<Project, "editors">)[]
+        editors: (User | SubjectSet<Project, "owners">)[]
+        owners: (User | SubjectSet<Role, "member">)[]
+      }
+
+      permits = {
+        view: (ctx: Context): boolean =>
+          this.related.viewers.includes(ctx.subject) ||
+          this.related.editors.includes(ctx.subject) ||
+          this.related.owners.includes(ctx.subject),
+
+        edit: (ctx: Context): boolean =>
+          this.related.editors.includes(ctx.subject) ||
+          this.related.owners.includes(ctx.subject),
+
+        own: (ctx: Context): boolean =>
+          this.related.owners.includes(ctx.subject),
+      }
+    }
+
+    class Event implements Namespace {
+      related: {
+        viewers: (User | SubjectSet<Event, "editors">)[]
+        editors: (User | SubjectSet<Event, "owners">)[]
+        owners: (User | SubjectSet<Role, "member">)[]
+      }
+
+      permits = {
+        view: (ctx: Context): boolean =>
+          this.related.viewers.includes(ctx.subject) ||
+          this.related.editors.includes(ctx.subject) ||
+          this.related.owners.includes(ctx.subject),
+
+        edit: (ctx: Context): boolean =>
+          this.related.editors.includes(ctx.subject) ||
+          this.related.owners.includes(ctx.subject),
+
+        own: (ctx: Context): boolean =>
+          this.related.owners.includes(ctx.subject),
+      }
+    }

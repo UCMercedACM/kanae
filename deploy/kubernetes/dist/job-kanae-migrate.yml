@@ -1,0 +1,64 @@
+# Source: kanae/templates/jobs-migrate.yml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kanae-migrate
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/versioned: ""
+    kapp.k14s.io/num-versions: "2"
+    kapp.k14s.io/change-group: "kanae/schemas"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      annotations:
+        checksum/schema: 6e12ba6ad4890f12916aec57bfedd96f072e675a7995a3bf559dc3f0016dd331
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: atlas
+          image: "arigaio/atlas:latest@sha256:d08183f70aa37ae1668ded9e3d88a028c867824168cd2262e69874d59bcff0a0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - schema
+            - apply
+            - --auto-approve
+            - --to
+            - "file:///etc/atlas/schema.sql"
+            - --url
+            - "postgres://kanae_migrate:$(KANAE_MIGRATE_PASSWORD)@database:5432/kanae?search_path=public&sslmode=disable"
+            - --dev-url
+            - "postgres://kanae_migrate:$(KANAE_MIGRATE_PASSWORD)@database:5432/postgres?search_path=public&sslmode=disable"
+          env:
+            - name: KANAE_MIGRATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kanae-migrate-db
+                  key: KANAE_MIGRATE_PASSWORD
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: schema
+              mountPath: /etc/atlas
+              readOnly: true
+      volumes:
+        - name: schema
+          configMap:
+            name: kanae-schema
