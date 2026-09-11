@@ -4,6 +4,14 @@ kind: CronJob
 metadata:
   name: postgres-checksum
   namespace: kanae
+  labels:
+    app: postgres-checksum
+    app.kubernetes.io/name: postgres-checksum
+    app.kubernetes.io/instance: kanae
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: postgres-checksum
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: Helm
   annotations:
     kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
 spec:
@@ -15,6 +23,15 @@ spec:
   jobTemplate:
     spec:
       template:
+        metadata:
+          labels:
+            app: postgres-checksum
+            app.kubernetes.io/name: postgres-checksum
+            app.kubernetes.io/instance: kanae
+            app.kubernetes.io/version: "0.1.0"
+            app.kubernetes.io/component: postgres-checksum
+            app.kubernetes.io/part-of: kanae
+            app.kubernetes.io/managed-by: Helm
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false
@@ -22,6 +39,12 @@ spec:
             runAsNonRoot: true
             runAsUser: 999
             runAsGroup: 999
+            fsGroup: 999
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              type: container_t
           containers:
             - name: checksum
               image: "postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
@@ -34,19 +57,10 @@ spec:
                     --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database' \
                     | tee /dev/stderr | grep -qx 0
               env:
-                - name: PGHOST
-                  value: "database"
-                - name: PGPORT
-                  value: "5432"
-                - name: PGUSER
-                  value: "postgres_monitor"
-                - name: PGDATABASE
-                  value: "postgres"
-                - name: PGPASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: postgres-monitor-db
-                      key: POSTGRES_MONITOR_PASSWORD
+                - name: PGSERVICEFILE
+                  value: /run/secrets/pg_service.conf
+                - name: PGSERVICE
+                  value: checksum
                 - name: PGCONNECT_TIMEOUT
                   value: "10"
               resources:
@@ -59,5 +73,22 @@ spec:
                   ephemeral-storage: 64Mi
               securityContext:
                 allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
                 capabilities:
                   drop: ["ALL"]
+              volumeMounts:
+                - name: secrets
+                  mountPath: /run/secrets
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: secrets
+              secret:
+                secretName: postgres-monitor-db
+                defaultMode: 0440
+                items:
+                  - key: pg_service.conf
+                    path: pg_service.conf
+            - name: tmp
+              emptyDir: {}

@@ -1,0 +1,139 @@
+[
+  {
+    "name": "cpu-limits-omitted-by-policy",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0009"
+      },
+      {
+        "controlID": "C-0050"
+      },
+      {
+        "controlID": "C-0270"
+      }
+    ]
+  },
+  {
+    "name": "config-is-mounted-from-configmaps-by-design",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0258"
+      }
+    ]
+  },
+  {
+    "name": "upstream-publishers-do-not-cosign-sign",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0237"
+      },
+      {
+        "controlID": "C-0236"
+      }
+    ]
+  },
+  {
+    "name": "network-posture-lands-in-phase-8",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0030"
+      },
+      {
+        "controlID": "C-0260"
+      }
+    ]
+  },
+  {
+    "name": "one-shot-pods-have-no-probes",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae",
+          "kind": "(Job|CronJob)"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0018"
+      },
+      {
+        "controlID": "C-0056"
+      }
+    ]
+  },
+  {
+    "name": "database-has-no-liveness-probe-by-design",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae",
+          "kind": "StatefulSet"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0056"
+      }
+    ]
+  }
+]

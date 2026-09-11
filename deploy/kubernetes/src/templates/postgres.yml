@@ -58,6 +58,14 @@ kind: StatefulSet
 metadata:
   name: {{ .Values.serviceNames.database }}
   namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.serviceNames.database }}
+    app.kubernetes.io/name: {{ .Values.serviceNames.database }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: {{ .Values.serviceNames.database }}
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     kapp.k14s.io/change-group: "kanae/databases"
     kapp.k14s.io/change-rule: "upsert after upserting kanae/config"
@@ -71,6 +79,12 @@ spec:
     metadata:
       labels:
         app: {{ .Values.serviceNames.database }}
+        app.kubernetes.io/name: {{ .Values.serviceNames.database }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.Version | quote }}
+        app.kubernetes.io/component: {{ .Values.serviceNames.database }}
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -78,6 +92,11 @@ spec:
         runAsUser: 999
         runAsGroup: 999
         fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
       initContainers:
         - name: check-version
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
@@ -115,6 +134,7 @@ spec:
               ephemeral-storage: 64Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
@@ -131,57 +151,38 @@ spec:
             - "-c"
             - max_connections=150
           env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-db
-                  key: DB_PASSWORD
             - name: POSTGRES_DB
               value: kanae
             - name: POSTGRES_INITDB_ARGS
               value: "--data-checksums"
-            - name: KANAE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kanae-db
-                  key: KANAE_PASSWORD
-            - name: KRATOS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kratos-db
-                  key: KRATOS_PASSWORD
-            - name: KETO_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: keto-db
-                  key: KETO_PASSWORD
-            - name: POSTGRES_MONITOR_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-monitor-db
-                  key: POSTGRES_MONITOR_PASSWORD
-            - name: KANAE_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kanae-migrate-db
-                  key: KANAE_MIGRATE_PASSWORD
-            - name: KRATOS_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kratos-migrate-db
-                  key: KRATOS_MIGRATE_PASSWORD
-            - name: KETO_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: keto-migrate-db
-                  key: KETO_MIGRATE_PASSWORD
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/DB_PASSWORD
+            - name: KANAE_PASSWORD_FILE
+              value: /run/secrets/KANAE_PASSWORD
+            - name: KRATOS_PASSWORD_FILE
+              value: /run/secrets/KRATOS_PASSWORD
+            - name: KETO_PASSWORD_FILE
+              value: /run/secrets/KETO_PASSWORD
+            - name: POSTGRES_MONITOR_PASSWORD_FILE
+              value: /run/secrets/POSTGRES_MONITOR_PASSWORD
+            - name: KANAE_MIGRATE_PASSWORD_FILE
+              value: /run/secrets/KANAE_MIGRATE_PASSWORD
+            - name: KRATOS_MIGRATE_PASSWORD_FILE
+              value: /run/secrets/KRATOS_MIGRATE_PASSWORD
+            - name: KETO_MIGRATE_PASSWORD_FILE
+              value: /run/secrets/KETO_MIGRATE_PASSWORD
           ports:
             - name: postgres
               containerPort: 5432
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "--username=postgres_monitor", "--dbname=postgres"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             exec:
               command: ["pg_isready", "-h", "127.0.0.1", "--username=postgres_monitor", "--dbname=postgres"]
-            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
           resources:
@@ -194,6 +195,7 @@ spec:
               ephemeral-storage: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
@@ -201,9 +203,16 @@ spec:
               mountPath: /var/lib/postgresql
             - name: initdb
               mountPath: /docker-entrypoint-initdb.d
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
             - name: hba
               mountPath: /etc/postgresql
               readOnly: true
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -214,12 +223,68 @@ spec:
         - name: hba
           configMap:
             name: postgres-hba
+        - name: secrets
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: postgres-db
+                  items:
+                    - key: DB_PASSWORD
+                      path: DB_PASSWORD
+              - secret:
+                  name: kanae-db
+                  items:
+                    - key: KANAE_PASSWORD
+                      path: KANAE_PASSWORD
+              - secret:
+                  name: kratos-db
+                  items:
+                    - key: KRATOS_PASSWORD
+                      path: KRATOS_PASSWORD
+              - secret:
+                  name: keto-db
+                  items:
+                    - key: KETO_PASSWORD
+                      path: KETO_PASSWORD
+              - secret:
+                  name: postgres-monitor-db
+                  items:
+                    - key: POSTGRES_MONITOR_PASSWORD
+                      path: POSTGRES_MONITOR_PASSWORD
+              - secret:
+                  name: kanae-migrate-db
+                  items:
+                    - key: KANAE_MIGRATE_PASSWORD
+                      path: KANAE_MIGRATE_PASSWORD
+              - secret:
+                  name: kratos-migrate-db
+                  items:
+                    - key: KRATOS_MIGRATE_PASSWORD
+                      path: KRATOS_MIGRATE_PASSWORD
+              - secret:
+                  name: keto-migrate-db
+                  items:
+                    - key: KETO_MIGRATE_PASSWORD
+                      path: KETO_MIGRATE_PASSWORD
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: postgres-checksum
   namespace: {{ .Values.namespace }}
+  labels:
+    app: postgres-checksum
+    app.kubernetes.io/name: postgres-checksum
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: postgres-checksum
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
 spec:
@@ -231,6 +296,15 @@ spec:
   jobTemplate:
     spec:
       template:
+        metadata:
+          labels:
+            app: postgres-checksum
+            app.kubernetes.io/name: postgres-checksum
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/version: {{ .Chart.Version | quote }}
+            app.kubernetes.io/component: postgres-checksum
+            app.kubernetes.io/part-of: kanae
+            app.kubernetes.io/managed-by: {{ .Release.Service }}
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false
@@ -238,6 +312,12 @@ spec:
             runAsNonRoot: true
             runAsUser: 999
             runAsGroup: 999
+            fsGroup: 999
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              type: container_t
           containers:
             - name: checksum
               image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
@@ -250,19 +330,10 @@ spec:
                     --command='SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database' \
                     | tee /dev/stderr | grep -qx 0
               env:
-                - name: PGHOST
-                  value: {{ .Values.serviceNames.database | quote }}
-                - name: PGPORT
-                  value: "5432"
-                - name: PGUSER
-                  value: "postgres_monitor"
-                - name: PGDATABASE
-                  value: "postgres"
-                - name: PGPASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: postgres-monitor-db
-                      key: POSTGRES_MONITOR_PASSWORD
+                - name: PGSERVICEFILE
+                  value: /run/secrets/pg_service.conf
+                - name: PGSERVICE
+                  value: checksum
                 - name: PGCONNECT_TIMEOUT
                   value: "10"
               resources:
@@ -275,5 +346,22 @@ spec:
                   ephemeral-storage: 64Mi
               securityContext:
                 allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
                 capabilities:
                   drop: ["ALL"]
+              volumeMounts:
+                - name: secrets
+                  mountPath: /run/secrets
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: secrets
+              secret:
+                secretName: postgres-monitor-db
+                defaultMode: 0440
+                items:
+                  - key: pg_service.conf
+                    path: pg_service.conf
+            - name: tmp
+              emptyDir: {}

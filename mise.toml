@@ -11,6 +11,7 @@ gum = "2.0.0"
 # Linting and Formatting
 kubeconform = "0.8.0"
 kube-linter = "0.8.3"
+"github:kubescape/kubescape" = "4.0.14"
 
 shellcheck = "0.11.0"
 shfmt = "3.14.1"
@@ -329,6 +330,25 @@ run = [
   "helm lint deploy/kubernetes/src",
   "helm lint deploy/kubernetes/src --values deploy/kubernetes/values.local.yml",
 ]
+
+[tasks."k8s:scan"]
+depends = ["helm:files"]
+description = "Scans all k8s manifest files via kubescape"
+dir = "{{ config_root }}"
+run = '''
+kubescape scan framework all deploy/kubernetes/dist .k8s-local \
+    --exceptions .kubescape/exceptions.json \
+    --controls-config .kubescape/controls.json \
+    --severity-threshold low \
+    --fail-on-degraded-config
+'''
+run_windows = '''
+kubescape scan framework all deploy/kubernetes/dist .k8s-local `
+    --exceptions .kubescape/exceptions.json `
+    --controls-config .kubescape/controls.json `
+    --severity-threshold low `
+    --fail-on-degraded-config
+'''
 
 [tasks."k8s:measure"]
 description = "Reports the peak memory the kernel recorded for every container, against the limit it was given, and its average CPU. Phase 10 sets the limits from it"

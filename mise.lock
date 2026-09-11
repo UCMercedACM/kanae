@@ -122,6 +122,58 @@ checksum = "sha256:1038af32fade7a79f9c3a690d9546bb17be13dd7b4568a3684692fdcb0a52
 url = "https://github.com/dprint/dprint/releases/download/0.57.4/dprint-x86_64-pc-windows-msvc.zip"
 url_api = "https://api.github.com/repos/dprint/dprint/releases/assets/546351162"
 
+[[tools."github:kubescape/kubescape"]]
+version = "4.0.14"
+backend = "github:kubescape/kubescape"
+specifiers = [
+    "4.0.14",
+    "v4.0.14",
+]
+
+[tools."github:kubescape/kubescape"."platforms.linux-arm64"]
+checksum = "sha256:e12d63d6b9cd28f57ba7cd2130528d4147448779ecec9da07f06c3baa4153117"
+url = "https://github.com/kubescape/kubescape/releases/download/v4.0.14/kubescape_4.0.14_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kubescape/kubescape/releases/assets/552740165"
+provenance = "github-attestations"
+
+[tools."github:kubescape/kubescape"."platforms.linux-arm64-musl"]
+checksum = "sha256:e12d63d6b9cd28f57ba7cd2130528d4147448779ecec9da07f06c3baa4153117"
+url = "https://github.com/kubescape/kubescape/releases/download/v4.0.14/kubescape_4.0.14_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kubescape/kubescape/releases/assets/552740165"
+provenance = "github-attestations"
+
+[tools."github:kubescape/kubescape"."platforms.linux-x64"]
+checksum = "sha256:1d253b70f88e80b74f68af73ccd422f897381468300be7cc486fdd656d907a40"
+url = "https://github.com/kubescape/kubescape/releases/download/v4.0.14/kubescape_4.0.14_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/kubescape/kubescape/releases/assets/552740163"
+provenance = "github-attestations"
+provenance_verified = true
+
+[tools."github:kubescape/kubescape"."platforms.linux-x64-musl"]
+checksum = "sha256:1d253b70f88e80b74f68af73ccd422f897381468300be7cc486fdd656d907a40"
+url = "https://github.com/kubescape/kubescape/releases/download/v4.0.14/kubescape_4.0.14_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/kubescape/kubescape/releases/assets/552740163"
+provenance = "github-attestations"
+
+[tools."github:kubescape/kubescape"."platforms.macos-arm64"]
+checksum = "sha256:a7bb2e259371cc3be49bf61a8e4d3a74ff7395979d4b4c8ce195503f00aa3721"
+url = "https://github.com/kubescape/kubescape/releases/download/v4.0.14/kubescape_4.0.14_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kubescape/kubescape/releases/assets/552740174"
+provenance = "github-attestations"
+
+[tools."github:kubescape/kubescape"."platforms.macos-x64"]
+checksum = "sha256:6ef9090843b7e439c7ed6f02c9f63276f82c924199fc9fb386749ee0d113895b"
+url = "https://github.com/kubescape/kubescape/releases/download/v4.0.14/kubescape_4.0.14_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/kubescape/kubescape/releases/assets/552740164"
+provenance = "github-attestations"
+
+[tools."github:kubescape/kubescape"."platforms.windows-x64"]
+checksum = "sha256:ce0da40ea0cd76230b4d1cadd9f8b2a726ffb3b1c49cfcddb6837523c23e9a3a"
+url = "https://github.com/kubescape/kubescape/releases/download/v4.0.14/kubescape_4.0.14_windows_amd64.tar.gz"
+url_api = "https://api.github.com/repos/kubescape/kubescape/releases/assets/552740170"
+provenance = "github-attestations"
+provenance_verified = true
+
 [[tools.gum]]
 version = "2.0.0"
 backend = "aqua:charmbracelet/gum"
