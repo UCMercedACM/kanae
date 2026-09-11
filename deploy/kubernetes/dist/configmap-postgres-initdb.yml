@@ -11,18 +11,6 @@ data:
     #!/usr/bin/env bash
     set -e
 
-    ### Secrets
-
-    # Mirrors file_env() from the postgres entrypoint, which only resolves its own
-    # POSTGRES_* variables. Compose passes these in as plain environment variables
-    # and Kubernetes mounts them as files, setting <VAR>_FILE to the path. Whichever
-    # form is present wins, and setting both is an error, same as upstream.
-    #
-    # The entrypoint's file_env is not reachable from here: Compose COPYs this file
-    # at mode 0755 so it runs as a subprocess, while the Kubernetes ConfigMap mounts
-    # it at 0644 so it is sourced. Carrying our own keeps one implementation for
-    # both. Unlike upstream we do not export, because the heredocs below expand in
-    # this shell and an exported value would be inherited by the postgres process.
     resolve_secret() {
     	local var=$1 file_var="${1}_FILE"
     	local path=${!file_var:-}
@@ -41,7 +29,6 @@ data:
     	declare -g "$var=$(<"$path")"
     }
 
-    # POSTGRES_PASSWORD is absent: the entrypoint already ran file_env on it.
     resolve_secret KANAE_PASSWORD
     resolve_secret KRATOS_PASSWORD
     resolve_secret KETO_PASSWORD
