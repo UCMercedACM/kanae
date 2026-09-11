@@ -5,60 +5,60 @@ description = "Internal backend server for ACM @ UC Merced"
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
-    "aiobotocore~=3.9.0",
-    "aiocache~=0.12.3",
-    "aiohttp[speedups]~=3.14.0",
-    "argon2-cffi~=25.1.0",
-    "asyncpg~=0.31.0",
-    "blake3~=1.0.8",
-    "fastapi~=0.141.1",
-    "fastapi-pagination~=0.15.16",
-    "granian~=2.8.1",
-    "limits~=5.8.0",
-    "orjson~=3.12.0",
-    "prometheus-fastapi-instrumentator~=8.1.0",
-    "pybase62~=1.0.0",
-    "python-dateutil~=2.9.0.post0",
-    "pyvips[binary]~=3.2.0",
-    "pyyaml~=6.0.3",
-    "uvloop~=0.22.1 ; sys_platform != 'win32'",
-    "valkey-glide==2.5.2",
-    "winloop~=0.6.2 ; sys_platform == 'win32'",
+  "aiobotocore~=3.9.0",
+  "aiocache~=0.12.3",
+  "aiohttp[speedups]~=3.14.0",
+  "argon2-cffi~=25.1.0",
+  "asyncpg~=0.31.0",
+  "blake3~=1.0.8",
+  "fastapi~=0.141.1",
+  "fastapi-pagination~=0.15.16",
+  "granian~=2.8.1",
+  "limits~=5.8.0",
+  "orjson~=3.12.0",
+  "prometheus-fastapi-instrumentator~=8.1.0",
+  "pybase62~=1.0.0",
+  "python-dateutil~=2.9.0.post0",
+  "pyvips[binary]~=3.2.0",
+  "pyyaml~=6.0.3",
+  "uvloop~=0.22.1 ; sys_platform != 'win32'",
+  "valkey-glide==2.5.2",
+  "winloop~=0.6.2 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
 dev = [
-    "watchfiles~=1.2.0",
-    { include-group = "lint" },
-    { include-group = "test" },
+  "watchfiles~=1.2.0",
+  { include-group = "lint" },
+  { include-group = "test" },
 ]
 lint = [
-    "yamllint~=1.38.0",
-    "ruff~=0.16.0",
-    "ty==0.0.78",
-    { include-group = "types" },
+  "yamllint~=1.38.0",
+  "ruff~=0.16.0",
+  "ty==0.0.78",
+  { include-group = "types" },
 ]
 types = [
-    "types-aiobotocore[s3]~=3.9.0",
-    "types-boto3[s3]~=1.43.14",
+  "types-aiobotocore[s3]~=3.9.0",
+  "types-boto3[s3]~=1.43.14",
 ]
 test = [
-    "asgi-lifespan~=2.1.0",
-    "hiro~=1.1.1",
-    "httpx~=0.28.1",
-    "pytest~=9.1.0",
-    "pytest-asyncio~=1.4.0",
-    "testcontainers~=4.15.0",
-    "hypothesis~=6.167.0",
-    "schemathesis~=4.25.0",
+  "asgi-lifespan~=2.1.0",
+  "hiro~=1.1.1",
+  "httpx~=0.28.1",
+  "pytest~=9.1.0",
+  "pytest-asyncio~=1.4.0",
+  "testcontainers~=4.15.0",
+  "hypothesis~=6.167.0",
+  "schemathesis~=4.25.0",
 ]
 
 [tool.ty.src]
 include = ["src"]
 exclude = [
-    "__pycache__",
-    "docs",
-    "docker",
+  "__pycache__",
+  "docs",
+  "docker",
 ]
 
 [tool.ruff]
@@ -68,42 +68,85 @@ extend-exclude = ["**/__pycache__"]
 
 [tool.ruff.lint]
 select = [
-    "A", "ANN", "ASYNC", "B", "BLE", "C4", "COM", "DTZ", "E",
-    "EM", "ERA", "F", "FA", "FAST", "FBT", "FLY", "FURB", "G", "I", "ICN", "ISC", "LOG", "NPY",
-    "PD", "PERF", "PGH", "PIE", "PLC", "PLE", "PLR", "PLW", "PTH", "PYI",
-    "Q", "Q003", "RET", "RSE", "RUF", "S", "SIM", "SLOT", "T20", "TC", "TID",
-    "TRY", "UP", "W", "YTT"
+  "A",
+  "ANN",
+  "ASYNC",
+  "B",
+  "BLE",
+  "C4",
+  "COM",
+  "DTZ",
+  "E",
+  "EM",
+  "ERA",
+  "F",
+  "FA",
+  "FAST",
+  "FBT",
+  "FLY",
+  "FURB",
+  "G",
+  "I",
+  "ICN",
+  "ISC",
+  "LOG",
+  "NPY",
+  "PD",
+  "PERF",
+  "PGH",
+  "PIE",
+  "PLC",
+  "PLE",
+  "PLR",
+  "PLW",
+  "PTH",
+  "PYI",
+  "Q",
+  "Q003",
+  "RET",
+  "RSE",
+  "RUF",
+  "S",
+  "SIM",
+  "SLOT",
+  "T20",
+  "TC",
+  "TID",
+  "TRY",
+  "UP",
+  "W",
+  "YTT",
 ]
 ignore = [
-    "B904",     # Niche standard
-    "E501",     # Ruff suggested format
-    "FBT003",   # Inherently incorrect to enforce this
-    "PLR0913",  # Violations of these are not related to bad code
-    "PLR2004",  # Magic numbers are fine sometimes
-    "SIM105",   # Prefer not to use due to stylistic choices
-    "UP045",    # Explicitly use typing.Optional to not confuse between union operators.
-                # See https://discuss.python.org/t/clarification-for-pep-604-is-foo-int-none-to-replace-all-use-of-foo-optional-int/26945/19
+  "B904", # Niche standard
+  "E501", # Ruff suggested format
+  "FBT003", # Inherently incorrect to enforce this
+  "PLR0913", # Violations of these are not related to bad code
+  "PLR2004", # Magic numbers are fine sometimes
+  "SIM105", # Prefer not to use due to stylistic choices
+  "UP045", # Explicitly use typing.Optional to not confuse between union operators.
+  # See https://discuss.python.org/t/clarification-for-pep-604-is-foo-int-none-to-replace-all-use-of-foo-optional-int/26945/19
 
-    # These are recommended by Ruff if the formatter is to be used: https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
-    "W191",
-    "E111",
-    "E114",
-    "E117",
-    "D206",
-    "D300",
-    "Q000",
-    "Q001",
-    "Q002",
-    "Q003",
-    "COM812",
-    "COM819",
-    "ISC001",
-    "ISC002"
+  # These are recommended by Ruff if the formatter is to be used: https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
+  "W191",
+  "E111",
+  "E114",
+  "E117",
+  "D206",
+  "D300",
+  "Q000",
+  "Q001",
+  "Q002",
+  "Q003",
+  "COM812",
+  "COM819",
+  "ISC001",
+  "ISC002",
 ]
 fixable = ["ALL"]
 unfixable = [
-    "E501",   # Ruff suggests their own formatting
-    "ERA"     # Leave commented-out code for reference purposes
+  "E501", # Ruff suggests their own formatting
+  "ERA", # Leave commented-out code for reference purposes
 ]
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -116,10 +159,10 @@ docstring-code-format = true
 minversion = "9.0"
 addopts = "-ra"
 testpaths = [
-    "tests"
+  "tests",
 ]
 pythonpath = ["src"]
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
-    "ignore:Importing from 'glide\\.:DeprecationWarning",
+  "ignore:Importing from 'glide\\.:DeprecationWarning",
 ]

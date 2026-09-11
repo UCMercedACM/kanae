@@ -29,13 +29,11 @@ k9s = "0.51.0"
 sops = "3.13.3"
 age = "1.3.2"
 
-
 [settings]
 experimental = true
 lockfile = true
 locked_verify_provenance = true
 pin = true
-
 
 [env]
 _.file = [{ path = "{{ config_root }}/docker/.env" }]
@@ -105,7 +103,6 @@ run = "ruff format tests"
 [tasks."tests:check"]
 description = "Lint and format testing codebase. This is necessary to handle import sorting and formatting. TD;LR: Run this task once you are done with development at the end of the PR"
 run = [{ task = "tests:lint" }, { task = "tests:format" }]
-
 
 [tasks."scripts:lint"]
 description = "Lints all bash scripts via Shellcheck"
@@ -228,16 +225,28 @@ run = "yamllint --strict ."
 [tasks."yaml:format"]
 alias = ["k8s:fmt"]
 description = "Formats YAML files via dprint"
-run = "dprint fmt {{ config_root }}"
+dir = "{{ config_root }}"
+run = "dprint fmt '**/*.{yml,yaml}' '**/.yamllint'"
 
 [tasks."yaml:format:check"]
 alias = ["k8s:fmt:check"]
 description = "Checks for formatting via dprint"
-run = "dprint check {{ config_root }}"
+dir = "{{ config_root }}"
+run = "dprint check '**/*.{yml,yaml}' '**/.yamllint'"
 
 [tasks."yaml:check"]
 description = "Lints and formats YAML files"
-run = [ {task = "yaml:lint" }, { task = "yaml:format" }]
+run = [{ task = "yaml:lint" }, { task = "yaml:format" }]
+
+[tasks."configs:format"]
+description = "Formats our JSON and TOML files via dprint"
+dir = "{{ config_root }}"
+run = "dprint fmt '**/*.{json,toml}'"
+
+[tasks."configs:format:check"]
+description = "Checks our JSON and TOML files for formatting via dprint"
+dir = "{{ config_root }}"
+run = "dprint check '**/*.{json,toml}'"
 
 [tasks."k8s:up"]
 description = "Creates the local k3d cluster from deploy/kubernetes/k3d.yml and waits for its node to report Ready"

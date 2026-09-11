@@ -1,79 +1,79 @@
 {
-    "version": 1,
-    "disable_existing_loggers": false,
-    "formatters": {
-        "default": {
-            "()": "core.DefaultFormatter",
-            "fmt": "[%(asctime)s] %(levelprefix)s %(message)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-            "use_colors": true
-        },
-        "access": {
-            "()": "core.AccessFormatter",
-            "fmt": "[%(asctime)s] %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-            "use_colors": true
-        },
-        "file": {
-            "()": "core.DefaultFormatter",
-            "fmt": "[%(asctime)s] %(levelprefix)s %(message)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-            "use_colors": false
-        },
-        "access_file": {
-            "()": "core.AccessFormatter",
-            "fmt": "[%(asctime)s] %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-            "use_colors": false
-        }
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "default": {
+      "()": "core.DefaultFormatter",
+      "fmt": "[%(asctime)s] %(levelprefix)s %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": true
     },
-    "handlers": {
-        "default": {
-            "formatter": "default",
-            "class": "logging.StreamHandler",
-            "stream": "ext://sys.stderr"
-        },
-        "access": {
-            "formatter": "access",
-            "class": "logging.StreamHandler",
-            "stream": "ext://sys.stdout"
-        },
-        "rotating": {
-            "()": "core.rotating_handler",
-            "formatter": "file"
-        },
-        "rotating_access": {
-            "()": "core.rotating_handler",
-            "filename": "logs/access.log",
-            "formatter": "access_file"
-        }
+    "access": {
+      "()": "core.AccessFormatter",
+      "fmt": "[%(asctime)s] %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": true
     },
-    "loggers": {
-        "_granian": {
-            "handlers": ["default", "rotating"],
-            "level": "INFO",
-            "propagate": false
-        },
-        "granian.access": {
-            "handlers": ["access", "rotating_access"],
-            "level": "INFO",
-            "propagate": false
-        },
-        "kanae": {
-            "handlers": ["default", "rotating"],
-            "level": "INFO",
-            "propagate": false
-        },
-        "kanae.error": {
-            "level": "ERROR"
-        },
-        "kanae.ory": {
-            "level": "DEBUG",
-            "propagate": false
-        },
-        "kanae.limiter": {
-            "level": "DEBUG",
-            "propagate": false
-        }
+    "file": {
+      "()": "core.DefaultFormatter",
+      "fmt": "[%(asctime)s] %(levelprefix)s %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": false
+    },
+    "access_file": {
+      "()": "core.AccessFormatter",
+      "fmt": "[%(asctime)s] %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": false
     }
+  },
+  "handlers": {
+    "default": {
+      "formatter": "default",
+      "class": "logging.StreamHandler",
+      "stream": "ext://sys.stderr"
+    },
+    "access": {
+      "formatter": "access",
+      "class": "logging.StreamHandler",
+      "stream": "ext://sys.stdout"
+    },
+    "rotating": {
+      "()": "core.rotating_handler",
+      "formatter": "file"
+    },
+    "rotating_access": {
+      "()": "core.rotating_handler",
+      "filename": "logs/access.log",
+      "formatter": "access_file"
+    }
+  },
+  "loggers": {
+    "_granian": {
+      "handlers": ["default", "rotating"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "granian.access": {
+      "handlers": ["access", "rotating_access"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "kanae": {
+      "handlers": ["default", "rotating"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "kanae.error": {
+      "level": "ERROR"
+    },
+    "kanae.ory": {
+      "level": "DEBUG",
+      "propagate": false
+    },
+    "kanae.limiter": {
+      "level": "DEBUG",
+      "propagate": false
+    }
+  }
 }
