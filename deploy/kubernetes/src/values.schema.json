@@ -2,7 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["namespace", "serviceNames", "image", "kanae", "postgres", "valkey", "ory", "migrate", "renderSecrets", "secrets"],
+  "required": [
+    "namespace",
+    "serviceNames",
+    "image",
+    "kanae",
+    "postgres",
+    "valkey",
+    "ory",
+    "migrate",
+    "renderSecrets",
+    "secrets"
+  ],
   "$defs": {
     "image": {
       "type": "object",

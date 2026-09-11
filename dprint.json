@@ -8,6 +8,9 @@
     "proseWrap": "preserve",
     "associations": ["**/*.{yaml,yml}", "**/.yamllint"]
   },
+  "json": {
+    "lineWidth": 120
+  },
   "excludes": [
     "deploy/kubernetes/src/templates/**",
     "deploy/kubernetes/src/files/**",
@@ -15,6 +18,8 @@
     "**/*.sops.{yaml,yml}"
   ],
   "plugins": [
-    "npm:dprint-plugin-yaml@0.6.0"
+    "npm:dprint-plugin-yaml@0.6.0",
+    "npm:@dprint/json@0.23.0",
+    "npm:@dprint/toml@0.8.0"
   ]
 }
