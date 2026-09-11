@@ -1,0 +1,156 @@
+{
+  "k8sRecommendedLabels": [
+    "app.kubernetes.io/name",
+    "app.kubernetes.io/instance",
+    "app.kubernetes.io/version",
+    "app.kubernetes.io/component",
+    "app.kubernetes.io/part-of",
+    "app.kubernetes.io/managed-by",
+    "app.kubernetes.io/created-by"
+  ],
+  "imageRepositoryAllowList": [
+    "ghcr.io",
+    "docker.io"
+  ],
+  "untrustedRegistries": [
+    "quay.io"
+  ],
+  "cpu_limit_max": [],
+  "agentSandboxEgressMode": [
+    "managed"
+  ],
+  "insecureCapabilities": [
+    "SETPCAP",
+    "NET_ADMIN",
+    "NET_RAW",
+    "SYS_MODULE",
+    "SYS_RAWIO",
+    "SYS_PTRACE",
+    "SYS_ADMIN",
+    "SYS_BOOT",
+    "MAC_OVERRIDE",
+    "MAC_ADMIN",
+    "PERFMON",
+    "ALL",
+    "BPF"
+  ],
+  "wlKnownNames": [
+    "coredns",
+    "kube-proxy",
+    "event-exporter-gke",
+    "kube-dns",
+    "17-default-backend",
+    "metrics-server",
+    "ca-audit",
+    "ca-dashboard-aggregator",
+    "ca-notification-server",
+    "ca-ocimage",
+    "ca-oracle",
+    "ca-posture",
+    "ca-rbac",
+    "ca-vuln-scan",
+    "ca-webhook",
+    "ca-websocket",
+    "clair-clair"
+  ],
+  "hardenedSandboxRuntimeClasses": [
+    "gvisor"
+  ],
+  "trustedCosignPublicKeys": [
+    "placeholder"
+  ],
+  "max_high_vulnerabilities": [
+    "0"
+  ],
+  "servicesNames": [
+    "nifi-service",
+    "argo-server",
+    "minio",
+    "postgres",
+    "workflow-controller-metrics",
+    "weave-scope-app",
+    "kubernetes-dashboard"
+  ],
+  "memory_request_min": [
+    "0"
+  ],
+  "memory_limit_max": [],
+  "sandbox_memory_limit_max": [],
+  "sensitiveInterfaces": [
+    "nifi",
+    "argo-server",
+    "weave-scope-app",
+    "kubeflow",
+    "kubernetes-dashboard",
+    "jenkins",
+    "prometheus-deployment",
+    "ollama",
+    "vllm",
+    "kserve",
+    "triton-inference-server",
+    "ray-dashboard",
+    "ray-head",
+    "mlflow",
+    "jupyterhub",
+    "seldon",
+    "bentoml"
+  ],
+  "recommendedLabels": [
+    "app",
+    "tier",
+    "phase",
+    "version",
+    "owner",
+    "env"
+  ],
+  "publicRegistries": [
+    "registry.invalid/no-public-registries-blocked"
+  ],
+  "max_critical_vulnerabilities": [
+    "0"
+  ],
+  "sensitiveKeyNames": [
+    "aws_secret_access_key",
+    "azure_batchai_storage_key",
+    "azure_batch_key",
+    "secret",
+    "key",
+    "password",
+    "pwd",
+    "token",
+    "jwt",
+    "bearer",
+    "credential"
+  ],
+  "floatingImageTags": [],
+  "sensitiveValuesAllowed": [],
+  "cpu_request_max": [],
+  "cpu_limit_min": [
+    "0"
+  ],
+  "sensitiveKeyNamesAllowed": [],
+  "cpu_request_min": [
+    "0"
+  ],
+  "imageDigestExemptRepositories": [
+    "kanae.invalid/no-exemptions-configured"
+  ],
+  "sensitiveValues": [
+    "BEGIN \\w+ PRIVATE KEY",
+    "PRIVATE KEY",
+    "eyJhbGciO",
+    "JWT",
+    "Bearer",
+    "_key_",
+    "_secret_",
+    "AKIA[0-9A-Z]{16}",
+    "ghp_[0-9A-Za-z]{36}",
+    "AIza[0-9A-Za-z\\-_]{35}",
+    "xox[baprs]-[0-9A-Za-z]{10,48}"
+  ],
+  "memory_request_max": [],
+  "memory_limit_min": [
+    "0"
+  ],
+  "sandbox_cpu_limit_max": []
+}

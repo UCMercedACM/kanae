@@ -4,6 +4,14 @@ kind: Job
 metadata:
   name: keto-migrate
   namespace: kanae
+  labels:
+    app: keto-migrate
+    app.kubernetes.io/name: keto-migrate
+    app.kubernetes.io/instance: kanae
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: keto-migrate
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: Helm
   annotations:
     kapp.k14s.io/versioned: ""
     kapp.k14s.io/num-versions: "2"
@@ -13,8 +21,17 @@ spec:
   backoffLimit: 3
   template:
     metadata:
+      labels:
+        app: keto-migrate
+        app.kubernetes.io/name: keto-migrate
+        app.kubernetes.io/instance: kanae
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/component: keto-migrate
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: Helm
       annotations:
-        checksum/config: d88726b41ce366590d4f3db5b01c87f973478c09ecdb41d50a7b85ebcfcecece
+        checksum/config: 7c7ba4e33fe77606474a1d31948e9e9e6cafe950be130ca6d77127a7236bd7f9
+        checksum/namespaces: 4dbf53e861c1039944e7ef0b0685bee0e2b984396c5e1beaea85dcc593bb4dc2
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -22,19 +39,24 @@ spec:
         runAsNonRoot: true
         runAsUser: 100
         runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
       containers:
         - name: keto
           image: "oryd/keto:v26.2.0@sha256:bfdb8b9e283aedbd9e1d005c44eb1bbefd2096b2cb5b5aa0b7360b6e39c178d2"
           imagePullPolicy: IfNotPresent
-          args: ["migrate", "up", "-c", "/etc/config/keto.yml", "--yes"]
-          env:
-            - name: KETO_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: keto-migrate-db
-                  key: KETO_MIGRATE_PASSWORD
-            - name: DSN
-              value: "postgres://keto_migrate:$(KETO_MIGRATE_PASSWORD)@database:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4"
+          args:
+            - migrate
+            - up
+            - -c
+            - /etc/config/keto.yml
+            - -c
+            - /etc/secrets/dsn.yml
+            - --yes
           resources:
             requests:
               memory: 256Mi
@@ -45,13 +67,28 @@ spec:
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: config
               mountPath: /etc/config
               readOnly: true
+            - name: secrets
+              mountPath: /etc/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: keto-config
+        - name: secrets
+          secret:
+            secretName: keto-migrate-db
+            defaultMode: 0440
+            items:
+              - key: dsn.yml
+                path: dsn.yml
+        - name: tmp
+          emptyDir: {}

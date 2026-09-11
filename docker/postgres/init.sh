@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
 set -e
 
+resolve_secret() {
+	local var=$1 file_var="${1}_FILE"
+	local path=${!file_var:-}
+
+	unset "$file_var"
+	[[ -n $path ]] || return 0
+
+	if [[ -n ${!var:-} ]]; then
+		printf >&2 'error: both %s and %s are set (but are exclusive)\n' "$var" "$file_var"
+		exit 1
+	elif [[ ! -r $path ]]; then
+		printf >&2 'error: %s=%s is not readable\n' "$file_var" "$path"
+		exit 1
+	fi
+
+	declare -g "$var=$(<"$path")"
+}
+
+resolve_secret KANAE_PASSWORD
+resolve_secret KRATOS_PASSWORD
+resolve_secret KETO_PASSWORD
+resolve_secret POSTGRES_MONITOR_PASSWORD
+
+resolve_secret KANAE_MIGRATE_PASSWORD
+resolve_secret KRATOS_MIGRATE_PASSWORD
+resolve_secret KETO_MIGRATE_PASSWORD
+
 ### Roles and databases
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL

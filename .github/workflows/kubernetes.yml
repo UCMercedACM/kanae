@@ -36,12 +36,14 @@ jobs:
             kubernetes:
               - '.github/workflows/kubernetes.yml'
               - '.kube-linter.yml'
+              - '.kubescape/**'
               - 'deploy/kubernetes/**'
               - 'docker/ory/**'
               - 'docker/postgres/**'
               - 'scripts/seed/**'
               - 'src/schema.sql'
               - 'config.dist.yml'
+              - 'atlas.hcl'
 
             chart:
               - 'deploy/kubernetes/src/**'
@@ -60,6 +62,7 @@ jobs:
       HELM_VERSION: 4.2.4
       KUBECONFORM_VERSION: 0.8.0
       KUBE_LINTER_VERSION: 0.8.3
+      KUBESCAPE_VERSION: 4.0.14
 
     steps:
       - name: Checkout Repository
@@ -82,7 +85,7 @@ jobs:
 
           case "$OS-$ARCH" in
             darwin-amd64 | darwin-arm64 | linux-amd64 | linux-arm64) ;;
-            *) echo "no prebuilt kubeconform or kube-linter binary for $OS-$ARCH" >&2; exit 1 ;;
+            *) echo "no prebuilt kubeconform, kube-linter or kubescape binary for $OS-$ARCH" >&2; exit 1 ;;
           esac
 
           if [ "$ARCH" = amd64 ]; then
@@ -91,12 +94,20 @@ jobs:
             KUBE_LINTER_ARCH="_$ARCH"
           fi
 
+          KUBESCAPE_ASSET="kubescape_${KUBESCAPE_VERSION}_${OS}_${ARCH}"
+          KUBESCAPE_RELEASE="https://github.com/kubescape/kubescape/releases/download/v${KUBESCAPE_VERSION}"
+
           curl --proto "=https" -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-${OS}-${ARCH}.tar.gz" \
             | tar -xz -C /tmp kubeconform
           curl --proto "=https" -fsSL "https://github.com/stackrox/kube-linter/releases/download/v${KUBE_LINTER_VERSION}/kube-linter-${OS}${KUBE_LINTER_ARCH}" \
             -o /tmp/kube-linter
 
-          sudo install -m 0755 /tmp/kubeconform /tmp/kube-linter /usr/local/bin/
+          curl --proto "=https" -fsSL "${KUBESCAPE_RELEASE}/${KUBESCAPE_ASSET}" -o /tmp/kubescape
+          curl --proto "=https" -fsSL "${KUBESCAPE_RELEASE}/checksums.sha256" \
+            | awk -v asset="$KUBESCAPE_ASSET" '$2 == asset { print $1 "  /tmp/kubescape" }' \
+            | sha256sum --check --strict -
+
+          sudo install -m 0755 /tmp/kubeconform /tmp/kube-linter /tmp/kubescape /usr/local/bin/
 
       - name: Check symlinks
         run: deploy/kubernetes/scripts/check-symlinks.sh
@@ -136,6 +147,14 @@ jobs:
 
       - name: Check chart sources and manifests against policy
         run: deploy/kubernetes/scripts/check-policy.sh
+
+      - name: Scan manifests via Kubescape
+        run: |
+          kubescape scan framework all deploy/kubernetes/dist .k8s-local \
+            --exceptions .kubescape/exceptions.json \
+            --controls-config .kubescape/controls.json \
+            --severity-threshold low \
+            --fail-on-degraded-config
 
       - name: Check for manifest drift
         run: |

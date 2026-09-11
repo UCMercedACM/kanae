@@ -1,6 +1,7 @@
 # The symlinks under deploy/kubernetes/src/files/, as link|source pairs. Links
 # are relative to that directory, sources to the repository root.
 
+atlas.hcl|atlas.hcl
 config.dist.yml|config.dist.yml
 postgres/init.sh|docker/postgres/init.sh
 postgres/pg_hba.conf|docker/postgres/pg_hba.conf

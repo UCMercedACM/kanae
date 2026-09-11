@@ -8,6 +8,8 @@ metadata:
 data:
   schema.sql: |
     {{- include "kanae.file" (list . "schema.sql") | nindent 4 }}
+  atlas.hcl: |
+    {{- include "kanae.file" (list . "atlas.hcl") | nindent 4 }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -38,6 +40,14 @@ kind: Job
 metadata:
   name: kanae-migrate
   namespace: {{ .Values.namespace }}
+  labels:
+    app: kanae-migrate
+    app.kubernetes.io/name: kanae-migrate
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: kanae-migrate
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     kapp.k14s.io/versioned: ""
     kapp.k14s.io/num-versions: "2"
@@ -47,8 +57,17 @@ spec:
   backoffLimit: 3
   template:
     metadata:
+      labels:
+        app: kanae-migrate
+        app.kubernetes.io/name: kanae-migrate
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.Version | quote }}
+        app.kubernetes.io/component: kanae-migrate
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
       annotations:
         checksum/schema: {{ include "kanae.file" (list . "schema.sql") | sha256sum }}
+        checksum/atlas: {{ include "kanae.file" (list . "atlas.hcl") | sha256sum }}
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -56,6 +75,12 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
       containers:
         - name: atlas
           image: "{{ .Values.migrate.atlas.image.repository }}:{{ .Values.migrate.atlas.image.tag }}"
@@ -64,18 +89,12 @@ spec:
             - schema
             - apply
             - --auto-approve
-            - --to
-            - "file:///etc/atlas/schema.sql"
-            - --url
-            - {{ include "kanae.atlasUrl" . | quote }}
-            - --dev-url
-            - {{ include "kanae.atlasDevUrl" . | quote }}
-          env:
-            - name: KANAE_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kanae-migrate-db
-                  key: KANAE_MIGRATE_PASSWORD
+            - -c
+            - "file:///etc/atlas/atlas.hcl"
+            - --env
+            - prod
+            - --var
+            - host={{ .Values.serviceNames.database }}
           resources:
             requests:
               memory: 256Mi
@@ -86,22 +105,45 @@ spec:
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: schema
               mountPath: /etc/atlas
               readOnly: true
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: schema
           configMap:
             name: kanae-schema
+        - name: secrets
+          secret:
+            secretName: kanae-migrate-db
+            defaultMode: 0440
+            items:
+              - key: KANAE_MIGRATE_PASSWORD
+                path: KANAE_MIGRATE_PASSWORD
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: kratos-migrate
   namespace: {{ .Values.namespace }}
+  labels:
+    app: kratos-migrate
+    app.kubernetes.io/name: kratos-migrate
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: kratos-migrate
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     kapp.k14s.io/versioned: ""
     kapp.k14s.io/num-versions: "2"
@@ -111,6 +153,14 @@ spec:
   backoffLimit: 3
   template:
     metadata:
+      labels:
+        app: kratos-migrate
+        app.kubernetes.io/name: kratos-migrate
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.Version | quote }}
+        app.kubernetes.io/component: kratos-migrate
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
       annotations:
         checksum/config: {{ include "kanae.file" (list . "kratos/kratos.prod.yml") | sha256sum }}
     spec:
@@ -120,19 +170,25 @@ spec:
         runAsNonRoot: true
         runAsUser: 10000
         runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
       containers:
         - name: kratos
           image: "{{ .Values.ory.kratos.image.repository }}:{{ .Values.ory.kratos.image.tag }}"
           imagePullPolicy: IfNotPresent
-          args: ["migrate", "sql", "-c", "/etc/config/kratos.yml", "--read-from-env", "--yes"]
-          env:
-            - name: KRATOS_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kratos-migrate-db
-                  key: KRATOS_MIGRATE_PASSWORD
-            - name: DSN
-              value: {{ include "kanae.kratosMigrateDsn" . | quote }}
+          args:
+            - migrate
+            - sql
+            - -c
+            - /etc/config/kratos.yml
+            - -c
+            - /etc/secrets/dsn.yml
+            - --read-from-env
+            - --yes
           resources:
             requests:
               memory: 256Mi
@@ -143,22 +199,45 @@ spec:
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: config
               mountPath: /etc/config
               readOnly: true
+            - name: secrets
+              mountPath: /etc/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: kratos-config
+        - name: secrets
+          secret:
+            secretName: kratos-migrate-db
+            defaultMode: 0440
+            items:
+              - key: dsn.yml
+                path: dsn.yml
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: keto-migrate
   namespace: {{ .Values.namespace }}
+  labels:
+    app: keto-migrate
+    app.kubernetes.io/name: keto-migrate
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: keto-migrate
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     kapp.k14s.io/versioned: ""
     kapp.k14s.io/num-versions: "2"
@@ -168,8 +247,17 @@ spec:
   backoffLimit: 3
   template:
     metadata:
+      labels:
+        app: keto-migrate
+        app.kubernetes.io/name: keto-migrate
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.Version | quote }}
+        app.kubernetes.io/component: keto-migrate
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
       annotations:
-        checksum/config: {{ printf "%s\x00%s" (include "kanae.file" (list . "keto/keto.yml")) (include "kanae.file" (list . "keto/namespaces.keto.ts")) | sha256sum }}
+        checksum/config: {{ include "kanae.file" (list . "keto/keto.yml") | sha256sum }}
+        checksum/namespaces: {{ include "kanae.file" (list . "keto/namespaces.keto.ts") | sha256sum }}
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -177,19 +265,24 @@ spec:
         runAsNonRoot: true
         runAsUser: 100
         runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
       containers:
         - name: keto
           image: "{{ .Values.ory.keto.image.repository }}:{{ .Values.ory.keto.image.tag }}"
           imagePullPolicy: IfNotPresent
-          args: ["migrate", "up", "-c", "/etc/config/keto.yml", "--yes"]
-          env:
-            - name: KETO_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: keto-migrate-db
-                  key: KETO_MIGRATE_PASSWORD
-            - name: DSN
-              value: {{ include "kanae.ketoMigrateDsn" . | quote }}
+          args:
+            - migrate
+            - up
+            - -c
+            - /etc/config/keto.yml
+            - -c
+            - /etc/secrets/dsn.yml
+            - --yes
           resources:
             requests:
               memory: 256Mi
@@ -200,13 +293,28 @@ spec:
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: config
               mountPath: /etc/config
               readOnly: true
+            - name: secrets
+              mountPath: /etc/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: keto-config
+        - name: secrets
+          secret:
+            secretName: keto-migrate-db
+            defaultMode: 0440
+            items:
+              - key: dsn.yml
+                path: dsn.yml
+        - name: tmp
+          emptyDir: {}

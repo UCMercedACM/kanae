@@ -4,6 +4,14 @@ kind: Job
 metadata:
   name: kratos-migrate
   namespace: kanae
+  labels:
+    app: kratos-migrate
+    app.kubernetes.io/name: kratos-migrate
+    app.kubernetes.io/instance: kanae
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: kratos-migrate
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: Helm
   annotations:
     kapp.k14s.io/versioned: ""
     kapp.k14s.io/num-versions: "2"
@@ -13,6 +21,14 @@ spec:
   backoffLimit: 3
   template:
     metadata:
+      labels:
+        app: kratos-migrate
+        app.kubernetes.io/name: kratos-migrate
+        app.kubernetes.io/instance: kanae
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/component: kratos-migrate
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: Helm
       annotations:
         checksum/config: c08081ba997bff189f38ffc7aec2865db77955af3a18dd445a0833c87408726e
     spec:
@@ -22,19 +38,25 @@ spec:
         runAsNonRoot: true
         runAsUser: 10000
         runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
       containers:
         - name: kratos
           image: "oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
           imagePullPolicy: IfNotPresent
-          args: ["migrate", "sql", "-c", "/etc/config/kratos.yml", "--read-from-env", "--yes"]
-          env:
-            - name: KRATOS_MIGRATE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: kratos-migrate-db
-                  key: KRATOS_MIGRATE_PASSWORD
-            - name: DSN
-              value: "postgres://kratos_migrate:$(KRATOS_MIGRATE_PASSWORD)@database:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4"
+          args:
+            - migrate
+            - sql
+            - -c
+            - /etc/config/kratos.yml
+            - -c
+            - /etc/secrets/dsn.yml
+            - --read-from-env
+            - --yes
           resources:
             requests:
               memory: 256Mi
@@ -45,13 +67,28 @@ spec:
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: config
               mountPath: /etc/config
               readOnly: true
+            - name: secrets
+              mountPath: /etc/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: kratos-config
+        - name: secrets
+          secret:
+            secretName: kratos-migrate-db
+            defaultMode: 0440
+            items:
+              - key: dsn.yml
+                path: dsn.yml
+        - name: tmp
+          emptyDir: {}
