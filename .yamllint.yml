@@ -10,6 +10,10 @@ rules:
   octal-values:
     forbid-implicit-octal: true
     forbid-explicit-octal: true
+
+    # This is the k8s standard to use 0440
+    ignore: |
+      deploy/kubernetes/dist/
   anchors:
     forbid-undeclared-aliases: true
     forbid-duplicated-anchors: true
