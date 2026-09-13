@@ -75,7 +75,7 @@ class RateLimitExceeded(HTTPException):
 
         if limit.error_message:
             if callable(limit.error_message):
-                self.description = limit.error_message()  # ty: ignore[call-top-callable]
+                self.description = limit.error_message()
             else:
                 self.description = limit.error_message
 
@@ -261,7 +261,6 @@ class KanaeLimiter:
     Args:
         key_func (Callable[..., str]): Function used to determine the domain of the key
         config (KanaeConfig): Instance of `KanaeConfig`
-        enabled (bool, optional): Whether to enable or disable the rate limiter. Defaults to True.
         headers_enabled (bool, optional): Whether to inject `X-RateLimit` and related entries into the header. Defaults to False.
         key_style (Literal["endpoint", "url"], optional): Determines the style of the key to use. `url` uses the path of the request, `endpoint` uses the function module and name. Defaults to `url`.
     """
@@ -273,7 +272,6 @@ class KanaeLimiter:
         key_func: Callable[..., str],
         *,
         config: KanaeConfig,
-        enabled: bool = True,
         headers_enabled: bool = False,
         key_style: Literal["endpoint", "url"] = "url",
     ) -> None:
@@ -284,7 +282,7 @@ class KanaeLimiter:
 
         ### Configuration attributes
 
-        self.enabled = enabled
+        self.enabled = self._config.enabled
         self._headers_enabled = headers_enabled or self._config.headers_enabled
         self._auto_check = self._config.auto_check
         self._swallow_errors = self._config.swallow_errors
@@ -297,10 +295,7 @@ class KanaeLimiter:
 
         ### Primary limiter
 
-        self._storage = ValkeyStorage(
-            uri=self.storage_uri,
-            key_prefix=self._key_prefix,
-        )
+        self._storage = ValkeyStorage(uri=self.storage_uri)
         self._limiter = FixedWindowRateLimiter(self._storage)
 
         ### Memory fallback-related

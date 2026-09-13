@@ -22,7 +22,7 @@ class ValkeyStorage(Storage, MovingWindowSupport, SlidingWindowCounterSupport):
     `GlideManager`, which is attached at runtime
     """
 
-    PREFIX = "LIMITS"
+    PREFIX = "RATELIMIT"
 
     RES_DIR = "resources/redis/lua_scripts"
 
@@ -41,7 +41,6 @@ class ValkeyStorage(Storage, MovingWindowSupport, SlidingWindowCounterSupport):
         self,
         uri: str,
         *,
-        key_prefix: str = PREFIX,
         wrap_exceptions: bool = False,
     ) -> None:
         """
@@ -49,14 +48,12 @@ class ValkeyStorage(Storage, MovingWindowSupport, SlidingWindowCounterSupport):
             uri: uri of the form used by `GlideManager`. Retained for
                 conformance with `limits.aio.storage.Storage`; the actual
                 client configuration is owned by the attached manager.
-            key_prefix: the prefix for each key created in redis.
             wrap_exceptions: Whether to wrap storage exceptions in
                 `limits.errors.StorageError` before raising it.
         """
         super().__init__(uri, wrap_exceptions=wrap_exceptions)
 
         self.uri = uri
-        self.key_prefix = key_prefix
         self._manager: Optional[GlideManager] = None
 
         self.lua_moving_window = Script(self.SCRIPT_MOVING_WINDOW)
@@ -80,7 +77,7 @@ class ValkeyStorage(Storage, MovingWindowSupport, SlidingWindowCounterSupport):
         return self._manager.client
 
     def _prefixed_key(self, key: str) -> str:
-        return f"{self.key_prefix}:{key}"
+        return f"{self.PREFIX}:{key}"
 
     def _current_window_key(self, key: str) -> str:
         return f"{{{key}}}"
@@ -277,7 +274,7 @@ class ValkeyStorage(Storage, MovingWindowSupport, SlidingWindowCounterSupport):
             return True
 
     async def reset(self) -> Optional[int]:
-        """Delete all keys prefixed with `key_prefix` in blocks of 5000.
+        """Delete all keys prefixed with `RATELIMIT` in blocks of 5000.
 
         Warning:
             Intended to be fast but not validated on very large datasets —
