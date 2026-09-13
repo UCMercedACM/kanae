@@ -6,6 +6,7 @@ config.dist.yml|config.dist.yml
 postgres/init.sh|docker/postgres/init.sh
 postgres/pg_hba.conf|docker/postgres/pg_hba.conf
 schema.sql|src/schema.sql
+valkey/users.acl|docker/valkey/users.acl
 
 keto/keto.yml|docker/ory/config/keto/keto.yml
 keto/namespaces.keto.ts|docker/ory/config/keto/namespaces.keto.ts

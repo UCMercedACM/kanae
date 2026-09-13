@@ -201,3 +201,6 @@ deploy/kubernetes/secrets.yml
 # regenerating them would leave the Secrets disagreeing with the database.
 # Throwaway credentials for a local cluster; never used anywhere else
 deploy/kubernetes/secrets.local.yml
+
+# Mostly for long-term agent viewing
+decisions.tsv

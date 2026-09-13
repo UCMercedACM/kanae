@@ -1,0 +1,2 @@
+user default on nopass -@all +ping +info +acl|log +acl|whoami
+user kanae on resetpass ~RATELIMIT:* ~media:get-url:* ~ory:* -@all +ping +client|setinfo +info +get +set +del +ttl +incrby +expire +evalsha +script|load +scan

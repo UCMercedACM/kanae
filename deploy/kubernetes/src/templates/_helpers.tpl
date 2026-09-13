@@ -15,6 +15,11 @@
 {{- end }}
 
 
+{{- define "kanae.valkeyUri" }}
+{{- printf "valkey://kanae:%s@%s:6379/" .Values.secrets.valkeyPassword .Values.serviceNames.valkey }}
+{{- end }}
+
+
 {{- define "kanae.kratosMigrateDsn" }}
 {{- printf "postgres://kratos_migrate:%s@%s:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4" .Values.secrets.kratosMigratePassword .Values.serviceNames.database }}
 {{- end }}
