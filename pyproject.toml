@@ -35,7 +35,7 @@ dev = [
 lint = [
   "yamllint~=1.38.0",
   "ruff~=0.16.0",
-  "ty==0.0.78",
+  "ty==0.0.80",
   { include-group = "types" },
 ]
 types = [
@@ -49,8 +49,8 @@ test = [
   "pytest~=9.1.0",
   "pytest-asyncio~=1.4.0",
   "testcontainers~=4.15.0",
-  "hypothesis~=6.167.0",
-  "schemathesis~=4.25.0",
+  "hypothesis~=6.168.0",
+  "schemathesis~=4.27.0",
 ]
 
 [tool.ty.src]
