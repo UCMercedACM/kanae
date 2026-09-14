@@ -1874,10 +1874,10 @@ Tick a phase only when its exit gate has passed on a real cluster.
 
 **Layer B. Platform**
 
-- [ ] Phase 3. No file in the repo is a copy of another, the chart reaches its
+- [x] Phase 3. No file in the repo is a copy of another, the chart reaches its
       sources through checked symlinks, Secrets are applied through kapp, one
       program renders each generated file, real age keys in `.sops.yaml`
-- [ ] Phase 4. Postgres and Valkey Ready, apply order declared, data survives
+- [x] Phase 4. Postgres and Valkey Ready, apply order declared, data survives
       deleting the Postgres pod
 - [x] Phase 5. Three databases with their tables, migration Jobs versioned by
       kapp, a written forward-only migration policy, a schema change proven to
