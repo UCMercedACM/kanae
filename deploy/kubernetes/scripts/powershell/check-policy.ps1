@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $Templates = 'deploy/kubernetes/src/templates'
 $Files = 'deploy/kubernetes/src/files'
 $Acl = 'docker/valkey/users.acl'
+$Init = 'deploy/docker/init.sh'
 
 function Reject($hits, $why) {
     if (-not $hits) { return }
@@ -24,7 +25,7 @@ Reject (Get-ChildItem $Files -Recurse -Force -File |
 Reject (Get-ChildItem $Templates -Recurse -File | Where-Object Name -ne '_helpers.tpl' | Select-String 'Files\.Get') `
     '.Files.Get outside _helpers.tpl, read the file through kanae.file'
 
-Reject (@($Acl, "$Templates/secrets.yml") |
+Reject (@($Acl, "$Templates/secrets.yml", $Init) |
         Where-Object { -not (Select-String -Path $_ -SimpleMatch 'resetpass' -CaseSensitive -Quiet) }) `
     'the resetpass token is gone, so the substitution does nothing and kanae ships with no password'
 

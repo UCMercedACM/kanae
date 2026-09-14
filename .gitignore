@@ -186,6 +186,7 @@ garage
 tests/integration/secrets.env
 
 deploy/docker/.deploy.env
+deploy/docker/.valkey.acl
 !deploy/kubernetes/dist
 
 # Rendered locally by k8s:render:local — a laptop render is a build artifact

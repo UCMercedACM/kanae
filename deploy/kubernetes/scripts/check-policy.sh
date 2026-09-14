@@ -4,6 +4,7 @@ set -euo pipefail
 TEMPLATES=deploy/kubernetes/src/templates
 FILES=deploy/kubernetes/src/files
 ACL=docker/valkey/users.acl
+INIT=deploy/docker/init.sh
 
 reject() {
 	local message=$1
@@ -29,5 +30,6 @@ fi
 
 grep -Fq resetpass "$ACL" || reject "$ACL no longer holds the resetpass token, so the substitution finds nothing to replace and kanae ships with no password"
 grep -Fq resetpass "$TEMPLATES/secrets.yml" || reject "secrets.yml no longer substitutes the resetpass token, so kanae ships with no password"
+grep -Fq resetpass "$INIT" || reject "$INIT no longer substitutes the resetpass token, so the compose stack ships with no password"
 
 kube-linter lint --config .kube-linter.yml deploy/kubernetes/dist .k8s-local
