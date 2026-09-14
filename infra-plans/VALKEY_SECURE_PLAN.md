@@ -8,6 +8,10 @@ express, which is who may connect and what they may run.
 This plan adds an ACL file with three users, turns off RDB snapshotting, and caps both client count
 and client memory. It does not add TLS. It does not add a NetworkPolicy.
 
+Most of it has shipped. "What shipped" records what landed, what landed in a different shape, and
+what did not land at all. Read that section before the design sections below, because the ACL that
+shipped has two users rather than the three described here.
+
 An adversarial review rewrote most of this document. `VALKEY_SECURITY_FINDINGS.md` records what the
 reviewers found, what I verified, and what I rejected. Read it for the reasoning behind the choices
 below.
@@ -494,6 +498,160 @@ application user.
 The probes are unchanged, the Service is unchanged, and the application reads its URI from config it
 already reads.
 
+## What shipped
+
+Commit `36d5176` carries the Kubernetes work. The Docker Compose work sits uncommitted on
+`secure-valkey` across nine files. Three parts of the design landed in a different shape, the ACL
+grew a second consumer the plan never mentioned, and five items are missing.
+
+### The ACL has two users, not three
+
+`docker/valkey/users.acl` is two lines:
+
+```
+user default on nopass -@all +ping +info +acl|log +acl|whoami
+user kanae on resetpass ~RATELIMIT:* ~media:get-url:* ~ory:* -@all +ping +client|setinfo +info +get +set +del +ttl +incrby +expire +evalsha +script|load +scan
+```
+
+The `admin` user is gone. Its only job was reading `ACL LOG` and `CONFIG GET`, and every assertion
+in the verification section above is an `ACL LOG` read. `default` holds `+acl|log` and `+acl|whoami`
+instead, so the audit trail stays readable and there is no second credential to generate, store, and
+rotate. `default` still cannot run `CONFIG GET`, so the `CONFIG GET save` line in the command list
+above does not work as written.
+
+The key prefix landed as `RATELIMIT`, not `LIMITS`. `ValkeyStorage.PREFIX`
+(`src/utils/limiter/storage.py:25`) is a fixed class constant and `_prefixed_key` (`:79`) always
+prepends it. That drops the empty-prefix branch the plan proposed, because no caller ever passes an
+empty prefix. Commit `1e40ace` carries the change.
+
+`+scan` is granted, which is option 1 from the `SCAN` section above. Option 2 is still owed, and so
+is the `_clear` cursor loop.
+
+### The password goes in as plaintext, not a hash
+
+`secrets.yml:117` swaps a token instead of hashing one:
+
+```gotemplate
+users.acl: |
+  {{- include "kanae.file" (list . "valkey/users.acl") | replace "resetpass" (printf ">%s" $secrets.valkeyPassword) | nindent 4 }}
+```
+
+The committed file holds the literal word `resetpass` where the password goes. A checkout therefore
+carries no credential, and the file still parses as valid ACL syntax on its own. Helm's `replace`
+puts `>` and the plaintext password in its place at render time.
+
+A sha256 hash would keep the plaintext out of the rendered Secret. It buys little here, because the
+same plaintext already sits in `kanae-config` inside the connection URI and both Secrets have the
+same reader set. The plaintext form is also what lets one file serve both the chart and Compose,
+because `sed` cannot compute a hash.
+
+Rename the token on either side and the substitution stops matching in silence. `resetpass` is a real
+ACL directive, so a file that keeps it still loads, the pod still boots, and the `PING` probe still
+answers, while `kanae` ships with no password. `check-policy.sh:31-33` rejects that:
+
+```bash
+grep -Fq resetpass "$ACL" || reject "..."
+grep -Fq resetpass "$TEMPLATES/secrets.yml" || reject "..."
+grep -Fq resetpass "$INIT" || reject "..."
+```
+
+`scripts/powershell/check-policy.ps1:28-30` checks the same three files. It passes `-CaseSensitive`,
+because `Select-String` matches case-insensitively by default while `grep -F` and sprig `replace` do
+not. Without that flag, a file holding `RESETPASS` passes on Windows and fails on Linux.
+
+Three plain `grep -Fq` statements do the work rather than the `grep -L ... | grep .` idiom used higher
+up in the same script. `grep -L` exits 1 when no file matched the pattern, even while it prints
+filenames, so under `set -o pipefail` the case where every file lost the token passes. The existing
+`find ... | grep .` lines are safe only because `find` always exits 0.
+
+### One ACL file feeds both stacks
+
+`deploy/kubernetes/files.map:9` maps `valkey/users.acl` to `docker/valkey/users.acl`, and
+`deploy/kubernetes/src/files/valkey/users.acl` is the symlink. The chart reads it through
+`kanae.file`. `deploy/docker/init.sh` reads the same path directly. The grant list exists once.
+
+`deploy/kubernetes/src/templates/valkey.yml:69` passes the file and mounts it:
+
+```yaml
+args: ["valkey-server", "--aclfile", "/run/secrets/users.acl", "--protected-mode", "no",
+       "--maxmemory", "{{ .Values.valkey.maxmemory }}", "--maxmemory-policy", "volatile-ttl"]
+```
+
+The mount is a projected volume at `/run/secrets` with `defaultMode: 0440`, matching what
+`postgres.yml` does for its own credentials. The `valkey-acl` Secret carries
+`kapp.k14s.io/delete-strategy: "orphan"` and no versioning annotation, because the chart has no
+versioned-resource strategy to match.
+
+`.github/workflows/kubernetes.yml:42` adds `docker/valkey/**` to the path filter, so editing the ACL
+triggers the Kubernetes job.
+
+### The Compose stacks
+
+`deploy/docker/` is the deployment stack, so it gets the same ACL. `init.sh` generates
+`VALKEY_PASSWORD` alongside the other secrets, then writes two derived things on every run:
+
+```bash
+VALKEY_URI="valkey://kanae:${VALUES[VALKEY_PASSWORD]}@valkey:6379/" \
+	run_yq -i '.kanae.limiter.storage_uri = strenv(VALKEY_URI)'
+
+[[ -f $ACL_DIST_FILE ]] || abort "no ACL to render from: $ACL_DIST_FILE"
+sed "s/resetpass/>${VALUES[VALKEY_PASSWORD]}/" "$ACL_DIST_FILE" >"$ACL_FILE"
+chmod 644 "$ACL_FILE"
+```
+
+The URI carries the password, so `init.sh` rewrites it on every run rather than storing it. The
+assignment sits in front of the command instead of in an `export`, and it still reaches the
+`--env VALKEY_URI` that `run_yq` passes to `docker run` at `init.sh:79`.
+
+`ACL_FILE` is `deploy/docker/.valkey.acl`, gitignored at `.gitignore:189`. The dot matches
+`.deploy.env`, the other file `init.sh` renders. The name differs from its source on purpose, because
+two files named `users.acl` in one repository make every grep ambiguous.
+
+The `sed` is safe only because `openssl rand -hex` emits `[0-9a-f]` and nothing else. No character in
+a generated password can close the expression or back-reference the match. A different generator
+breaks that property.
+
+Mode 644 is deliberate and it is a real cost. Valkey reads the file as uid 999 through a bind mount,
+and a mode the container cannot read crash-loops it. On a shared host, every local user can read the
+password. `init.sh:102` and `:123` already accept the same trade for `config.yml`.
+
+The Valkey service in `deploy/docker/docker-compose.yml` loses its published port and gains the file:
+
+```yaml
+command: >
+  valkey-server --aclfile /run/secrets/users.acl --protected-mode no
+  --maxmemory 256mb --maxmemory-policy volatile-ttl
+volumes:
+  - ./.valkey.acl:/run/secrets/users.acl:ro
+```
+
+Keep every argument in that folded string free of `#` and `>`. Compose splits a folded scalar the way
+a shell does, so a `#` drops the rest of the command without an error. The list form does not split.
+
+Run `init.sh` before `docker compose up`. Docker creates an empty directory at a missing bind source,
+and Valkey then dies on a file-open error that does not mention `init.sh`.
+
+The three development stacks (`docker/docker-compose.yml`, `docker/docker-compose.dev.yml`, and
+`docker/docker-compose.test.yml`) get no ACL. They bind `127.0.0.1:6379:6379` instead, which is what
+the `database` service in each of those files already did. They hold throwaway data on a developer
+machine, so the port was the whole exposure.
+
+### What is missing
+
+- `--save ''`, `--maxclients`, and `--maxmemory-clients`. RDB snapshotting is still on and both
+  client caps are still at their defaults. Nothing from "Hardening that is not about authentication"
+  landed.
+- The `checksum/acl` annotation on the pod template. Rotating `valkeyPassword` updates the Secret in
+  place and leaves the running Valkey holding the old password, which is the failure "The ACL file
+  has to survive a password change" describes. Close this one first.
+- `valkey:6379` in the hardcoded-address rule at `check-policy.sh:15`. `kanae.valkeyUri` reads
+  `.Values.serviceNames.valkey`, so no template violates the rule today. Nothing stops the next one.
+- Rotating with `deploy/docker/init.sh -r` writes a new password into the ACL file and the config,
+  then leaves the container running with the old one. Kanae gets `WRONGPASS` until you recreate the
+  stack, and the script does not say so.
+- A run of the integration suite with `.kanae.limiter.enabled = true`
+  (`tests/integration/init.sh:81`).
+
 ## What is still open
 
 Authentication does not close the pre-authentication surface. Three of the ten advisories Valkey has
@@ -513,6 +671,9 @@ enforcing policy yet.
 
 `default` can still `PING` from anywhere in the namespace, so Valkey remains a liveness oracle. That
 is the price of a probe with no credential, and it is a fair one.
+
+"What is missing" lists the rest of what is open. Close the password rotation gap first, because it
+turns a routine rotation into an outage.
 
 ## Deliberate omissions
 
@@ -609,10 +770,23 @@ arguments this plan proposes. Four changed something in the text above.
 5. **Does the ACL file load?** Yes. Clean startup, three users in `ACL LIST`, `default` correctly
    fenced to `PING`.
 
-What is still unproven is everything Kubernetes adds on top: that the Secret renders the file with
-the directives on one physical line, that the projection lands as a directory the read-only root
-filesystem accepts, and that the `checksum/` annotation restarts the pod on a password change. Those
-are properties of the chart, not of Valkey, and they need a k3d run once the templates change.
+The chart properties then ran on k3d, against the templates that shipped. `kapp deploy` reported 26
+of 26 resources succeeded and the Valkey pod went Ready. The Secret renders each directive on one
+physical line, and the projection mounts as a directory the read-only root filesystem accepts. In
+the cluster, `default` gets `NOPERM` on `FLUSHDB` and `PONG` on `PING`, `kanae` reads and writes its
+three namespaces, `GET RATELIMIT:probe` returns `1`, `kanae` is refused `FLUSHDB` and every
+out-of-namespace key, and a wrong password gets `WRONGPASS`. Every gate passes: `helm lint` with 0
+failures, `kubeconform` over 15 of 15 files, `kube-linter`, `check-symlinks`, and `kubescape` across
+137 controls.
+
+The Compose stack ran the same way. `docker compose up valkey` reports `running health=healthy`,
+`docker port kanae_valkey` prints nothing, and `docker inspect` shows `Cmd` split into separate
+arguments with no element carrying a space. The same ACL checks pass inside the container. Three runs
+of `deploy/docker/init.sh` against a scratch directory kept the password across runs, rotated it
+under `-r`, and left `.deploy.env`, `.valkey.acl`, and `kanae.limiter.storage_uri` carrying the same
+64 hex characters.
+
+The `checksum/` annotation is still unproven because it was never added. See "What is missing".
 
 The integration suite also still needs a pass with `.kanae.limiter.enabled = true`
 (`tests/integration/init.sh:81`). The limiter path above was exercised by hand, not by the suite.
