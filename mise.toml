@@ -37,8 +37,8 @@ pin = true
 
 [env]
 _.file = [{ path = "{{ config_root }}/docker/.env" }]
-DATABASE_URL = "postgres://kanae_migrate:${KANAE_MIGRATE_PASSWORD:-}@localhost:5432/${DB_DATABASE_NAME:-}?search_path=public&sslmode=disable"
-DEV_DATABASE_URL = "postgres://kanae_migrate:${KANAE_MIGRATE_PASSWORD:-}@localhost:5432/postgres?search_path=public&sslmode=disable"
+DATABASE_URL = "postgres://kanae_migrate:{{ env.KANAE_MIGRATE_PASSWORD | default(value='') }}@localhost:5432/{{ env.DB_DATABASE_NAME | default(value='') }}?search_path=public&sslmode=disable"
+DEV_DATABASE_URL = "postgres://kanae_migrate:{{ env.KANAE_MIGRATE_PASSWORD | default(value='') }}@localhost:5432/postgres?search_path=public&sslmode=disable"
 
 # Docker
 [tasks."docker:preview"]
