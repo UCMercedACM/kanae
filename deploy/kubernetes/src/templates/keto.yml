@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keto-config
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+    kapp.k14s.io/versioned: ""
+data:
+  keto.yml: |
+    {{- include "kanae.file" (list . "keto/keto.yml") | nindent 4 }}
+  namespaces.keto.ts: |
+    {{- include "kanae.file" (list . "keto/namespaces.keto.ts") | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.serviceNames.keto }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Values.serviceNames.keto }}
+  ports:
+    - name: read
+      port: 4466
+      targetPort: read
+    - name: write
+      port: 4467
+      targetPort: write
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.serviceNames.keto }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.serviceNames.keto }}
+    app.kubernetes.io/name: {{ .Values.serviceNames.keto }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: {{ .Values.serviceNames.keto }}
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/services"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/schemas"
+    kapp.k14s.io/change-rule.teardown: "delete before deleting kanae/databases"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.serviceNames.keto }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.serviceNames.keto }}
+        app.kubernetes.io/name: {{ .Values.serviceNames.keto }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.Version | quote }}
+        app.kubernetes.io/component: {{ .Values.serviceNames.keto }}
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
+      containers:
+        - name: keto
+          image: "{{ .Values.ory.keto.image.repository }}:{{ .Values.ory.keto.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - -c
+            - /etc/config/keto.yml
+            - -c
+            - /etc/secrets/dsn.yml
+          ports:
+            - name: read
+              containerPort: 4466
+            - name: write
+              containerPort: 4467
+          readinessProbe:
+            exec:
+              command: ["wget", "-q", "--spider", "http://127.0.0.1:4466/health/ready"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["wget", "-q", "--spider", "http://127.0.0.1:4466/health/alive"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: keto-config
+        - name: secrets
+          secret:
+            secretName: keto-db
+            defaultMode: 0440
+            items:
+              - key: dsn.yml
+                path: dsn.yml
+        - name: tmp
+          emptyDir: {}

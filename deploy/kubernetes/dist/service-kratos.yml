@@ -1,0 +1,19 @@
+# Source: kanae/templates/kratos.yml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kratos
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  type: ClusterIP
+  selector:
+    app: kratos
+  ports:
+    - name: public
+      port: 4433
+      targetPort: public
+    - name: admin
+      port: 4434
+      targetPort: admin

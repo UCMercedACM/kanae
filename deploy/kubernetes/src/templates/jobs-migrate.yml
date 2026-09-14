@@ -11,30 +11,6 @@ data:
   atlas.hcl: |
     {{- include "kanae.file" (list . "atlas.hcl") | nindent 4 }}
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kratos-config
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kapp.k14s.io/change-group: "kanae/config"
-data:
-  kratos.yml: |
-    {{- include "kanae.file" (list . "kratos/kratos.prod.yml") | nindent 4 }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: keto-config
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kapp.k14s.io/change-group: "kanae/config"
-data:
-  keto.yml: |
-    {{- include "kanae.file" (list . "keto/keto.yml") | nindent 4 }}
-  namespaces.keto.ts: |
-    {{- include "kanae.file" (list . "keto/namespaces.keto.ts") | nindent 4 }}
----
 apiVersion: batch/v1
 kind: Job
 metadata:

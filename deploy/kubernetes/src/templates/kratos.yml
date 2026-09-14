@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kratos-config
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+    kapp.k14s.io/versioned: ""
+data:
+  kratos.yml: |
+    {{- include "kanae.file" (list . "kratos/kratos.prod.yml") | nindent 4 }}
+  identity.schema.json: |
+    {{- include "kanae.file" (list . "kratos/identity.schema.json") | nindent 4 }}
+  payload.jsonnet: |
+    {{- include "kanae.file" (list . "kratos/hooks/payload.jsonnet") | nindent 4 }}
+  recovery.valid.email.subject.gotmpl: |
+    {{- include "kanae.file" (list . "kratos/templates/recovery/valid/email.subject.gotmpl") | nindent 4 }}
+  recovery.valid.email.body.gotmpl: |
+    {{- include "kanae.file" (list . "kratos/templates/recovery/valid/email.body.gotmpl") | nindent 4 }}
+  recovery.valid.email.body.plaintext.gotmpl: |
+    {{- include "kanae.file" (list . "kratos/templates/recovery/valid/email.body.plaintext.gotmpl") | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.serviceNames.kratos }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Values.serviceNames.kratos }}
+  ports:
+    - name: public
+      port: 4433
+      targetPort: public
+    - name: admin
+      port: 4434
+      targetPort: admin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.serviceNames.kratos }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.serviceNames.kratos }}
+    app.kubernetes.io/name: {{ .Values.serviceNames.kratos }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: {{ .Values.serviceNames.kratos }}
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/services"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/schemas"
+    kapp.k14s.io/change-rule.teardown: "delete before deleting kanae/databases"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.serviceNames.kratos }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.serviceNames.kratos }}
+        app.kubernetes.io/name: {{ .Values.serviceNames.kratos }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.Version | quote }}
+        app.kubernetes.io/component: {{ .Values.serviceNames.kratos }}
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
+      containers:
+        - name: kratos
+          image: "{{ .Values.ory.kratos.image.repository }}:{{ .Values.ory.kratos.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - -c
+            - /etc/secrets/kratos.yml
+            - -c
+            - /etc/secrets/overrides.yml
+            - --watch-courier
+          env:
+            - name: COOKIES_SECURE
+              value: {{ ternary "true" "false" .Values.ory.secureCookies | quote }}
+          ports:
+            - name: public
+              containerPort: 4433
+            - name: admin
+              containerPort: 4434
+          readinessProbe:
+            exec:
+              command: ["wget", "-q", "--spider", "http://127.0.0.1:4433/health/ready"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["wget", "-q", "--spider", "http://127.0.0.1:4433/health/alive"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 100m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 512Mi
+              ephemeral-storage: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: kratos-config
+            items:
+              - key: identity.schema.json
+                path: identity.schema.json
+              - key: payload.jsonnet
+                path: hooks/payload.jsonnet
+              - key: recovery.valid.email.subject.gotmpl
+                path: templates/recovery/valid/email.subject.gotmpl
+              - key: recovery.valid.email.body.gotmpl
+                path: templates/recovery/valid/email.body.gotmpl
+              - key: recovery.valid.email.body.plaintext.gotmpl
+                path: templates/recovery/valid/email.body.plaintext.gotmpl
+        - name: secrets
+          secret:
+            secretName: kratos-db
+            defaultMode: 0440
+            items:
+              - key: kratos.yml
+                path: kratos.yml
+              - key: overrides.yml
+                path: overrides.yml
+        - name: tmp
+          emptyDir: {}

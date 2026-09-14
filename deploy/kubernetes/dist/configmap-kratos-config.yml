@@ -1,4 +1,4 @@
-# Source: kanae/templates/jobs-migrate.yml
+# Source: kanae/templates/kratos.yml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,6 +6,7 @@ metadata:
   namespace: kanae
   annotations:
     kapp.k14s.io/change-group: "kanae/config"
+    kapp.k14s.io/versioned: ""
 data:
   kratos.yml: |
     # yaml-language-server: $schema=https://raw.githubusercontent.com/ory/kratos/v26.2.0/.schemastore/config.schema.json
@@ -191,7 +192,7 @@ data:
       argon2:
         expected_duration: 500ms
         expected_deviation: 500ms
-        dedicated_memory: 1GB
+        dedicated_memory: 384MB
         parallelism: 16
         memory: 128MB
         iterations: 3
@@ -202,3 +203,77 @@ data:
       level: info
       format: json
       leak_sensitive_values: false
+  identity.schema.json: |
+    {
+      "$id": "https://schemas.kanae.acmucm.org/identity.v1.json",
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Kanae member identity",
+      "type": "object",
+      "properties": {
+        "traits": {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string",
+              "format": "email",
+              "title": "Email",
+              "ory.sh/kratos": {
+                "credentials": {
+                  "password": {
+                    "identifier": true
+                  }
+                },
+                "verification": {
+                  "via": "email"
+                },
+                "recovery": {
+                  "via": "email"
+                }
+              },
+              "maxLength": 320
+            },
+            "name": {
+              "type": "string",
+              "title": "Name",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "display_name": {
+              "type": "string",
+              "title": "Display name",
+              "minLength": 1,
+              "maxLength": 50
+            }
+          },
+          "required": ["email", "name"],
+          "additionalProperties": false
+        }
+      }
+    }
+  payload.jsonnet: |
+    function(ctx) {
+      flow_id: ctx.flow.id,
+      identity: {
+        id: ctx.identity.id,
+        schema_id: ctx.identity.schema_id,
+        traits: ctx.identity.traits,
+      },
+    }
+  recovery.valid.email.subject.gotmpl: |
+    Reset your password
+  recovery.valid.email.body.gotmpl: |
+    <p>Hi {{ .Identity.traits.name }},</p>
+
+    <p>We received a request to reset the password on your account. Use the link below to reset your password:</p>
+
+    <a href="{{ .RecoveryURL }}">{{ .RecoveryURL }}</a>
+
+    <p>Didn't ask for this? You can safely ignore this email, nothing will change. This link stops working in {{ .ExpiresInMinutes }} minutes.</p>
+  recovery.valid.email.body.plaintext.gotmpl: |
+    Hi {{ .Identity.traits.name }},
+
+    We received a request to reset the password on your account. Use the link below to reset your password:
+
+    {{ .RecoveryURL }}
+
+    Didn't ask for this? You can safely ignore this email, nothing will change. This link stops working in {{ .ExpiresInMinutes }} minutes.

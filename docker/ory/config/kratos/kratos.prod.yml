@@ -181,7 +181,7 @@ hashers:
   argon2:
     expected_duration: 500ms
     expected_deviation: 500ms
-    dedicated_memory: 1GB
+    dedicated_memory: 384MB
     parallelism: 16
     memory: 128MB
     iterations: 3

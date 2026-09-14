@@ -85,8 +85,9 @@
     "ory": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kratos", "keto"],
+      "required": ["secureCookies", "kratos", "keto"],
       "properties": {
+        "secureCookies": { "type": "boolean" },
         "kratos": {
           "type": "object",
           "additionalProperties": false,

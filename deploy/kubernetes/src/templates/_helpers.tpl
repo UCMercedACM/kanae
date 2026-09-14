@@ -21,9 +21,33 @@
 
 
 {{- define "kanae.kratosMigrateDsn" }}
-{{- printf "postgres://kratos_migrate:%s@%s:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4" .Values.secrets.kratosMigratePassword .Values.serviceNames.database }}
+{{- printf "postgres://kratos_migrate:%s@%s:5432/kratos?sslmode=disable&max_conns=5&max_idle_conns=2" .Values.secrets.kratosMigratePassword .Values.serviceNames.database }}
 {{- end }}
 
 {{- define "kanae.ketoMigrateDsn" }}
-{{- printf "postgres://keto_migrate:%s@%s:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4" .Values.secrets.ketoMigratePassword .Values.serviceNames.database }}
+{{- printf "postgres://keto_migrate:%s@%s:5432/keto?sslmode=disable&max_conns=5&max_idle_conns=2" .Values.secrets.ketoMigratePassword .Values.serviceNames.database }}
+{{- end }}
+
+
+{{- define "kanae.kratosDsn" }}
+{{- printf "postgres://kratos:%s@%s:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4" .Values.secrets.kratosPassword .Values.serviceNames.database }}
+{{- end }}
+
+{{- define "kanae.ketoDsn" }}
+{{- printf "postgres://keto:%s@%s:5432/keto?sslmode=disable&max_conns=20&max_idle_conns=4" .Values.secrets.ketoPassword .Values.serviceNames.database }}
+{{- end }}
+
+
+{{- define "kanae.kratosConfig" }}
+{{- $config := include "kanae.file" (list . "kratos/kratos.prod.yml") }}
+{{- $tokens := dict
+      "${KRATOS_WEBHOOK_TOKEN_REGISTRATION}" .Values.secrets.kratosWebhookTokenRegistration
+      "${KRATOS_WEBHOOK_TOKEN_SETTINGS}" .Values.secrets.kratosWebhookTokenSettings }}
+{{- range $token, $value := $tokens }}
+{{- if not (contains $token $config) }}
+{{- fail (printf "%s is gone from kratos.prod.yml, so the placeholder would ship as the credential" $token) }}
+{{- end }}
+{{- $config = replace $token $value $config }}
+{{- end }}
+{{- $config }}
 {{- end }}
