@@ -1,4 +1,4 @@
-# Source: kanae/templates/jobs-migrate.yml
+# Source: kanae/templates/keto.yml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,6 +6,7 @@ metadata:
   namespace: kanae
   annotations:
     kapp.k14s.io/change-group: "kanae/config"
+    kapp.k14s.io/versioned: ""
 data:
   keto.yml: |
     $schema: https://raw.githubusercontent.com/ory/keto/v26.2.0/.schema/config.schema.json

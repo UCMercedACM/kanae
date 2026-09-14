@@ -1,0 +1,19 @@
+# Source: kanae/templates/keto.yml
+apiVersion: v1
+kind: Service
+metadata:
+  name: keto
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  type: ClusterIP
+  selector:
+    app: keto
+  ports:
+    - name: read
+      port: 4466
+      targetPort: read
+    - name: write
+      port: 4467
+      targetPort: write

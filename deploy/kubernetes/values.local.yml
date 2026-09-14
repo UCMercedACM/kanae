@@ -5,3 +5,6 @@ image:
 postgres:
   storageClass: local-path
   storage: 2Gi
+
+ory:
+  secureCookies: false

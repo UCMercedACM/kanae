@@ -29,6 +29,8 @@ valkey:
   maxmemory: 128mb
 
 ory:
+  secureCookies: true
+
   kratos:
     image:
       repository: oryd/kratos

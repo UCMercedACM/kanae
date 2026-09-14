@@ -1,42 +1,46 @@
-# Source: kanae/templates/jobs-migrate.yml
-apiVersion: batch/v1
-kind: Job
+# Source: kanae/templates/keto.yml
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: kratos-migrate
+  name: keto
   namespace: kanae
   labels:
-    app: kratos-migrate
-    app.kubernetes.io/name: kratos-migrate
+    app: keto
+    app.kubernetes.io/name: keto
     app.kubernetes.io/instance: kanae
     app.kubernetes.io/version: "0.1.0"
-    app.kubernetes.io/component: kratos-migrate
+    app.kubernetes.io/component: keto
     app.kubernetes.io/part-of: kanae
     app.kubernetes.io/managed-by: Helm
   annotations:
-    kapp.k14s.io/versioned: ""
-    kapp.k14s.io/num-versions: "2"
-    kapp.k14s.io/change-group: "kanae/schemas"
-    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+    kapp.k14s.io/change-group: "kanae/services"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/schemas"
+    kapp.k14s.io/change-rule.teardown: "delete before deleting kanae/databases"
 spec:
-  backoffLimit: 3
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: keto
   template:
     metadata:
       labels:
-        app: kratos-migrate
-        app.kubernetes.io/name: kratos-migrate
+        app: keto
+        app.kubernetes.io/name: keto
         app.kubernetes.io/instance: kanae
         app.kubernetes.io/version: "0.1.0"
-        app.kubernetes.io/component: kratos-migrate
+        app.kubernetes.io/component: keto
         app.kubernetes.io/part-of: kanae
         app.kubernetes.io/managed-by: Helm
-      annotations:
-        checksum/config: d15bcf5d47bb072fb6c6e79fd030bd374962076133e43bb9787d2e1dfef23eb2
     spec:
-      restartPolicy: Never
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10000
+        runAsUser: 100
         runAsGroup: 101
         fsGroup: 101
         fsGroupChangePolicy: OnRootMismatch
@@ -45,18 +49,32 @@ spec:
         seLinuxOptions:
           type: container_t
       containers:
-        - name: kratos
-          image: "oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
+        - name: keto
+          image: "oryd/keto:v26.2.0@sha256:bfdb8b9e283aedbd9e1d005c44eb1bbefd2096b2cb5b5aa0b7360b6e39c178d2"
           imagePullPolicy: IfNotPresent
           args:
-            - migrate
-            - sql
+            - serve
             - -c
-            - /etc/config/kratos.yml
+            - /etc/config/keto.yml
             - -c
             - /etc/secrets/dsn.yml
-            - --read-from-env
-            - --yes
+          ports:
+            - name: read
+              containerPort: 4466
+            - name: write
+              containerPort: 4467
+          readinessProbe:
+            exec:
+              command: ["wget", "-q", "--spider", "http://127.0.0.1:4466/health/ready"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["wget", "-q", "--spider", "http://127.0.0.1:4466/health/alive"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
           resources:
             requests:
               memory: 256Mi
@@ -82,10 +100,10 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: kratos-config
+            name: keto-config
         - name: secrets
           secret:
-            secretName: kratos-migrate-db
+            secretName: keto-db
             defaultMode: 0440
             items:
               - key: dsn.yml

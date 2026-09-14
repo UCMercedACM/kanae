@@ -205,3 +205,4 @@ deploy/kubernetes/secrets.local.yml
 
 # Mostly for long-term agent viewing
 decisions.tsv
+.audit

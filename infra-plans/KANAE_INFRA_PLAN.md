@@ -272,7 +272,7 @@ than scattered across five phases.
 | --- | --- | --- |
 | kanae | 512Mi | Phase 7 |
 | postgres | 512Mi | Phase 4 |
-| kratos | 256Mi | Phase 6 |
+| kratos | 512Mi | Phase 6 |
 | keto | 256Mi | Phase 6 |
 | valkey | 256Mi | Phase 4 |
 | envoy proxy, one per Gateway | 64Mi | Phase 8 |
@@ -280,7 +280,7 @@ than scattered across five phases.
 | cert-manager controller | 64Mi | Phase 8 |
 | cert-manager cainjector | 128Mi | Phase 8 |
 | cert-manager webhook | 32Mi | Phase 8 |
-| **Reserved** | **~2.1Gi** | |
+| **Reserved** | **~2.6Gi** | |
 
 A pod's effective request is the larger of its biggest init container and the
 sum of its app containers. kanae's 64Mi init container therefore adds nothing on
@@ -1187,42 +1187,177 @@ port-forwarded test will pass while the real path fails.
 
 ### Tasks
 
-- [ ] Mount `kratos.prod.yml`, `identity.schema.json`, `keto.yml`, and
+- [x] Mount `kratos.prod.yml`, `identity.schema.json`, `keto.yml`, and
       `namespaces.keto.ts` as ConfigMaps rendered from the canonical files
       established in Phase 3.
-- [ ] Keep probes on `wget`. The Ory images ship it and do not ship `curl`.
+      Changed while building it: `kratos-config` carries three more files.
+      `kratos.prod.yml` names `hooks/payload.jsonnet` and a
+      `template_override_path`, so the jsonnet body and the three recovery
+      templates are mounted with it or the registration webhook and the
+      recovery mail have nothing to read. A ConfigMap key cannot hold a `/`,
+      so the six keys are flat and the volume's `items[].path` puts them back
+      under `hooks/` and `templates/recovery/valid/`. Both ConfigMaps also
+      moved out of `jobs-migrate.yml` into the new `kratos.yml` and `keto.yml`
+      templates, beside the Deployments that serve from them.
+- [x] Keep probes on `wget`. The Ory images ship it and do not ship `curl`.
       Check which binary an image has before you write a probe for it. This bug
       appeared three times while writing the proof of concept.
-- [ ] Test the cookie setting against a running Kratos. `ory.insecureCookies`
+      Checked rather than assumed, against both pinned digests: `wget` answers
+      in each image and `curl` fails to start. Readiness is
+      `/health/ready` and liveness `/health/alive`, both over
+      `http://127.0.0.1`.
+- [x] Test the cookie setting against a running Kratos. `ory.insecureCookies`
       exists because Kratos issues Secure cookies unless it runs with `--dev`,
       and a Secure cookie is dropped on a plain `http://` request to a
       non-localhost host, which breaks every browser self-service flow at the
       CSRF check. HANDOFF.md says this was worked out from reading the config
       schema and never observed. Observe it.
-- [ ] Test the cookie behaviour from inside the cluster against
+      Observed both ways on k3d. With cookies insecure, the `Set-Cookie` on
+      `/self-service/login/browser` ends `HttpOnly; SameSite=Lax` and the POST
+      that follows reaches the password check. Otherwise the same header gains
+      `Secure`, the client discards the cookie, and the POST comes back
+      `security_csrf_violation` with a 403.
+      Changed after an adversarial review: this first shipped as `--dev`, on
+      the belief that Kratos had no narrower key. It has one. `COOKIES_SECURE`
+      produces an identical `Set-Cookie` without also dropping the bcrypt cost
+      floor, arming an API-flow-enforcement bypass, and changing the serve
+      defaults, which is what `--dev` does alongside the cookie flag. The
+      schema types it as a string, so a YAML boolean fails startup validation.
+- [x] Test the cookie behaviour from inside the cluster against
       `http://kratos:4433`, not through `kubectl port-forward`.
-- [ ] Lower `max_conns` in the Kratos and Keto database connection strings from
-      20 to 5. The limit that bites is memory rather than `max_connections`:
-      Kratos at 20, Keto at 20, kanae's asyncpg pool at 10 and the migration
-      Jobs on top is 50-odd backends, each with its own work memory, inside a
-      512Mi container. Write that in `deploy/kubernetes/DECISIONS.md`, so nobody
-      reads "50 is under 100" and reverts it.
-- [ ] Note that the chart mounts `kratos.prod.yml` while the Compose stack seeds
+      Done from a throwaway pod on the cluster network. Worth recording why it
+      matters beyond browsers: `scripts/seed/init.sh` drives the same browser
+      self-service flows over plain HTTP, so the wave 6 seed Job fails at the
+      same CSRF check without this setting.
+- [ ] ~~Lower `max_conns` in the Kratos and Keto database connection strings from
+      20 to 5.~~ Deferred by decision, not oversight. All four Ory DSNs stay at
+      `max_conns=20&max_idle_conns=4` until every pool size in the system is
+      chosen together. The reasoning the task gives is recorded in
+      `deploy/kubernetes/docs/DECISIONS.md` so nobody reads "50 is under 100"
+      and opens the taps. One correction to it while checking: Postgres runs
+      with a 1Gi limit today, not the 512Mi the node budget above assumes, so
+      there is more headroom than the plan describes. Phase 10 measures both
+      and sets the pool sizes and that limit against each other.
+- [x] Note that the chart mounts `kratos.prod.yml` while the Compose stack seeds
       against `kratos.yml`. A local Kubernetes run therefore exercises a
       combination the Compose stack never has. Decide whether that is what you
       want, and write down the answer.
-- [ ] Set a memory request and limit, equal to each other, on the Kratos and
+      The answer is yes, and it is in `DECISIONS.md`. `kratos.yml` points its
+      webhooks at `host.docker.internal:8000` and its UI at `localhost:5173`,
+      neither of which resolves from inside a pod. Everything that differs
+      between the two files is a URL, a CORS header, a comment, or
+      `log.leak_sensitive_values`; the flow structure and hook ordering are
+      identical, which is what the positional webhook-token overrides depend
+      on. The cost is that a local browser login redirects to production's
+      front end. The seed script and the Phase 9 test both drive the JSON API
+      rather than a browser, so neither notices.
+- [x] Set a memory request and limit, equal to each other, on the Kratos and
       Keto containers, and on the Kratos and Keto migration containers. 256Mi
       is a starting point for each. Phase 10 corrects them.
-- [ ] Set a CPU request of 100m on each of those four containers, and no CPU
+      Kratos ended at 512Mi, the other three at 256Mi. The migration Jobs
+      already had it from Phase 5.
+      Corrected twice. `k8s:measure` on an idle cluster reports Kratos at 48Mi
+      and Keto at 15Mi, which reads as room to spare, and Kratos idle is not the
+      number that matters. `hashers.argon2.memory` is 128MB per hash, and
+      nothing bounds how many run at once, so one hash takes the container's
+      cgroup peak to 179.8MiB and two concurrent admin identity creations
+      `OOMKilled` it at 256Mi. Both reproduced.
+      Retuned rather than deferred to Phase 10, because the pod was one
+      simultaneous login away from falling over.
+      `kratos hashers argon2 calibrate 15 --dedicated-memory=384MB
+      --max-memory=384MB --expected-deviation=500ms`, run in-cluster, settled on
+      memory 128MB with 3 iterations at a 504ms median and 146.86MB used.
+      15 logins per minute is the assumed worst case until real traffic argues
+      otherwise. 512Mi holds three concurrent hashes, and the node budget table
+      above is re-totalled from ~2.1Gi to ~2.6Gi for it. `dedicated_memory` was
+      set to 384MB to match the calibration, but it bounds nothing at runtime;
+      only the pod limit does. That and the reproduction are in
+      `deploy/kubernetes/docs/DECISIONS.md`.
+- [x] Set a CPU request of 100m on each of those four containers, and no CPU
       limit. See the CPU budget.
-- [ ] Annotate the Kratos and Keto Deployments into `kanae/services`, and add
+- [x] Annotate the Kratos and Keto Deployments into `kanae/services`, and add
       `kapp.k14s.io/change-rule.teardown: "delete before deleting
       kanae/databases"` so they stop before Postgres does.
+      Both also take `upsert after upserting kanae/schemas`, the wave 5 rule
+      from the Phase 4 table. The two Services are wave 1, `kanae/config`,
+      beside the Valkey and database Services.
+- [x] Keep the Kratos secrets out of the environment where a file will do.
+      Added while building it. The DSN, the cookie and cipher secrets and the
+      SMTP URI render into an `overrides.yml` inside the `kratos-db` Secret,
+      passed as the last `-c` so it wins over the mounted config, which is the
+      trick the Phase 5 migration Jobs already use. Keto's `dsn.yml` is the
+      same shape. The three webhook tokens cannot follow, because they sit
+      inside a hook list and Ory's loader replaces a list rather than merging
+      into it, so an overlay would put a second copy of every hook in a Secret.
+      They are substituted instead. `kratos-db` carries a `kratos.yml` that is
+      the canonical file with its `${KRATOS_WEBHOOK_TOKEN_*}` placeholders
+      filled in by `kanae.kratosConfig`, which is the move `users.acl` already
+      makes for `resetpass`, and the Deployment serves from that copy. The
+      ConfigMap keeps the placeholder copy for the migration Job and for
+      `dist/`. Nothing secret reaches the container through the environment,
+      so there is no kubescape exception to take.
+      One loose end for Phase 7: `kanae-env` still renders
+      `KRATOS_SECRETS_COOKIE`, `KRATOS_SECRETS_CIPHER`, `KRATOS_SMTP_URI`,
+      `KRATOS_WEBHOOK_TOKEN_REGISTRATION` and `KRATOS_WEBHOOK_TOKEN_SETTINGS`,
+      and nothing reads any of them now. They cannot drift, since every copy
+      renders from the same value, but they are a second copy of secret
+      material in a Secret other pods will mount. Phase 7 owns what consumes
+      `kanae-env` and should delete them once it knows.
+- [x] Guard the substitution, so a missing placeholder cannot ship silently.
+      Added after an adversarial review, then narrowed. The first version of
+      this was a `check-policy.sh` assertion that hook 0 of all three flows is
+      a `web_hook`, which existed only because the environment variable names
+      addressed a hook by index. Nothing addresses a hook by index now, so the
+      shell guard and its PowerShell twin are gone. `kanae.kratosConfig` fails
+      the render instead when a `${TOKEN}` is missing from the file it
+      substitutes, because `replace` would otherwise do nothing and ship the
+      literal placeholder as the credential. Proved it fires by renaming one
+      placeholder and watching `helm template` fail, then restored the file
+      byte-identical.
+- [x] Make a change to a mounted file restart the pod that reads it.
+      Added after an adversarial review, which caught that the first draft
+      hashed three of the six Kratos files and the three it missed were the
+      courier templates. Kratos caches a parsed template for the life of the
+      process, so an edited recovery email would have left the Deployment
+      byte-identical, triggered no rollout, and kept sending the old body.
+      A single hash over the whole `data` block fixed that, and needed a
+      `define` whose only job was to be hashed. Replaced with
+      `kapp.k14s.io/versioned` on `kratos-config` and `keto-config`: kapp names
+      each revision and rewrites the references, so the rollout comes from the
+      pod spec and there is no file list to keep a hash in step with. The chart
+      now carries no `checksum` annotation on either Deployment. Proved it by
+      changing one word in `email.subject.gotmpl` and watching the volume move
+      to `kratos-config-ver-2` and the pod get replaced. Neither ConfigMap sets
+      `num-versions`: copying the Jobs' `"2"` pruned versions that old
+      ReplicaSets still named, so `kubectl rollout undo` produced a pod stuck on
+      `configmap "kratos-config-ver-1" not found`. kapp's default retention of 5
+      is left alone, and rollback goes through re-applying a previous `dist/`.
+
+- [x] Run the mail courier, and decide where it runs.
+      Added after the phase was first called done, because nothing in the chart
+      said what `serve --watch-courier` was doing. It runs the courier as a
+      background task inside the serving process. Built the alternative to check
+      it: a standalone `kratos courier watch` Deployment, which removed the
+      deploy gap below and was verified by polling `availableReplicas` through a
+      `kubectl rollout restart`. Reverted it. The worker is the same
+      `courier.Watch` either way, Ory documents the split for multi-instance
+      setups, and more than one replica of anything is a non-goal here, so the
+      split bought a second pod and a port opened purely so probes had a target.
+      `courier watch` exposes no health endpoint: `--expose-metrics-port` answers
+      `/metrics/prometheus` and 404s `/health/*`, and serves Go runtime metrics
+      with nothing about the courier in them.
+      Two couriers do double-send, and that is checked rather than assumed:
+      `NextMessages` selects `status = queued` and marks it processing in one
+      transaction with no row lock, no `SKIP LOCKED`, and no status predicate on
+      the update. So Kratos stays at `replicas: 1` with `maxSurge: 0`, and login
+      is down for the length of a deploy: measured at 11.7s at zero
+      `availableReplicas` through a `kubectl rollout restart`. That gap is
+      accepted, not fixed, and DECISIONS.md carries it with the cost of the
+      alternative.
 
 ### Exit gate
 
-Both pods `1/1 Running`. From a throwaway pod inside the cluster:
+Both Ory pods `1/1 Running`. From a throwaway pod inside the cluster:
 
 ```
 wget -qO- http://kratos:4433/health/ready         # {"status":"ok"}
@@ -1751,8 +1886,10 @@ Tick a phase only when its exit gate has passed on a real cluster.
 
 **Layer C. Services**
 
-- [ ] Phase 6. Kratos and Keto Ready, cookie behaviour observed rather than
-      assumed
+- [x] Phase 6. Kratos and Keto Ready, cookie behaviour observed rather than
+      assumed. Two numbers deliberately left for Phase 10: `max_conns` stays at
+      20 until every pool size is chosen together, and Kratos's 256Mi limit is
+      known to OOM under concurrent password hashing
 - [ ] Phase 7. kanae Ready, the readiness probe needs no shell, a config change
       restarts the pod, logs appear in `kubectl logs`
 - [ ] Phase 8. Both HTTPRoute rules work from outside the cluster, TLS renews
