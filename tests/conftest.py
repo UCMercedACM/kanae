@@ -75,7 +75,6 @@ class KanaeServices(NamedTuple):
 class _LimiterFactoryKwargs(TypedDict, total=False):
     key_func: Callable[..., str]
     config: KanaeConfig
-    enabled: bool
     headers_enabled: bool
     key_style: Literal["endpoint", "url"]
 
@@ -394,6 +393,9 @@ def kanae(setup: KanaeServices) -> Kanae:
         allow_headers=["Content-Type"],
     )
     add_pagination(test_app)
+
+    # We need the limiter enabled for our unit tests
+    router.limiter.enabled = True
     test_app.limiter = router.limiter
     test_app.config.postgres_uri = setup.postgres.get_connection_url(driver=None)
 
@@ -433,12 +435,19 @@ async def build_fastapi_app(
     async with GlideManager(uri=valkey.get_connection_url()) as manager:
 
         def _factory(
+            *,
+            enabled: bool = True,
             **limiter_args: Unpack[_LimiterFactoryKwargs],
         ) -> tuple[FastAPI, KanaeLimiter]:
             middleware, exception_handler = request.param
 
             test_config = KanaeConfig.load_from_file(_CONFIG_PATH)
             test_config.kanae.limiter["storage_uri"] = valkey.get_connection_url()
+            test_config.kanae.limiter["enabled"] = enabled
+            test_config.kanae.limiter["in_memory_fallback"] = {
+                "enabled": False,
+                "limits": [],
+            }
 
             limiter_args.setdefault("key_func", get_remote_address)
             limiter_args.setdefault("config", test_config)

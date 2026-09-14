@@ -10,6 +10,9 @@ ENV_DIST_FILE=${ENV_DIST_FILE:-$DEPLOY_DIR/deploy.dist.env}
 CONFIG_FILE=${CONFIG_FILE:-$ROOT_DIR/config.yml}
 CONFIG_DIST_FILE=${CONFIG_DIST_FILE:-$ROOT_DIR/config.dist.yml}
 
+ACL_FILE=${ACL_FILE:-$DEPLOY_DIR/.valkey.acl}
+ACL_DIST_FILE=${ACL_DIST_FILE:-$ROOT_DIR/docker/valkey/users.acl}
+
 DERIVE_SCRIPT=${DERIVE_SCRIPT:-scripts/derive-webhook-tokens.py}
 
 UV_IMAGE=${UV_IMAGE:-ghcr.io/astral-sh/uv:python3.14-trixie-slim}
@@ -73,7 +76,7 @@ run_yq() {
 	docker run --rm \
 		--user "$(id -u):$(id -g)" \
 		--volume "${CONFIG_FILE%/*}:/workdir" \
-		--env MASTER_KEY \
+		--env MASTER_KEY --env VALKEY_URI \
 		"$YQ_IMAGE" "$@" "${CONFIG_FILE##*/}"
 }
 
@@ -158,6 +161,7 @@ generate_secret() {
 }
 
 generate_secret DB_PASSWORD 32
+generate_secret VALKEY_PASSWORD 32
 generate_secret KANAE_PASSWORD 32
 generate_secret KRATOS_PASSWORD 32
 generate_secret KETO_PASSWORD 32
@@ -169,6 +173,15 @@ generate_secret KRATOS_SECRETS_COOKIE 32
 generate_secret KRATOS_SECRETS_CIPHER 16
 
 printf '%s\n' "${ENV_LINES[@]}" >"$ENV_FILE"
+
+VALKEY_URI="valkey://kanae:${VALUES[VALKEY_PASSWORD]}@valkey:6379/" \
+	run_yq -i '.kanae.limiter.storage_uri = strenv(VALKEY_URI)'
+log "valkey storage_uri written to ${CONFIG_FILE##*/}"
+
+[[ -f $ACL_DIST_FILE ]] || abort "no ACL to render from: $ACL_DIST_FILE"
+sed "s/resetpass/>${VALUES[VALKEY_PASSWORD]}/" "$ACL_DIST_FILE" >"$ACL_FILE"
+chmod 644 "$ACL_FILE"
+log "rendered ${ACL_FILE##*/}"
 
 for KEY in "${MANUAL_KEYS[@]}"; do
 	if [[ -z ${VALUES[$KEY]:-} ]]; then

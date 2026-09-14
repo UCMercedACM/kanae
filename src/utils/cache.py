@@ -2,6 +2,7 @@ import functools
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
+from json import JSONDecodeError
 from typing import Any, Concatenate, Optional, Protocol, Self, cast, overload
 
 import orjson
@@ -219,6 +220,12 @@ class cached_method(cached):
                 "Couldn't retrieve %s, unexpected error due to cache deserialization failing",
                 key,
             )
+        except JSONDecodeError:
+            self._log.exception(
+                "Couldn't retrieve %s, cached value is not valid JSON", key
+            )
+        except UnicodeDecodeError:
+            self._log.exception("Couldn't retrieve %s, cached value is not UTF-8", key)
         return None
 
     async def set_in_cache(self, key: str, value: object) -> None:

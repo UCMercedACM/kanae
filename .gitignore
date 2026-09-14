@@ -186,6 +186,7 @@ garage
 tests/integration/secrets.env
 
 deploy/docker/.deploy.env
+deploy/docker/.valkey.acl
 !deploy/kubernetes/dist
 
 # Rendered locally by k8s:render:local — a laptop render is a build artifact
@@ -201,3 +202,6 @@ deploy/kubernetes/secrets.yml
 # regenerating them would leave the Secrets disagreeing with the database.
 # Throwaway credentials for a local cluster; never used anywhere else
 deploy/kubernetes/secrets.local.yml
+
+# Mostly for long-term agent viewing
+decisions.tsv

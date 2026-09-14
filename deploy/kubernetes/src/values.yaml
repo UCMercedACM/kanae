@@ -52,6 +52,7 @@ renderSecrets: false
 
 secrets:
   dbPassword: ""
+  valkeyPassword: ""
   kanaePassword: ""
   kratosPassword: ""
   ketoPassword: ""

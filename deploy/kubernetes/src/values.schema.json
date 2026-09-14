@@ -120,6 +120,7 @@
       "additionalProperties": false,
       "properties": {
         "dbPassword": { "$ref": "#/$defs/secret" },
+        "valkeyPassword": { "$ref": "#/$defs/secret" },
         "kanaePassword": { "$ref": "#/$defs/secret" },
         "kratosPassword": { "$ref": "#/$defs/secret" },
         "ketoPassword": { "$ref": "#/$defs/secret" },

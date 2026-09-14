@@ -106,6 +106,7 @@ ask() {
 }
 
 generate dbPassword 32
+generate valkeyPassword 32
 generate kanaePassword 32
 generate kratosPassword 32
 generate ketoPassword 32
