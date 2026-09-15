@@ -68,6 +68,7 @@ spec:
       containers:
         - name: kanae
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: GRANIAN_WORKERS
               value: {{ .Values.kanae.granianWorkers | quote }}
