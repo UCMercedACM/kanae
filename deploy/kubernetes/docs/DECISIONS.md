@@ -849,3 +849,43 @@ courier back in costs nothing at rest and removes a 128Mi request from the
 cluster.
 
 Decided 2026-09-14, replacing the split of earlier the same day.
+
+## `kanae-config` carries a checksum over its non-secret half, and nothing rolls the pod when a credential rotates
+
+kanae reads `config.yml` once, at import, through `KanaeConfig.load_from_file`.
+There is no watcher. The file is mounted with `subPath`, which the kubelet never
+refreshes in a running pod, so a changed Secret reaches a running kanae only
+through a restart.
+
+Three ways to get that restart, and none of them is clean.
+
+`kapp.k14s.io/versioned` on the Secret is what `kratos-config` and `keto-config`
+use, and it is rejected here for the reason the rotation entry above already
+gives: versioned Secrets leave old revisions in the cluster holding live
+credentials.
+
+A checksum over the whole of `config.yml` would cover the rotation, and it
+cannot be computed. `deploy/kubernetes/dist/` is rendered with `renderSecrets`
+false. Hashing the real values would mean decrypting the age key on every render
+that produces a committed file, which drags the key into every pull request to
+cover the one case a committed checksum can never cover anyway.
+
+So the annotation hashes `kanae.config.public`, which is every key except the
+five that hold a credential. A changed CORS origin, a flipped rate limiter, or a
+renamed Service all roll the pod. A rotated Postgres password, Valkey password,
+webhook master key or S3 key does not, and Phase 10's runbook carries the
+explicit `kubectl rollout restart` for that case.
+
+The Kratos entry abandoned checksums because a hand-maintained file list silently
+missed three of six files. That failure does not repeat here, because there is no
+list to keep in step with a second copy. `kanae.config` builds the whole file and
+`kanae.config.public` is derived from it by `unset`, one line per credential, so
+the public half cannot describe a config the pod does not receive. The one
+mistake still available is adding a credential to `kanae.config` and forgetting
+to unset it, and that one is visible in the rendered Secret.
+
+Verified that the checksum is identical with the secrets populated, empty, and
+set to a canary value, which is what lets a `renderSecrets: false` render be
+committed and still match what an apply produces.
+
+Decided 2026-09-15.

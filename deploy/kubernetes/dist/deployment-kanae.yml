@@ -1,0 +1,116 @@
+# Source: kanae/templates/kanae.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kanae
+  namespace: kanae
+  labels:
+    app: kanae
+    app.kubernetes.io/name: kanae
+    app.kubernetes.io/instance: kanae
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: kanae
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    kapp.k14s.io/change-group: "kanae/services"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/schemas"
+    kapp.k14s.io/change-rule.teardown: "delete before deleting kanae/databases"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: kanae
+  template:
+    metadata:
+      labels:
+        app: kanae
+        app.kubernetes.io/name: kanae
+        app.kubernetes.io/instance: kanae
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/component: kanae
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: Helm
+      annotations:
+        checksum/config: ce36ecbdf33425129e2556c55a778b69c5775264e909ed292723bd8495de9d49
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
+      containers:
+        - name: kanae
+          image: "ghcr.io/ucmercedacm/kanae:0.3.1@sha256:368bd2951dffc1025ed9d0de16e977ec2c38451a0b74245f76a886eae57c8b19"
+          imagePullPolicy: IfNotPresent
+          # No command or args. The image's CMD is the one place the granian
+          # invocation is written. granian builds its CLI with click's
+          # auto_envvar_prefix="GRANIAN", so the worker count arrives through the
+          # environment without restating the rest of the line.
+          env:
+            - name: GRANIAN_WORKERS
+              value: "2"
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 250m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 512Mi
+              ephemeral-storage: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # subPath, because find_config() looks for config.yml relative to the
+            # working directory, which is /kanae, and mounting a directory there
+            # would bury the application. A subPath mount never picks up Secret
+            # updates, which is fine: the pod restarts on a config change, and a
+            # credential rotation needs a manual restart either way.
+            - name: config
+              mountPath: /kanae/config.yml
+              subPath: config.yml
+              readOnly: true
+            # The image sets HOME=/tmp, and the root filesystem is read-only.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          secret:
+            secretName: kanae-config
+            defaultMode: 0440
+            items:
+              - key: config.yml
+                path: config.yml
+        - name: tmp
+          emptyDir: {}
