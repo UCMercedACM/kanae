@@ -1399,46 +1399,46 @@ local seeded runs, per Finding 5.
 
 ### Tasks
 
-- [ ] Render `config.yml` as an overlay on `config.dist.yml`, not a second copy,
+- [x] Render `config.yml` as an overlay on `config.dist.yml`, not a second copy,
       mounted at `/kanae/config.yml`.
-- [ ] Split `kanae.configYml` into two helpers. `kanae.configYml.public` builds
+- [x] Split `kanae.configYml` into two helpers. `kanae.configYml.public` builds
       everything except the four secret leaves, and `kanae.configYml` calls it
       and merges in `postgres_uri`, `storage.key_id`, `storage.secret_key` and
       `ory.kratos_webhook_master_key`.
-- [ ] Point `secrets.yml` at the full helper and the `checksum/config`
+- [x] Point `secrets.yml` at the full helper and the `checksum/config`
       annotation at the public one, then remove the
       `{{- if .Values.secrets.create }}` guard around the annotation.
-- [ ] Check what that guard does today before removing it. With `secrets.create`
+- [x] Check what that guard does today before removing it. With `secrets.create`
       false the kanae Deployment renders with no checksum at all, so the
       annotation is currently absent from `deploy/kubernetes/dist/` rather than
       merely weak.
-- [ ] Keep the single init container that checks the schema exists. One query,
+- [x] Keep the single init container that checks the schema exists. One query,
       one attempt, exit non-zero if the table is missing.
-- [ ] Change the readiness probe from `exec` to `httpGet` on `/`, the route
+- [x] Change the readiness probe from `exec` to `httpGet` on `/`, the route
       `src/routes/index.py` already serves. It currently runs
       `sh -c "curl -fsS --max-time 2 http://127.0.0.1:8000"`, which depends on
       the image shipping both a shell and `curl`, neither of which the chart can
       check for. The kubelet performs an `httpGet` probe itself and needs
       neither. No new route is required.
-- [ ] Fix `_is_docker()` at `src/core.py:167` to detect containerd, then delete
+- [x] Fix `_is_docker()` at `src/core.py:167` to detect containerd, then delete
       the `/kanae/logs` `emptyDir` mount it currently requires. This is the only
       application change in the plan.
-- [ ] Set `kanae.allowedOrigins` to the real frontend origin.
-- [ ] Leave the rate limiter on in production and off for local seeded runs.
-- [ ] Set a memory request and limit, equal to each other, on the kanae
+- [x] Set `kanae.allowedOrigins` to the real frontend origin.
+- [x] Leave the rate limiter on in production and off for local seeded runs.
+- [x] Set a memory request and limit, equal to each other, on the kanae
       container and on the init container that checks the schema. 512Mi for the
       application and 64Mi for the init container are starting points. An init
       container without a limit is the same gap as any other container.
-- [ ] Set a CPU request of 250m on the kanae container, and no CPU limit. It
+- [x] Set a CPU request of 250m on the kanae container, and no CPU limit. It
       ties with Postgres for the largest share because it is the request path.
       See the CPU budget.
-- [ ] Do not add a `checksum/env-secret` annotation. It would hash the Secret,
+- [x] Do not add a `checksum/env-secret` annotation. It would hash the Secret,
       which a secret-free render cannot see, so it would drag the age key back
       into every pull request to cover the one case a committed checksum never
       can.
-- [ ] Set `strategy: Recreate` on the kanae Deployment while there is one node.
+- [x] Set `strategy: Recreate` on the kanae Deployment while there is one node.
       See the node budget.
-- [ ] Annotate the kanae Deployment into `kanae/services`, with the same
+- [x] Annotate the kanae Deployment into `kanae/services`, with the same
       teardown rule as Phase 6.
 
 ### Exit gate
@@ -1890,7 +1890,7 @@ Tick a phase only when its exit gate has passed on a real cluster.
       assumed. Two numbers deliberately left for Phase 10: `max_conns` stays at
       20 until every pool size is chosen together, and Kratos's 256Mi limit is
       known to OOM under concurrent password hashing
-- [ ] Phase 7. kanae Ready, the readiness probe needs no shell, a config change
+- [x] Phase 7. kanae Ready, the readiness probe needs no shell, a config change
       restarts the pod, logs appear in `kubectl logs`
 - [ ] Phase 8. Both HTTPRoute rules work from outside the cluster, TLS renews
       without a human
