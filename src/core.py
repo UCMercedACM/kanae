@@ -174,6 +174,8 @@ def _is_docker() -> bool:
 
 
 def _is_kubernetes() -> bool:
+    # This env var is automatically detected as being in a kubernentes pod
+    # See: https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/kubelet_pods.go#L778-L785
     return bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
 
 
