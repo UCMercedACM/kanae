@@ -13,6 +13,10 @@ image:
   pullPolicy: IfNotPresent
 
 kanae:
+  allowedOrigins:
+    - "https://ucmacm.dev"
+  limiter:
+    enabled: true
   granianWorkers: 2
 
 postgres:

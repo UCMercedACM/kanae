@@ -7,6 +7,7 @@ import inspect
 import itertools
 import logging
 import mimetypes
+import os
 import re
 import sys
 import time
@@ -172,6 +173,12 @@ def _is_docker() -> bool:
     )
 
 
+def _is_kubernetes() -> bool:
+    # This env var is automatically detected as being in a kubernentes pod
+    # See: https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/kubelet_pods.go#L778-L785
+    return bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+
+
 def _build_operation_id(route: APIRoute) -> str:
     head, *tail = route.name.split("_")
     return head + "".join([word.capitalize() for word in tail])
@@ -294,7 +301,7 @@ def rotating_handler(
     # In simpler terms, you can't write a file within a docker container, and that is true with ours (as it would error out regardless)
     # Thus, we won't write logs if the code is running in a docker container, as represented with the NullHandler
     # We also can't send back an None as the logger explicitly requires an handler be returned
-    if not _is_docker():
+    if not _is_docker() and not _is_kubernetes():
         return AppRotatingHandler(filename=filename)
 
     return NullHandler()
