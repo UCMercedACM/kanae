@@ -51,3 +51,31 @@
 {{- end }}
 {{- $config }}
 {{- end }}
+
+
+{{- define "kanae.config" }}
+{{- $config := include "kanae.file" (list . "config.dist.yml") | fromYaml }}
+{{- $_ := set $config "postgres_uri" (include "kanae.postgresUri" .) }}
+{{- $_ := set $config.kanae "allowed_origins" .Values.kanae.allowedOrigins }}
+{{- $_ := set $config.kanae.limiter "enabled" .Values.kanae.limiter.enabled }}
+{{- $_ := set $config.kanae.limiter "storage_uri" (include "kanae.valkeyUri" .) }}
+{{- $_ := set $config.ory "kratos_public_url" (printf "http://%s:4433" .Values.serviceNames.kratos) }}
+{{- $_ := set $config.ory "kratos_admin_url" (printf "http://%s:4434" .Values.serviceNames.kratos) }}
+{{- $_ := set $config.ory "keto_read_url" (printf "http://%s:4466" .Values.serviceNames.keto) }}
+{{- $_ := set $config.ory "keto_write_url" (printf "http://%s:4467" .Values.serviceNames.keto) }}
+{{- $_ := set $config.ory "kratos_webhook_master_key" .Values.secrets.kratosWebhookMasterKey }}
+{{- $_ := set $config.storage "key_id" .Values.secrets.storageKeyId }}
+{{- $_ := set $config.storage "secret_key" .Values.secrets.storageSecretKey }}
+{{- $config | toYaml }}
+{{- end }}
+
+
+{{- define "kanae.config.public" }}
+{{- $config := include "kanae.config" . | fromYaml }}
+{{- $_ := unset $config "postgres_uri" }}
+{{- $_ := unset $config.kanae.limiter "storage_uri" }}
+{{- $_ := unset $config.ory "kratos_webhook_master_key" }}
+{{- $_ := unset $config.storage "key_id" }}
+{{- $_ := unset $config.storage "secret_key" }}
+{{- $config | toYaml }}
+{{- end }}
