@@ -54,10 +54,6 @@ spec:
         - name: kanae
           image: "ghcr.io/ucmercedacm/kanae:0.3.1@sha256:368bd2951dffc1025ed9d0de16e977ec2c38451a0b74245f76a886eae57c8b19"
           imagePullPolicy: IfNotPresent
-          # No command or args. The image's CMD is the one place the granian
-          # invocation is written. granian builds its CLI with click's
-          # auto_envvar_prefix="GRANIAN", so the worker count arrives through the
-          # environment without restating the rest of the line.
           env:
             - name: GRANIAN_WORKERS
               value: "2"
@@ -92,16 +88,10 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
-            # subPath, because find_config() looks for config.yml relative to the
-            # working directory, which is /kanae, and mounting a directory there
-            # would bury the application. A subPath mount never picks up Secret
-            # updates, which is fine: the pod restarts on a config change, and a
-            # credential rotation needs a manual restart either way.
             - name: config
               mountPath: /kanae/config.yml
               subPath: config.yml
               readOnly: true
-            # The image sets HOME=/tmp, and the root filesystem is read-only.
             - name: tmp
               mountPath: /tmp
       volumes:
