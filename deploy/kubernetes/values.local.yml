@@ -1,5 +1,5 @@
 image:
-  tag: "edge@sha256:10e6d9cfcaa39d54aae15bf674316bfc04fa57e70d66c312cf3d2a98dd981364"
+  tag: "edge@sha256:650a988f0157618daae81ebb3b8db815f48b164db89098e3e05b1ce76c46ef67"
   pullPolicy: IfNotPresent
 
 kanae:
