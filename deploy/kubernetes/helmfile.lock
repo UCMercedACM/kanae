@@ -1,0 +1,13 @@
+version: 1.8.0
+dependencies:
+  - name: cert-manager
+    repository: oci://quay.io/jetstack/charts
+    version: v1.21.2
+  - name: cilium
+    repository: https://helm.cilium.io
+    version: 1.18.3
+  - name: gateway-helm
+    repository: oci://docker.io/envoyproxy
+    version: v1.9.1
+digest: sha256:05f6dd61862dea4c240e76f19c65fb4cf13c2df47dfe7c9286f01e0b5e0a31e1
+generated: "2026-09-18T02:42:34.518872579-07:00"

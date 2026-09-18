@@ -60,10 +60,12 @@ jobs:
       contents: read
 
     env:
-      HELM_VERSION: 4.2.4
+      HELM_VERSION: 4.3.0
       KUBECONFORM_VERSION: 0.8.0
       KUBE_LINTER_VERSION: 0.8.3
       KUBESCAPE_VERSION: 4.0.14
+
+      CRD_CATALOG: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
 
     steps:
       - name: Checkout Repository
@@ -137,6 +139,8 @@ jobs:
       - name: Validate production manifests
         run: |
           kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location "$CRD_CATALOG" \
             -ignore-filename-pattern 'kubernetes/src/' \
             -ignore-filename-pattern 'k3d\.yml$' \
             -ignore-filename-pattern 'values.*\.(ya?ml|json)$' \
@@ -144,7 +148,11 @@ jobs:
             deploy/kubernetes
 
       - name: Validate local manifests
-        run: kubeconform -strict -summary .k8s-local
+        run: |
+          kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location "$CRD_CATALOG" \
+            .k8s-local
 
       - name: Check chart sources and manifests against policy
         run: deploy/kubernetes/scripts/check-policy.sh

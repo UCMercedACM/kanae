@@ -889,3 +889,247 @@ set to a canary value, which is what lets a `renderSecrets: false` render be
 committed and still match what an apply produces.
 
 Decided 2026-09-15.
+
+## Envoy Gateway and cert-manager are installed by Helm, not rendered into `dist/`
+
+Every other manifest in this repository is rendered by `k8s:render` and applied
+by kapp. These two controllers are not. `helmfile.yaml` declares them as
+releases and `helmfile sync` runs `helm upgrade --install` against the upstream
+charts, and `k8s:up`, `e2e.sh` and Phase 11 all run the same two commands, so a
+laptop and the rented cluster get the same controllers the same way.
+
+The Envoy Gateway chart also ships the Gateway API CRDs. Letting it own them is
+the whole reason the chart is installed rather than vendored: a cluster missing
+those CRDs accepts a `Gateway` as an unknown type and routes nothing, and
+whoever notices is debugging routing rather than a missing install step.
+
+cert-manager goes second, and `needs` says so rather than a comment: its release
+lists the Envoy Gateway release, so helmfile refuses to reorder them and reverses
+the order on destroy. `config.gatewayAPI.enabled` makes its controller watch
+`gateway.networking.k8s.io`, and a controller that starts before those CRDs
+exist does not pick them up.
+
+The cost is that the two controllers have no rendered manifest to review and no
+kapp diff. What stands in for it is `helmfile.yaml`: the `version` of each chart,
+the values each one gets, and `helmfile.lock` recording what those versions
+resolved to. Renovate reads all of it natively, which the old
+`CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION:-...}` default in a shell script
+could not offer.
+
+Their values were previously a `controllers.certManager` block in the chart's own
+`values.yaml`, validated by `values.schema.json`, and extracted with `yq`. That
+is gone. cert-manager's chart ships its own `values.schema.json`, 114KB of it,
+and helm enforces it on every install, so a misspelled key fails there instead.
+The Envoy Gateway chart ships no schema, but its one value used to be a `--set`
+flag with no validation at all, so nothing was lost.
+
+Decided 2026-09-16, moved to helmfile 2026-09-18.
+
+## The Envoy Gateway control plane keeps the chart's memory defaults
+
+The plan's Phase 8 says to lower the control plane from the chart's
+`requests.memory: 256Mi` and `limits.memory: 1024Mi`, on the strength of 36Mi
+measured idle. `helmfile.yaml` sets the CPU request and leaves both memory
+numbers alone.
+
+Idle is not the number that matters for a control plane. It translates every
+`Gateway` and `HTTPRoute` into an xDS snapshot and holds it, so its memory
+tracks how many routes exist and how often they change, neither of which an
+idle reading sees. 36Mi is a floor, not a working set.
+
+One Gateway and one HTTPRoute already move it. `kubectl top` reads 61Mi on the
+k3d cluster with exactly that much to translate, against the 36Mi the plan
+recorded with none. Two routes is not a production load and 61Mi is not the
+ceiling either, which is the point: the number moves with the work.
+
+So this one waits for a measurement taken while the thing is doing its job.
+Phase 10 already re-totals the budget from `k8s:measure`, and this is a row in
+that table rather than a guess made in advance.
+
+Until then the node budget reserves 256Mi here instead of the 64Mi the plan's
+table lists, which moves steady-state reserved memory from roughly 2.6Gi to
+roughly 2.8Gi on a 4 GB node.
+
+Decided 2026-09-16.
+
+## TLS terminates on the Gateway, which reverses "No TLS in the chart"
+
+HANDOFF.md says the chart terminates no TLS and leaves it to whatever sits in
+front. That works, and it reports nothing. Nobody learns a certificate is about
+to lapse until a request fails.
+
+The Gateway's HTTPS listener names a Secret, cert-manager issues into it, and
+`kubectl get certificate` answers when it expires. The load balancer passes TCP
+through.
+
+Every provider offers to terminate at their load balancer instead. Taking that
+offer moves the certificate into the provider's API, where `kubectl` cannot see
+it and the next provider will not have it. The point of this plan is a stack
+that moves, so the certificate stays in a Secret this cluster owns.
+
+Decided 2026-09-16, reversing HANDOFF.md.
+
+## The ACME solver is HTTP-01 over the Gateway's own port 80, and no DNS credential exists
+
+Phase 8 as written called for DNS-01, on the grounds that HTTP-01 makes
+cert-manager create an HTTPRoute the Gateway has to be serving already, so the
+first certificate would depend on the routing it exists to secure.
+
+That loop is not real. A `Gateway` with a plain HTTP listener programs whether
+or not the HTTPS listener has a certificate, so Envoy answers on port 80 from
+the moment the Gateway is admitted. cert-manager writes its challenge
+`HTTPRoute` against that listener, Let's Encrypt fetches
+`/.well-known/acme-challenge/<token>`, and the route is removed. The HTTPS
+listener stays degraded until the Secret exists, which affects nothing else.
+
+DNS-01 was rejected on the cost the original entry listed and then waved past:
+it needs a `Zone:DNS:Edit` token for `ucmacm.dev` living in the cluster, in
+`secrets.sops.yml`, rotated by hand, able to rewrite every record in the zone
+including the ones pointing at production. Nobody agreed to mint that token, and
+the owner of the domain has ruled it out. HTTP-01 needs no credential at all.
+Let's Encrypt is the CA either way; DNS-01 and HTTP-01 are only two ways of
+proving control of the name.
+
+What this costs: HTTP-01 cannot issue a wildcard, and it needs the name to
+resolve to the load balancer before the first certificate can issue. Neither
+applies here. The Gateway serves one hostname, and Phase 11 points DNS at the
+cluster before anything asks for a certificate.
+
+The port 80 listener carries no route of ours, so plain HTTP to any path other
+than a live challenge gets a 404 from Envoy.
+
+Decided 2026-09-16, replacing the DNS-01 entry that stood here.
+
+## Local certificates are self-signed, and that is the decision rather than a shortcut
+
+`gateway.tls.issuer` picks `selfSigned` locally and `acme` in production. Let's
+Encrypt will not sign a k3d hostname, because it only signs names it can
+validate control of.
+
+Both specs live in `src/values.yaml` under `gateway.tls.issuers`, and
+`gateway.tls.issuer` names which one to render. `templates/routing.yml` picks it
+with `pick`, so there is no conditional in the template.
+
+Selecting beats overriding here. The first attempt put one spec under
+`gateway.tls.issuer` and had `values.local.yml` replace it, which fails because
+Helm merges values maps rather than replacing them: local ended up with both
+issuer types and cert-manager's webhook rejected the object. Writing
+`acme: null` to delete the key fixes `helm template` and breaks `helm lint`,
+which validates the merged values with the null still in them. Two files that
+each name an entry never merge into each other, so neither problem exists.
+
+What matters is that nothing else differs. Same Gateway, same listener, same
+Secret name, same `issuerRef` name. Only the `Issuer` spec changes, so the shape
+Phase 8 protects is the shape production runs.
+
+Decided 2026-09-16.
+
+## The namespace denies all traffic, and every edge of the service graph is written down
+
+`templates/network.yml` starts with a `default-deny` NetworkPolicy selecting
+every pod in both directions, then opens one edge at a time. A Deployment that
+nobody wrote a rule for cannot reach the database, and adding that reach is a
+visible edit to a file whose whole content is the service graph.
+
+Kubescape had been waiving this since Phase 2 under an exception named
+`network-posture-lands-in-phase-8`. That exception is now deleted. Removing it
+with no policies in place fails C-0030 and C-0260 across nine workloads; with
+the policies it passes, and NSA, SOC2 and ArmoBest each move from 95.00, 87.14
+and 96.77 to 100.
+
+`allow-dns` is separate from the per-workload rules because every pod needs it
+and nothing works without it. A pod that cannot reach CoreDNS cannot resolve a
+Service name, and the failure surfaces as a DNS timeout rather than as a denial,
+which is the hardest kind of network policy bug to read.
+
+Enforcement was proven rather than assumed, because a policy a CNI ignores looks
+exactly like a policy that works. A pod opening `/dev/tcp/database/5432` under
+bash connects when it carries `app: kanae` and is refused when it carries
+`app: valkey` or no label at all. bash is what makes this readable: busybox `nc`
+has no `-z` flag, so it cannot report a bare connect, while a redirect into
+`/dev/tcp` sets the exit code and nothing else. Both clusters enforce through
+Cilium, which is the point of the section below.
+
+Two rules are worth knowing about. Kratos gets egress to `0.0.0.0/0` on 465 and
+587 because its mail courier runs in-process and sends through an external
+relay. The two ports are what keep that rule from reaching anything useful
+inside the cluster, since nothing here listens on a submission port. The
+`except` list is the second layer: RFC 1918, RFC 6598 and link-local, which
+together cover every range a pod or Service CIDR may legally use plus the
+provider's metadata address, so widening the ports later cannot quietly open a
+path back inward. And Kratos's admin API on 4434 is reachable only from kanae,
+never from the Gateway, which is what keeps identity administration inside the
+cluster.
+
+The cost is that a new workload needs a rule. `job-seed` and the borgmatic
+backup, both later phases, will each need database egress added to
+`database-clients`, and borgmatic will need egress to object storage.
+
+Decided 2026-09-16.
+
+## Cilium replaces flannel and kube-router
+
+`k3d.yml` starts k3s with `--flannel-backend=none` and `--disable-network-policy`,
+and the `cilium` release in `helmfile.yaml` installs Cilium in their place. It
+is synced on its own, before anything waits on a node reporting Ready, because
+with no CNI the node never gets there. The local cluster now
+runs the same CNI that Scaleway Kapsule runs by default.
+
+The reason is a race with no workaround worth having. Flannel has no concept of
+NetworkPolicy, so k3s pairs it with kube-router's controller, which is not a CNI
+plugin at all: it watches the API server and writes iptables rules and ipsets
+when it sees a pod appear. Nothing connects that to pod startup. The container is
+already running while its rules are still being written, and a client that dials
+inside that window is refused by the destination's terminal REJECT rule. The
+error reads as though the database were down.
+
+Measured on this cluster, from inside a freshly created pod, timing DNS and TCP
+separately so neither could be blamed for the other:
+
+| | DNS first OK | TCP to database first OK |
+| --- | --- | --- |
+| flannel with kube-router | ~320ms, first attempt | 628ms, 1288ms, 1524ms |
+| Cilium | ~55-94ms, first attempt | 31ms, 54ms, 59ms, always first attempt |
+
+DNS was never the problem. The database was up and serving for forty-five
+minutes in every run. With kube-router, three migration Jobs with no gate failed
+three times out of three against policies that had been settled for thirty-nine
+minutes, which is what rules out policy creation as the cause and leaves pod
+creation as the only candidate. With Cilium the same Jobs pass, cold cluster
+included, one pod each and no retries.
+
+Cilium wins here by construction rather than by being quicker. Its CNI plugin
+does not return until the agent has allocated the pod's identity and installed
+its policy, so kubelet cannot start the container early. That is an ordering
+guarantee, and unlike a tuned delay it does not degrade on a loaded node.
+
+`templates/network.yml` did not change by a single line for this. Same eight
+policies, same selectors, and an unlabeled pod is still refused on all five
+services. The swap is purely underneath a policy set that already worked.
+
+What it removed is a `sleep` and a connect check, wrapped in an init container,
+on all three migration Jobs, plus the `network.policySettleSeconds` value that
+fed it. Those were written against the belief that the window could be waited
+out. It can be, at a magic number nobody can justify on a cluster they have not
+measured.
+
+Cilium is installed with `envoy.enabled=false` and `l7Proxy=false`, because every
+rule in `network.yml` is an address, a protocol and a port, and none of them
+needs a proxy to parse a request. The first flag alone only moves Envoy inside
+the agent, which `cilium-dbg status` reports as `Envoy: embedded`; both together
+report `No managed proxy redirect`. Hubble stays on. It costs nothing beyond the
+agent it already lives in, and `policy-verdict:none EGRESS DENIED` naming both
+pods and the port is the diagnostic that would have found this race in one
+command instead of a day. `hubble-relay` and `hubble-ui` are not installed.
+
+`kube-proxy-replacement` stays `false`. Cilium can take that over and it is
+better at scale, but it is a separate change with its own failure modes, and
+leaving kube-proxy in place is also why the `cilium` release needs no
+`k8sServiceHost`: the agent reaches the API server through the ordinary Service
+VIP, which kube-proxy programs whether or not a CNI exists.
+
+The cost is about 200Mi in `kube-system` that kube-router did not appear to
+charge, because kube-router ran inside the k3s server process and never showed
+up as a pod. It was not free either, only hidden.
+
+Decided 2026-09-17.

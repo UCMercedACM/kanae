@@ -1,0 +1,29 @@
+# Source: kanae/templates/network.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-clients
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - "kanae-migrate"
+          - "kratos-migrate"
+          - "keto-migrate"
+          - postgres-checksum
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: database
+      ports:
+        - protocol: TCP
+          port: 5432

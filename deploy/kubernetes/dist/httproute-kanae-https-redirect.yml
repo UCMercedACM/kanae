@@ -1,0 +1,24 @@
+# Source: kanae/templates/routing.yml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kanae-https-redirect
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/services"
+spec:
+  parentRefs:
+    - name: kanae
+      sectionName: http
+  hostnames:
+    - "api.ucmacm.dev"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 308

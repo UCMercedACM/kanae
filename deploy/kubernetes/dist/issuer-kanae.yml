@@ -1,0 +1,22 @@
+# Source: kanae/templates/routing.yml
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kanae
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+spec:
+  acme:
+    email: acm@ucmerced.edu
+    privateKeySecretRef:
+      name: acme-account-key
+    server: https://acme-v02.api.letsencrypt.org/directory
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - kind: Gateway
+                name: kanae
+                namespace: kanae
+                sectionName: http

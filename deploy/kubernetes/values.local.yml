@@ -1,6 +1,6 @@
 image:
-  tag: "edge@sha256:650a988f0157618daae81ebb3b8db815f48b164db89098e3e05b1ce76c46ef67"
-  pullPolicy: IfNotPresent
+  tag: "edge@sha256:91e10508037a1d43eba79cc6dcbe8061b5da3f28d8a064c86fd79e10e396f410"
+  pullPolicy: Always
 
 kanae:
   allowedOrigins:
@@ -8,6 +8,11 @@ kanae:
     - "http://127.0.0.1:5173"
   limiter:
     enabled: false
+
+gateway:
+  hostname: kanae
+  tls:
+    provider: selfSigned
 
 postgres:
   storageClass: local-path
