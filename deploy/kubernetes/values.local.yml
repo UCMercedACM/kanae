@@ -4,8 +4,7 @@ image:
 
 kanae:
   allowedOrigins:
-    - "http://localhost:5173"
-    - "http://127.0.0.1:5173"
+    - "http://kanae:5173"
   limiter:
     enabled: false
 
@@ -20,3 +19,4 @@ postgres:
 
 ory:
   secureCookies: false
+  publicOrigin: "http://kanae:5173"

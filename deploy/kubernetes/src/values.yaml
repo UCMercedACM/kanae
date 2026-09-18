@@ -47,6 +47,7 @@ valkey:
 
 ory:
   secureCookies: true
+  publicOrigin: "https://ucmacm.dev"
 
   kratos:
     image:

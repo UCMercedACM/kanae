@@ -495,6 +495,29 @@ run the Compose stack, which is what it is for.
 
 Decided 2026-09-13.
 
+Superseded in part on 2026-09-18. The chart still mounts `kratos.prod.yml`, and
+the reason above still holds: only that file points its webhooks at
+`kanae:8000`, and a probe against Kratos v26.2.0's own config loader confirms
+the environment block below leaves those hooks alone.
+
+What changed is the last paragraph. The browser-facing URLs are no longer fixed
+by the file. `ory.publicOrigin` renders twelve `SELFSERVICE_*` and `SERVE_*`
+variables onto the Kratos Deployment, and Ory loads environment after every
+`-c` file (`configx/provider.go:150-177`, loaded in order at `:216`), so they
+win. Production renders the same twelve URLs the file already held, so nothing
+moves there; `values.local.yml` points them at the dev server instead.
+
+Both array variables carry an index, `_0`, because Ory merges an environment
+array into the file's element by element rather than replacing it. A second
+entry in `serve.public.cors.allowed_origins` or `selfservice.allowed_return_urls`
+would survive a local override, so if either array grows, the override needs the
+matching `_1`.
+
+A local browser flow also needs the dev server on the same host as the Gateway,
+`vite --host kanae`, because the session cookie is host-only and `SameSite=Lax`.
+With the Gateway on `kanae` and the dev server on `localhost`, every credentialed
+request is cross-site and the browser drops the cookie before Kratos sees it.
+
 ## `ory.insecureCookies` sets `COOKIES_SECURE`, and its effect is observed rather than inferred
 
 `deploy/kubernetes/values.local.yml` sets `insecureCookies: true`, which puts
