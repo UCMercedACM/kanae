@@ -4,7 +4,7 @@ image:
 
 kanae:
   allowedOrigins:
-    - "http://kanae:5173"
+    - "https://kanae:5173"
   limiter:
     enabled: false
 
@@ -19,4 +19,4 @@ postgres:
 
 ory:
   secureCookies: false
-  publicOrigin: "http://kanae:5173"
+  publicOrigin: "https://kanae:5173"
