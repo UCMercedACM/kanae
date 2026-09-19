@@ -53,6 +53,16 @@
         "* 0-3 1 * *"
       ],
       "automerge": true
+    },
+    {
+      "matchManagers": [
+        "helmfile"
+      ],
+      "groupName": "helm charts",
+      "schedule": [
+        "* 0-3 1 * *"
+      ],
+      "automerge": true
     }
   ]
 }
