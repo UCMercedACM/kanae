@@ -2,83 +2,87 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-cd "$SCRIPT_DIR/../../.."
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+TESTS_DIR=${SCRIPT_PATH%/*}
+ROOT_DIR=${TESTS_DIR%/deploy/kubernetes/tests}
+cd "$ROOT_DIR"
 
 K3D_CONFIG=deploy/kubernetes/k3d.yml
+HELMFILE=deploy/kubernetes/helmfile.yaml
 CHART=deploy/kubernetes/src
 VALUES=deploy/kubernetes/values.local.yml
 RENDER=.k8s-local
-APP=kanae-local
+NAMESPACE=kanae
 
-CLUSTER=${CLUSTER:-kanae}
-NAMESPACE=${NAMESPACE:-kanae}
-IMAGE=${IMAGE:-ghcr.io/ucmercedacm/kanae:dev}
-GATES=${GATES:-$SCRIPT_DIR/gates}
-VARS_ENV=${VARS_ENV:-tests/integration/vars.env}
-
-WAIT=${WAIT:-false}
-KEEP=${KEEP:-0}
-
-step() {
-	local message=$1
-	printf '\n==> %s\n' "$message"
+log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+abort() {
+	printf 'e2e: %s\n' "$*" >&2
+	exit 1
 }
 
-note() {
-	local message=$1
-	printf '    %s\n' "$message"
+usage() {
+	printf 'usage: %s [--keep] [--wait] [--help]\n\n' "${0##*/}"
+	printf '  --keep  leave the cluster running afterwards instead of deleting it\n'
+	printf '  --wait  wait for every applied resource to become healthy\n'
+	printf '  --help  show this help\n'
 }
 
-teardown() {
-	if [[ $KEEP == 1 ]]; then
-		step "keeping cluster $CLUSTER"
-		note "k3d cluster delete --config $K3D_CONFIG"
-		return
-	fi
+KEEP=
+WAIT=false
+while [[ $# -gt 0 ]]; do
+	case $1 in
+		--keep)
+			KEEP=1
+			shift
+			;;
+		--wait)
+			WAIT=true
+			shift
+			;;
+		--help)
+			usage
+			exit 0
+			;;
+		*)
+			usage >&2
+			abort "unknown option: $1"
+			;;
+	esac
+done
 
-	step "deleting cluster $CLUSTER"
-	k3d cluster delete --config "$K3D_CONFIG"
-}
+CLUSTER=$(yq '.metadata.name' "$K3D_CONFIG")
 
-step "creating cluster $CLUSTER"
+log "creating cluster $CLUSTER"
 k3d cluster create --config "$K3D_CONFIG"
-trap teardown EXIT
-kubectl wait --for=condition=Ready nodes --all --timeout=300s
 
-step "creating namespace $NAMESPACE"
-kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-
-step "importing $IMAGE"
-if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-	k3d image import "$IMAGE" --cluster "$CLUSTER"
+if [[ -n $KEEP ]]; then
+	log "--keep given, delete it yourself with: k3d cluster delete --config $K3D_CONFIG"
 else
-	note "not built locally, the cluster pulls it instead"
+	trap 'k3d cluster delete --config "$K3D_CONFIG"' EXIT
 fi
 
-step "rendering $VALUES into $RENDER"
+log "installing Cilium"
+helmfile -f "$HELMFILE" sync -l name=cilium
+
+kubectl wait --for=condition=Ready nodes --all --timeout=300s
+
+log "creating namespace $NAMESPACE"
+kubectl create namespace "$NAMESPACE"
+
+log "installing Envoy Gateway and cert-manager"
+helmfile -f "$HELMFILE" sync -l tier=controllers
+
+kubectl apply -f deploy/kubernetes/envoy.yml -f deploy/kubernetes/gateway.yml
+
+log "rendering $VALUES into $RENDER"
+mkdir -p "$RENDER"
 rm -f "$RENDER"/*.yml
 helm template kanae "$CHART" --namespace "$NAMESPACE" --values "$VALUES" \
 	| yq --no-doc 'select(.kind != null and .kind != "Secret")' \
 		-s "\"$RENDER/\(.kind | downcase)-\(.metadata.name).yml\""
 
-step "applying $RENDER as $APP"
-if compgen -G "$RENDER/*.yml" >/dev/null; then
-	RENDER=$RENDER APP=$APP NAMESPACE=$NAMESPACE WAIT=$WAIT VALUES=$VALUES CHART=$CHART \
-		deploy/kubernetes/scripts/apply-local.sh
-else
-	note "the chart renders nothing yet"
-fi
+log "applying $RENDER"
+WAIT=$WAIT deploy/kubernetes/scripts/apply-local.sh
 
-step "what is running"
+log "what is running"
 kubectl -n "$NAMESPACE" get all
-
-step "what each container used"
-deploy/kubernetes/scripts/measure.sh --namespace "$NAMESPACE"
-
-step "running the gates"
-if compgen -G "$GATES/*.hurl" >/dev/null; then
-	hurl --test --glob "$GATES/*.hurl" --variables-file "$VARS_ENV"
-else
-	note "no gates in $GATES yet"
-fi

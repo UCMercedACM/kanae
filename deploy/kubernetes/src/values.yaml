@@ -19,6 +19,19 @@ kanae:
     enabled: true
   granianWorkers: 2
 
+gateway:
+  className: kanae
+  hostname: api.ucmacm.dev
+  tls:
+    provider: acme
+    issuers:
+      acme:
+        server: "https://acme-v02.api.letsencrypt.org/directory"
+        email: "acm@ucmerced.edu"
+        privateKeySecretRef:
+          name: acme-account-key
+      selfSigned: {}
+
 postgres:
   image:
     repository: postgres
@@ -34,6 +47,7 @@ valkey:
 
 ory:
   secureCookies: true
+  publicOrigin: "https://ucmacm.dev"
 
   kratos:
     image:

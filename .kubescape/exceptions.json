@@ -69,29 +69,6 @@
     ]
   },
   {
-    "name": "network-posture-lands-in-phase-8",
-    "policyType": "postureExceptionPolicy",
-    "actions": [
-      "disable"
-    ],
-    "resources": [
-      {
-        "designatorType": "Attributes",
-        "attributes": {
-          "namespace": "kanae"
-        }
-      }
-    ],
-    "posturePolicies": [
-      {
-        "controlID": "C-0030"
-      },
-      {
-        "controlID": "C-0260"
-      }
-    ]
-  },
-  {
     "name": "one-shot-pods-have-no-probes",
     "policyType": "postureExceptionPolicy",
     "actions": [
@@ -133,6 +110,28 @@
     "posturePolicies": [
       {
         "controlID": "C-0056"
+      }
+    ]
+  },
+  {
+    "name": "acme-solver-pod-is-created-at-runtime",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae",
+          "kind": "NetworkPolicy",
+          "name": "acme-http01-solver"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0299"
       }
     ]
   }

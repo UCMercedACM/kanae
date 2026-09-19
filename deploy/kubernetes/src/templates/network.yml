@@ -1,0 +1,301 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.serviceNames.kanae }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.serviceNames.kanae }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      ports:
+        - protocol: TCP
+          port: 8000
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.kratos }}
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.database }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.valkey }}
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.keto }}
+      ports:
+        - protocol: TCP
+          port: 4466
+        - protocol: TCP
+          port: 4467
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.kratos }}
+      ports:
+        - protocol: TCP
+          port: 4433
+        - protocol: TCP
+          port: 4434
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.serviceNames.kratos }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.serviceNames.kratos }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.kanae }}
+      ports:
+        - protocol: TCP
+          port: 4433
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.kanae }}
+      ports:
+        - protocol: TCP
+          port: 4434
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.database }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.kanae }}
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 587
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.serviceNames.keto }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.serviceNames.keto }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.kanae }}
+      ports:
+        - protocol: TCP
+          port: 4466
+        - protocol: TCP
+          port: 4467
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.database }}
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.serviceNames.valkey }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.serviceNames.valkey }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.kanae }}
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.serviceNames.database }}
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.serviceNames.database }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - {{ .Values.serviceNames.kanae }}
+                  - {{ .Values.serviceNames.kratos }}
+                  - {{ .Values.serviceNames.keto }}
+                  - "{{ .Values.serviceNames.kanae }}-migrate"
+                  - "{{ .Values.serviceNames.kratos }}-migrate"
+                  - "{{ .Values.serviceNames.keto }}-migrate"
+                  - postgres-checksum
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-clients
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - "{{ .Values.serviceNames.kanae }}-migrate"
+          - "{{ .Values.serviceNames.kratos }}-migrate"
+          - "{{ .Values.serviceNames.keto }}-migrate"
+          - postgres-checksum
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.serviceNames.database }}
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acme-http01-solver
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/network"
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      ports:
+        - protocol: TCP
+          port: 8089

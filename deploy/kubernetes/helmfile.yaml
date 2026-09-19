@@ -1,0 +1,80 @@
+repositories:
+  - name: cilium
+    url: https://helm.cilium.io
+
+  - name: envoyproxy
+    url: docker.io/envoyproxy
+    oci: true
+
+  - name: jetstack
+    url: quay.io/jetstack/charts
+    oci: true
+
+helmDefaults:
+  wait: true
+  timeout: 300
+  createNamespace: true
+
+releases:
+  - name: cilium
+    namespace: kube-system
+    chart: cilium/cilium
+    version: 1.18.3
+    values:
+      - operator:
+          replicas: 1
+        envoy:
+          enabled: false
+        l7Proxy: false
+
+  - name: envoy-gateway
+    namespace: envoy-gateway-system
+    chart: envoyproxy/gateway-helm
+    version: v1.9.1
+    labels:
+      tier: controllers
+    needs:
+      - kube-system/cilium
+    values:
+      - deployment:
+          envoyGateway:
+            resources:
+              requests:
+                cpu: 50m
+
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: v1.21.2
+    labels:
+      tier: controllers
+    needs:
+      - envoy-gateway-system/envoy-gateway
+    values:
+      - crds:
+          enabled: true
+        config:
+          apiVersion: controller.config.cert-manager.io/v1alpha1
+          kind: ControllerConfiguration
+          gatewayAPI:
+            enabled: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 64Mi
+        cainjector:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 128Mi
+        webhook:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 32Mi

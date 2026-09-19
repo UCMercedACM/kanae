@@ -102,6 +102,30 @@ spec:
           env:
             - name: COOKIES_SECURE
               value: {{ ternary "true" "false" .Values.ory.secureCookies | quote }}
+            - name: SERVE_PUBLIC_BASE_URL
+              value: {{ printf "https://%s/auth" .Values.gateway.hostname | quote }}
+            - name: SERVE_PUBLIC_CORS_ALLOWED_ORIGINS_0
+              value: {{ .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_ALLOWED_RETURN_URLS_0
+              value: {{ .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_DEFAULT_BROWSER_RETURN_URL
+              value: {{ printf "%s/" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_LOGIN_UI_URL
+              value: {{ printf "%s/login" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_REGISTRATION_UI_URL
+              value: {{ printf "%s/register" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_SETTINGS_UI_URL
+              value: {{ printf "%s/dashboard/settings" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_ERROR_UI_URL
+              value: {{ printf "%s/error" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_VERIFICATION_UI_URL
+              value: {{ printf "%s/verify" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_VERIFICATION_AFTER_DEFAULT_BROWSER_RETURN_URL
+              value: {{ printf "%s/" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_RECOVERY_UI_URL
+              value: {{ printf "%s/recovery" .Values.ory.publicOrigin | quote }}
+            - name: SELFSERVICE_FLOWS_LOGOUT_AFTER_DEFAULT_BROWSER_RETURN_URL
+              value: {{ printf "%s/login" .Values.ory.publicOrigin | quote }}
           ports:
             - name: public
               containerPort: 4433

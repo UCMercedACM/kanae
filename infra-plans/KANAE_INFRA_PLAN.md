@@ -1505,64 +1505,89 @@ pod and never touches the Gateway.
 
 ### Tasks
 
-- [ ] Install Envoy Gateway from its Helm chart, pinned to a version in
-      `mise.toml`, with the same command in `k8s:up` and in Phase 11.
+- [x] Install Envoy Gateway from its Helm chart, declared as a release in
+      `deploy/kubernetes/helmfile.yaml`, which `k8s:up`, `e2e.sh` and Phase 11
+      all sync. The pin lives in the release's `version` field and in
+      `helmfile.lock`, where Renovate reads it without a custom matcher.
       The Gateway API CRDs are not built into Kubernetes, and the chart ships
       them, so let it own them and do not apply them separately. A cluster
       missing them accepts a `Gateway` as an unknown type and routes nothing.
-- [ ] Install cert-manager the same way, after Envoy Gateway, because
+- [x] Install cert-manager the same way, after Envoy Gateway, because
       `--enable-gateway-api` needs the Gateway API CRDs to already exist.
       Without this step the exit gate below cannot pass locally.
-- [ ] Override the chart's control plane memory request. It defaults to
+- [ ] ~~Override the chart's control plane memory request. It defaults to
       `requests.memory: 256Mi` and `limits.memory: 1024Mi` against 36Mi
-      measured idle. Rule 7 makes the request equal the limit, and the
+      measured idle.~~ Rule 7 makes the request equal the limit, and the
       scheduler reserves the request, so the default reserves seven times what
       the pod uses on a node that has other work to do.
-- [ ] Set the CPU requests for the five pods these two charts bring: 100m for
+      **Deliberately not done.** 36Mi was read with no Gateway present, and the
+      same pod reads 61Mi on k3d with one Gateway and one HTTPRoute, so idle is
+      a floor rather than a working set. The chart's defaults stand until a
+      measurement taken under load replaces them. See
+      `deploy/kubernetes/docs/DECISIONS.md`. Until then the node budget reserves
+      256Mi on this row instead of 64Mi.
+- [x] Set the CPU requests for the five pods these two charts bring: 100m for
       the Envoy proxy, 50m for the control plane, 50m for the cert-manager
       controller, 25m each for cainjector and webhook. No CPU limits. See the
       CPU budget.
-- [ ] Write one `Gateway` with an HTTPS listener and one `HTTPRoute` with two
+- [x] Write one `Gateway` with an HTTPS listener and one `HTTPRoute` with two
       rules in `src/templates/routing.yml`, and delete the `ingress.yml` it
       replaces. Put the `URLRewrite` filter on the `/auth` rule only. Two
       objects, not two routes.
-- [ ] Give `kubeconform` the Gateway API and Envoy Gateway schemas through
+- [x] Give `kubeconform` the Gateway API and Envoy Gateway schemas through
       `-schema-location`, listing `default` first so built-in kinds still
       resolve. It reports a `Gateway` or an `EnvoyProxy` as an unknown kind
       otherwise, so without this the newest manifests in the repository are the
       ones nothing checks. The datreeio CRDs-catalog carries both groups, and
       `-ignore-missing-schemas` is the wrong fix because it makes every CRD pass
       vacuously.
-- [ ] Terminate TLS on the Gateway's HTTPS listener, with cert-manager issuing
+- [x] Terminate TLS on the Gateway's HTTPS listener, with cert-manager issuing
       the certificate into the Secret it names. cert-manager needs
       `--enable-gateway-api` on its controller before it will issue for a
       Gateway. Record the change in `deploy/kubernetes/DECISIONS.md`, since it
       reverses HANDOFF.md's "No TLS in the chart".
-- [ ] Use the DNS-01 ACME solver rather than HTTP-01. HTTP-01 makes cert-manager
+- [ ] ~~Use the DNS-01 ACME solver rather than HTTP-01. HTTP-01 makes cert-manager
       create an HTTPRoute that the Gateway must already be serving, so the first
-      certificate depends on the routing it is supposed to secure.
-- [ ] Put the DNS provider token in `secrets.sops.yml` and render it through
+      certificate depends on the routing it is supposed to secure.~~
+      **Reversed.** The solver is HTTP-01, answered on a plain HTTP listener
+      the Gateway carries alongside the HTTPS one. That listener programs
+      without a certificate, so the loop this task describes does not close.
+      DNS-01 was dropped because it needs a `Zone:DNS:Edit` token for
+      `ucmacm.dev` inside the cluster, which the owner of the domain has ruled
+      out. Let's Encrypt is still the CA. See
+      `deploy/kubernetes/docs/DECISIONS.md`.
+- [ ] ~~Put the DNS provider token in `secrets.sops.yml` and render it through
       `templates/secrets.yml` like the others. cert-manager reads it from the
-      kanae namespace, which is where the issuer already is.
-- [ ] Write an `EnvoyProxy` resource in `deploy/kubernetes/envoy.yml` and point
+      kanae namespace, which is where the issuer already is.~~
+      **Not done, and will not be.** HTTP-01 needs no provider credential, so
+      there is no token to store. Nothing in this repository asks for one.
+- [x] Write an `EnvoyProxy` resource in `deploy/kubernetes/envoy.yml` and point
       the GatewayClass in `deploy/kubernetes/gateway.yml` at it. Envoy Gateway
       provisions the internet-facing `LoadBalancer` Service itself, per Gateway
       and in its own namespace, so it is never rendered by this chart and there
       is no Service template to annotate.
-- [ ] Treat that resource as a linked dependency of the Gateway rather than
+- [x] Treat that resource as a linked dependency of the Gateway rather than
       part of the release. It is applied with the storage class and the two
       controllers, before the first `k8s:apply`, and it is where the Service
       type and any provider annotation live.
-- [ ] Issue local certificates from a cert-manager `selfSigned` issuer, chosen
-      by values. Let's Encrypt cannot sign a k3d hostname, and the exit gate
+- [x] Issue local certificates from a cert-manager `selfSigned` issuer, chosen
+      by values. The whole `Issuer` spec is a value, so `values.local.yml`
+      swaps the block rather than the template branching on it. Let's Encrypt cannot sign a k3d hostname, and the exit gate
       already passes `-k`. Same Gateway, same listener, same Secret; only
       `issuerRef` differs, so local and production keep the same shape.
-- [ ] Give the Gateway and HTTPRoute `upsert after upserting kanae/services`
+- [x] Give the Gateway and HTTPRoute `upsert after upserting kanae/services`
       and no group of their own. Applying them last means the stack is up
       before kapp waits on the Gateway to report `Programmed`, so a certificate
       that cannot issue fails on its own rather than hiding whether anything
       else works.
-- [ ] Test through the Gateway, never through `kubectl port-forward`.
+- [x] Test through the Gateway, never through `kubectl port-forward`.
+- [x] Write `src/templates/network.yml` and delete the Kubescape exception
+      `network-posture-lands-in-phase-8`, which had been waiving C-0030 and
+      C-0260 since Phase 2 against this phase. Default-deny both directions for
+      the namespace, then one allow rule per edge of the service graph.
+      Enforcement checked with a busybox pod rather than assumed: the same
+      `nc -z database 5432` connects as `app: kanae` and is refused as
+      `app: valkey`.
 
 ### Exit gate
 
@@ -1811,10 +1836,14 @@ from Phase 5 is what you are really testing.
       everything inside it including the Postgres claim, which orphan cannot
       prevent. The resources themselves were given `namespace: kanae` back in
       Phase 2.
-- [ ] Install Envoy Gateway with the same pinned command `k8s:up` runs, which
-      brings the Gateway API CRDs with it. Do this before the first
-      `k8s:apply`: applied to a cluster without those CRDs, the Gateway and the
-      HTTPRoute are unknown types and nothing routes.
+- [ ] Run `helmfile -f deploy/kubernetes/helmfile.yaml sync -l tier=controllers`,
+      the same command `k8s:up` runs, which installs both controllers and brings
+      the Gateway API CRDs with them. Do this before the first `k8s:apply`:
+      applied to a cluster without those CRDs, the Gateway and the HTTPRoute are
+      unknown types and nothing routes. Follow it with
+      `kubectl apply -f deploy/kubernetes/envoy.yml -f deploy/kubernetes/gateway.yml`
+      for the GatewayClass and the EnvoyProxy, so the task below is editing a
+      file it already applied.
 - [ ] Add whatever annotations the provider's cloud controller needs to the
       `EnvoyProxy` resource from Phase 8. On Scaleway that is the CCM
       annotations, and reserving the IP before you point DNS at it. That file
@@ -1823,10 +1852,10 @@ from Phase 5 is what you are really testing.
       balancer, whatever the provider offers. Configure the load balancer to
       pass TCP through. Terminating there puts the certificate somewhere
       `kubectl` cannot see it and somewhere the next provider will not have.
-- [ ] Install cert-manager with the same pinned command `k8s:up` runs. The
-      issuer is in the chart and arrives with the first `k8s:apply`. Install it
-      after Envoy Gateway, so the Gateway API CRDs exist before
-      `--enable-gateway-api` starts looking for them.
+- [ ] cert-manager comes with the same script, second, so the Gateway API CRDs
+      exist before `gatewayAPI.enabled` starts looking for them. The issuer is
+      in the chart and arrives with the first `k8s:apply`. Its chart values are
+      the `controllers.certManager` block in `src/values.yaml`.
 - [ ] Create the image pull secret for `ghcr.io/ucmercedacm/kanae`.
 - [ ] Publish the `kanae-seed` image. `docker/Dockerfile.seed` exists and
       `mise run seed:image` builds it locally, but nothing pushes it to ghcr.
@@ -1892,8 +1921,10 @@ Tick a phase only when its exit gate has passed on a real cluster.
       known to OOM under concurrent password hashing
 - [x] Phase 7. kanae Ready, the readiness probe needs no shell, a config change
       restarts the pod, logs appear in `kubectl logs`
-- [ ] Phase 8. Both HTTPRoute rules work from outside the cluster, TLS renews
-      without a human
+- [x] Phase 8. Both HTTPRoute rules work from outside the cluster, TLS renews
+      without a human. Proven on k3d against the self-signed issuer. The ACME
+      path is written but unexercised: HTTP-01 needs the real hostname to
+      resolve to the load balancer, so it is first run in Phase 11
 
 **Layer D. Proof and operations**
 

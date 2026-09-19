@@ -19,6 +19,7 @@ dprint = "0.57.4"
 
 # Kubernetes-related
 helm = "4.3.0"
+helmfile = "1.8.0"
 
 kubectl = "1.37.0"
 kapp = "0.65.4"
@@ -253,10 +254,18 @@ description = "Creates the local k3d cluster from deploy/kubernetes/k3d.yml and 
 dir = "{{ config_root }}"
 run = [
   "k3d cluster create --config deploy/kubernetes/k3d.yml",
+  "helmfile -f deploy/kubernetes/helmfile.yaml sync -l name=cilium",
   "kubectl wait --for=condition=Ready nodes --all --timeout=300s",
   "kubectl create namespace kanae",
+  "helmfile -f deploy/kubernetes/helmfile.yaml sync -l tier=controllers",
+  "kubectl apply -f deploy/kubernetes/envoy.yml -f deploy/kubernetes/gateway.yml",
   "kubectl get nodes",
 ]
+
+[tasks."k8s:lock"]
+description = "Resolves the controller chart versions in helmfile.yaml and rewrites deploy/kubernetes/helmfile.lock"
+dir = "{{ config_root }}"
+run = "helmfile -f deploy/kubernetes/helmfile.yaml deps"
 
 [tasks."k8s:down"]
 description = "Deletes the local k3d cluster"
@@ -323,7 +332,8 @@ run = "WAIT=${usage_wait?} deploy/kubernetes/scripts/apply-local.sh"
 [tasks."k8s:validate"]
 description = "Validates the manifests against the Kubernetes schemas via kubeconform"
 dir = "{{ config_root }}"
-run = '''kubeconform -strict -summary -ignore-filename-pattern 'kubernetes/src/' -ignore-filename-pattern 'k3d\.yml$' -ignore-filename-pattern 'values.*\.(ya?ml|json)$' -ignore-filename-pattern 'secrets.*\.ya?ml$' deploy/kubernetes'''
+run = "deploy/kubernetes/scripts/validate.sh"
+run_windows = "pwsh -NoProfile -File deploy/kubernetes/scripts/powershell/validate.ps1"
 
 [tasks."k8s:policy"]
 description = "Checks the chart sources for what only a human would notice, then the rendered manifests against .kube-linter.yml"

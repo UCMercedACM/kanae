@@ -1,0 +1,31 @@
+# Source: kanae/templates/routing.yml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: kanae
+  namespace: kanae
+  annotations:
+    cert-manager.io/issuer: kanae
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/services"
+spec:
+  gatewayClassName: kanae
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "api.ucmacm.dev"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: kanae-tls
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "api.ucmacm.dev"
+      allowedRoutes:
+        namespaces:
+          from: Same
