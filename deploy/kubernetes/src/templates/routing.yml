@@ -75,6 +75,8 @@ spec:
             path:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
+      timeouts:
+        request: 45s
       backendRefs:
         - name: {{ .Values.serviceNames.kratos }}
           port: 4433

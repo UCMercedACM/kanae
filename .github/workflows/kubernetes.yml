@@ -171,6 +171,90 @@ jobs:
           git add --intent-to-add --ignore-removal -- deploy/kubernetes/dist
           git diff HEAD --exit-code -- 'deploy/kubernetes/dist/*.yml'
 
+  Test:
+    name: Test
+    runs-on: ubuntu-24.04
+
+    needs: Changes
+    if: ${{ needs.Changes.outputs.kubernetes == 'true' }}
+
+    permissions:
+      contents: read
+
+    env:
+      HELM_VERSION: 4.3.0
+      HELMFILE_VERSION: 1.8.0
+      K3D_VERSION: 5.9.0
+      KAPP_VERSION: 0.65.4
+      HURL_VERSION: 8.0.1
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install k3d
+        uses: nolar/setup-k3d-k3s@62c9d1bd2bc843275c85d2e7dcd696edc1160eee # v1.1.0
+        with:
+          k3d-tag: v${{ env.K3D_VERSION }}
+          skip-creation: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install tools
+        run: |
+          ARCH=$(uname -m)
+          case $ARCH in
+            aarch64) ARCH="arm64";;
+            x86_64) ARCH="amd64";;
+          esac
+
+          HELMFILE_ASSET="helmfile_${HELMFILE_VERSION}_linux_${ARCH}.tar.gz"
+          HELMFILE_RELEASE="https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}"
+          KAPP_ASSET="kapp-linux-${ARCH}"
+          KAPP_RELEASE="https://github.com/carvel-dev/kapp/releases/download/v${KAPP_VERSION}"
+
+          curl --proto "=https" -fsSL "${HELMFILE_RELEASE}/${HELMFILE_ASSET}" -o "/tmp/${HELMFILE_ASSET}"
+          curl --proto "=https" -fsSL "${HELMFILE_RELEASE}/helmfile_${HELMFILE_VERSION}_checksums.txt" \
+            | awk -v asset="$HELMFILE_ASSET" '$2 == asset { print $1 "  /tmp/" asset }' \
+            | sha256sum --check --strict -
+          tar -xzf "/tmp/${HELMFILE_ASSET}" -C /tmp helmfile
+
+          curl --proto "=https" -fsSL "${KAPP_RELEASE}/${KAPP_ASSET}" -o /tmp/kapp
+          curl --proto "=https" -fsSL "${KAPP_RELEASE}/checksums.txt" \
+            | awk -v asset="$KAPP_ASSET" '$2 == asset { print $1 "  /tmp/kapp" }' \
+            | sha256sum --check --strict -
+
+          sudo install -m 0755 /tmp/helmfile /tmp/kapp /usr/local/bin/
+
+      - name: Install Hurl
+        run: |
+          sudo apt-add-repository -y ppa:lepapareil/hurl
+          sudo apt install hurl="${HURL_VERSION}"*
+
+      - name: Prepare cluster
+        run: deploy/kubernetes/tests/init.sh
+
+      - name: Run tests
+        run: |
+          hurl --test --insecure \
+            --resolve kanae:443:127.0.0.1 --resolve kanae:80:127.0.0.1 \
+            --variables-file deploy/kubernetes/tests/vars.env \
+            --secrets-file deploy/kubernetes/tests/secrets.env \
+            deploy/kubernetes/tests/scenarios/*.hurl
+
+      - name: Clean up cluster
+        run: k3d cluster delete --config deploy/kubernetes/k3d.yml
+
   Render:
     name: Render
     runs-on: ubuntu-24.04
