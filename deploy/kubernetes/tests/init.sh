@@ -83,6 +83,12 @@ log "applying $RENDER as $APP"
 kapp deploy --yes -a "$APP" -n "$NAMESPACE" -c \
 	-f "$RENDER" -f <(printf '%s\n' "$secrets")
 
+log "waiting for the Gateway to serve https"
+kubectl -n "$NAMESPACE" wait certificate/kanae-tls --timeout=300s \
+	--for=create --for=condition=Ready
+kubectl -n "$NAMESPACE" wait gateway/kanae --timeout=300s \
+	--for=condition=Programmed
+
 ### 3. Seed identities, member rows, etc
 
 if [[ -f "$HURL_SECRETS_FILE" ]]; then

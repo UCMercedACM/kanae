@@ -238,8 +238,15 @@ jobs:
 
       - name: Install Hurl
         run: |
-          sudo apt-add-repository -y ppa:lepapareil/hurl
-          sudo apt install hurl="${HURL_VERSION}"*
+          HURL_ASSET="hurl_${HURL_VERSION}_amd64.deb"
+          HURL_RELEASE="https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}"
+
+          curl --proto "=https" -fsSL "${HURL_RELEASE}/${HURL_ASSET}" -o "/tmp/${HURL_ASSET}"
+          curl --proto "=https" -fsSL "${HURL_RELEASE}/${HURL_ASSET}.sha256" \
+            | awk -v asset="/tmp/${HURL_ASSET}" '{ print $1 "  " asset }' \
+            | sha256sum --check --strict -
+
+          sudo apt install -y "/tmp/${HURL_ASSET}"
 
       - name: Prepare cluster
         run: deploy/kubernetes/tests/init.sh
