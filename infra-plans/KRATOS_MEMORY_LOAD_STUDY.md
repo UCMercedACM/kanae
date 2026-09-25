@@ -101,7 +101,7 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 - open: Poisson arrivals at a target rate, with exponential gaps so there is
   no start-up burst, and a user cap of 6 × rate so pile-up is bounded.
 
-**Design and bias control.** 204 trials in four phases:
+**Design and bias control.** 228 trials in five phases:
 
 | phase | factors | levels | reps | trials |
 | --- | --- | --- | --- | --- |
@@ -112,9 +112,10 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 | 2 | `hashers.argon2.parallelism` 3 vs 16 | C ∈ {2, 4} | 3 | 6 |
 | 3 | verification: limit × `GOMEMLIMIT` × load | {1Gi, 1Gi+900MiB, 1.5Gi+1400MiB, 2Gi+1850MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 48 |
 | 4 | recalibrated hashers at 1Gi + `GOMEMLIMIT=900MiB` | {64MB/6 it, 64MB/3 it, 19MiB/2 it/p1} × {C=4, C=8, C=16, 2/s, 4/s} | 3 | 45 |
+| 5 | calibrate's proposal, 224MB/5 it | {1.5Gi+1400MiB, 1Gi+900MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 24 |
 
 Within each phase the trial order was shuffled with a recorded seed
-(20260925, 7, 11, 13) so drift in the machine could not line up with a factor
+(20260925, 7, 11, 13, 17) so drift in the machine could not line up with a factor
 level. Every trial started a new Kratos process, a new cgroup and a new
 database cloned from the migrated template, so heap retention and table growth
 could not carry over. Arrival gaps used a per-replicate seed so replicates
@@ -354,9 +355,12 @@ all eight argon2 keys into the live configuration store with `config.Set`, and
 every hash. The half second is that round-trip, and `strace -c` on a probe
 shows it as `futex`, `epoll_pwait` and `nanosleep`, not CPU. Two consequences:
 
-- The calibration loop does not terminate when the first probe is already
-  over the target: it halves memory forever, and the step size reaches zero.
-  The matrix run for this study (4 memory ceilings × 3 request rates) had to
+- The calibration loop misbehaves when the first probe is already over the
+  target, which the overhead guarantees at a 500 ms target. With the default
+  512MB step it subtracts more than it has, the unsigned byte size wraps, and
+  it dies trying to allocate 64TB (`fatal error: runtime: out of memory`,
+  reproduced three times with the flags `DECISIONS.md` used). With a small
+  step it halves memory forever instead: the matrix run for this study had to
   be killed after its first cell had spent 129 probes descending to 64 bytes.
 - The 504 ms median that `DECISIONS.md` records from the in-cluster
   calibration on 2026-09-14 is this overhead plus a hash. It says nothing
@@ -437,6 +441,92 @@ capacity on this CPU to 35 signups per second; it is the only configuration
 in this study under which 75 signups per second is within reach of a 3 CPU
 node, and that still needs the webhook, Postgres and the node's own hash
 speed measured before it is believed.
+
+### Calibrate's own proposal under the swarm
+
+Given a duration target above its overhead (`--min-duration 1500ms`, with
+`--start-memory 128MB --start-iterations 3 --adjust-memory-by 32MB`, 360
+requests per minute, `--dedicated-memory` and `--max-memory` 1400MB), the
+command completes its probing phase and proposes **224MB with 5 iterations**.
+Its load test then fails ("The hashing load test took too long ... The memory
+used was 826.20MB") and it exits with status 1 and no result. With its default
+512MB step it does not get that far: the first probe is over target, it
+subtracts the step from 128MB, the unsigned byte size wraps, and the next
+probe tries to allocate 64TB and dies with `fatal error: runtime: out of
+memory`. That is what happened with the exact flags `DECISIONS.md` used, run
+here three times.
+
+The proposal is the tool's answer, so it was put under the same swarm as the
+study's values, at both pods. The model's predictions were written down first:
+b = 0.93 × 213.6 = 199 Mi per signup, so C_max = ⌊(1400 − 278) / 199⌋ = 5 at
+1.5Gi and ⌊(900 − 278) / 199⌋ = 3 at 1Gi; cost per hash 224 × 5 / (128 × 3) =
+2.9 times today's, so capacity about 2 signups per second, which makes 2/s
+unstable and 4/s a certain kill. 24 trials, 3 replicates, shuffled:
+
+| hasher | pod | C = 4 | C = 8 | 2 /s | 4 /s |
+| --- | --- | --- | --- | --- | --- |
+| 128MB, 3 it (study) | 1.5Gi + 1400MiB | ok, 1261, 4.6 /s | ok, 1503, 4.4 /s | ok, 1172 | ok, 1461, 3.2 /s |
+| 224MB, 5 it (calibrate) | 1.5Gi + 1400MiB | ok, 1438, 1.6 /s | killed 3/3 | killed 3/3 | killed 3/3 |
+| 128MB, 3 it (study) | 1Gi + 900MiB | ok, 1011, 5.1 /s | killed 3/3 | ok, 932 | killed 2/3 |
+| 224MB, 5 it (calibrate) | 1Gi + 900MiB | ok, 991, 1.7 /s | killed 3/3 | killed 3/3 | killed 3/3 |
+
+Every prediction held: 4 in flight survives, 8 is killed, 2 signups per
+second is already over capacity (0.08 completed per second before the kill),
+and the one surviving cell at 1Gi peaked at 991 Mi against a 1024 Mi limit,
+the "borderline" the arithmetic gave for C_max = 3. Calibrate's proposal is
+worse than today's hasher on every axis this study measures: a third of the
+throughput, three times the memory per signup, and the same pod is killed at
+loads the study's values survive. The reason is structural, not a bug: the
+command tunes a single hash to a wall-clock target on the machine it runs on,
+and this machine hashes fast, so it reaches for more memory and iterations;
+nothing in it accounts for the concurrency the pod has to hold. Its load test
+is the only place concurrency enters, and there it rejects the proposal
+without offering another.
+
+### The values the arithmetic gives
+
+For `deploy/kubernetes/src/templates/kratos.yml`:
+
+```yaml
+resources:
+  requests:
+    memory: 1536Mi
+  limits:
+    memory: 1536Mi
+env:
+  - name: GOMEMLIMIT
+    value: 1400MiB
+```
+
+with `docker/ory/config/kratos/kratos.prod.yml` unchanged:
+
+```yaml
+hashers:
+  algorithm: argon2
+  argon2:
+    memory: 128MB
+    iterations: 3
+    parallelism: 16
+    dedicated_memory: 1400MB   # documents the budget; not read on the serving path
+```
+
+Derivation: G = 0.91 × 1536 = 1400 (Go guide headroom); C_max =
+⌊(G − B) / b⌋ = ⌊(1400 − 278) / 113.5⌋ = 9 on the mean line, 8 on the upper
+95% prediction bound, and 8 is the number the verification ran at. `parallelism`
+can stay at 16 or drop to 3; table D found no difference on 3 CPUs, and
+OWASP's reference settings all use 1.
+
+If the pod must be 1Gi, `GOMEMLIMIT=900MiB` and
+
+```yaml
+    memory: 64MB
+    iterations: 6
+```
+
+which keeps m × t at 384 (today's cost per guess), gives b = 64 Mi and
+C_max = ⌊(900 − 278) / 64⌋ = 9, verified at 8. The rate limit on the
+registration and login routes goes below the measured capacity with a burst
+of C_max; on this CPU that is under 6 per second, burst 8.
 
 ## Threats to validity
 
