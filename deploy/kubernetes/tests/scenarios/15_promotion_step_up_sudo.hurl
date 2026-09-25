@@ -3,8 +3,7 @@
 # elevate to sudo (kanae -> Postgres sudo_grants + sudo_audit), use sudo on
 # the has_sudo-gated member and tag routes against rows this file created,
 # revoke sudo, and watch the gate close again. Root then reads the live grant
-# from sudo_grants, removes the admin, and reads the audit trail (the last
-# request, which fails until an app bug is fixed).
+# from sudo_grants, removes the admin, and reads the audit trail.
 #
 # Every gate is checked closed before it is checked open:
 #   not admin            -> elevate 403 (Keto says no; shown on the target)
@@ -578,16 +577,9 @@ HTTP 200
 [Asserts]
 body not contains "{{uid}}"
 
-# ── the audit trail outlives the sudoer (EXPECTED TO FAIL, app bug) ──────────
+# ── the audit trail outlives the sudoer ─────────────────────────────────────
 # Both grants must still be in the audit log after the sudoer is deleted;
-# the refused elevates must not be. This is the last request on purpose, so
-# its failure hides no other check.
-#
-# It fails with a 500 until ActiveSudo.member_id accepts null:
-# src/schema.sql:205 makes sudo_audit.member_id ON DELETE SET NULL, but
-# src/routes/sudo.py:29 declares it a required uuid.UUID, so any audit row
-# of a deleted member breaks the whole list. Root's session is left to
-# expire (a logout after this would never run when it fails).
+# the refused elevates must not be. Root's session is left to expire.
 GET {{KANAE_URL}}/sudo/audit
 HTTP 200
 [Asserts]

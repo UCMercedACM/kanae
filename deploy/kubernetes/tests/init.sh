@@ -159,7 +159,7 @@ for role in "${ROLE_ORDER[@]}"; do
 	email_var="${ROLE_TO_EMAIL_VAR[$role]}"
 	email="${!email_var}"
 	id="${IDS[$role]}"
-	kubectl -n "$NAMESPACE" exec statefulset/database -- \
+	kubectl -n "$NAMESPACE" exec statefulset/database -c postgres -- \
 		psql -U kanae -d kanae -v ON_ERROR_STOP=1 -q -c \
 		"INSERT INTO members (id, name, display_name, email)
 	 VALUES ('$id', '$role', '$role', '$email')
@@ -204,3 +204,4 @@ EOF
 
 log "cluster is now fully ready."
 log "hurl: hurl --test --insecure --resolve kanae:443:127.0.0.1 --resolve kanae:80:127.0.0.1 --variables-file $HURL_VARS --secrets-file $HURL_SECRETS_FILE deploy/kubernetes/tests/scenarios/*.hurl"
+log "bats: bats --verbose-run deploy/kubernetes/tests"

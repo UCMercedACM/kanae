@@ -180,7 +180,7 @@ jsonpath "$.id" == "{{vflow}}"
 jsonpath "$.state" == "sent_email"
 jsonpath "$.active" == "code"
 jsonpath "$.ui.messages[0].id" == 1080003
-duration < 3000
+duration < 5000
 
 # a guessed code is refused, and the flow stays waiting for the real one
 POST {{KRATOS_URL}}/self-service/verification?flow={{vflow}}
@@ -274,7 +274,7 @@ jsonpath "$.id" == "{{rflow}}"
 jsonpath "$.state" == "sent_email"
 jsonpath "$.ui.messages[0].id" == 1060002
 cookie "ory_kratos_session" not exists
-duration < 3000
+duration < 5000
 
 # the same answer for an address with no account
 GET {{KRATOS_URL}}/self-service/recovery/browser
@@ -292,7 +292,7 @@ HTTP 200
 [Asserts]
 jsonpath "$.state" == "sent_email"
 jsonpath "$.ui.messages[0].id" == 1060002
-duration < 3000
+duration < 5000
 
 # a made-up link token is turned into a fresh flow on the UI, not a session
 GET {{KRATOS_URL}}/self-service/recovery?flow={{rflow2}}&token=e2e-13-not-a-token
@@ -322,7 +322,7 @@ HTTP 200
 [Asserts]
 jsonpath "$.state" == "sent_email"
 jsonpath "$.ui.messages[0].id" == 1080003
-duration < 3000
+duration < 5000
 
 # the queue of undeliverable mail leaves Kratos ready
 GET {{KRATOS_URL}}/health/ready

@@ -1,314 +1,205 @@
 # Phase 9: the end-to-end test
 
-Supersedes the Phase 9 task list in `KANAE_INFRA_PLAN.md:1607-1690` where the two disagree,
-and replaces this document's earlier pytest design, which is recorded under "Rejected" below.
-The code lives in `tmp-e2e-harness/` until it moves to `deploy/kubernetes/tests/`.
+This document supersedes the Phase 9 task list in `KANAE_INFRA_PLAN.md:1607-1690` where the
+two disagree. The harness lives in `deploy/kubernetes/tests/`.
 
-## Problem
+Use it to prove three things on a k3d cluster:
 
-Phase 9 has to prove that a browser registration reaches a `members` row across four
-services, that the stack fails loudly and legibly when misconfigured, and that kapp deletes
-what it should and keeps what it must. Four facts in the repository decide the shape, and
-three of them contradict the plan.
+- A browser registration reaches a `members` row, across Envoy, Kratos, kanae and Postgres.
+- A wrong app database password fails kanae's rollout with Postgres's own error.
+- kapp deletes what leaves the render, and keeps the Postgres claim and its data.
 
-**No pod in the `kanae` namespace can call the kanae API.** `networkpolicy-default-deny`
-selects every pod. `networkpolicy-kanae` admits ingress only from namespace
-`envoy-gateway-system` and from pods labelled `app: kratos`; Keto admits only `app: kanae`.
-The plan's "run hurl from a pod inside the cluster" cannot run a single scenario without
-adding a NetworkPolicy, which means certifying a policy surface that does not ship.
-
-**Nothing exercises the registration webhook.** `tests/integration/init.sh` creates its six
-identities through the Kratos *admin* API -- its own log line reads "admin-create bypasses
-the registration webhook" -- and inserts the matching `members` rows with `psql`. Every one of
-the 43 scenarios starts downstream of the chain this phase exists to prove. Pointing them at
-the cluster does not produce the exit gate.
-
-**`kanaePassword`, not `dbPassword`, is the app's credential.** `_helpers.tpl:14` builds the
-DSN as `postgresql://kanae:{{ .Values.secrets.kanaePassword }}@database:5432/kanae`.
-`dbPassword` is the Postgres superuser and never touches the `kanae` role. A negative test
-that poisons `dbPassword` deploys green and never fails.
-
-**The 43 scenarios are single-shot.** 33 hardcoded UUIDs, and nothing deletes what it
-creates. CI never noticed because Compose is recreated every run; a stack that stays up
-between runs walks straight into it.
-
-## Usage
+## Run it
 
 ```console
-$ tmp-e2e-harness/init.sh
+$ deploy/kubernetes/tests/init.sh
 $ hurl --test --insecure --resolve kanae:443:127.0.0.1 --resolve kanae:80:127.0.0.1 \
-    --variables-file tmp-e2e-harness/vars.env --secrets-file tmp-e2e-harness/secrets.env \
-    tmp-e2e-harness/scenarios/*.hurl
-$ bats tmp-e2e-harness/
+    --variables-file deploy/kubernetes/tests/vars.env \
+    --secrets-file deploy/kubernetes/tests/secrets.env \
+    deploy/kubernetes/tests/scenarios/*.hurl
+$ bats --verbose-run deploy/kubernetes/tests/
 $ k3d cluster delete --config deploy/kubernetes/k3d.yml
 ```
 
-Four commands, four jobs. CI runs them as four steps, the way `test.yml` already runs the
-integration suite as prepare / run / clean up.
+Run the four commands in this order. Run hurl before bats: `pods.bats` checks for restarts
+under hurl's load, and `pvc.bats` recreates every pod.
+
+Delete the cluster last, and only when you are done with it. Nothing tears down on failure;
+look at a failed cluster before you delete it.
+
+Run `init.sh` on a machine with no `kanae` cluster. It creates the cluster and the namespace
+unconditionally, so it fails against a cluster that already exists. To get back a stack that
+a test broke, run `deploy/kubernetes/scripts/apply-local.sh`.
 
 ## Layout
 
 ```
-tmp-e2e-harness/
-├── init.sh                  committed   stack up + seed, then exit
-├── vars.env                 committed   Gateway URLs, seed emails
-├── secrets.env              gitignored  PASSWORD + identity UUIDs, written by init.sh
-├── secrets.local.yml        gitignored  chart secret values, written by deploy/kubernetes/init.sh --local
-├── scenarios/
-│   ├── 01_gateway_tls_and_redirect.hurl
-│   ├── 02_gateway_to_backend.hurl
-│   ├── 03_gateway_to_kratos.hurl
-│   ├── 04_login_session_and_cache.hurl
-│   ├── 05_registration_webhook.hurl
-│   ├── 06_backend_to_postgres.hurl
-│   ├── 07_backend_to_keto.hurl
-│   └── 08_logout_revokes_session.hurl
-├── netpol.bats              NetworkPolicies hold (read-only)
-├── prune.bats               kapp prunes a dropped resource (restores)
-├── pvc.bats                 the claim and its rows survive kapp delete (restores)
-├── credentials.bats         a wrong app DB password fails kanae's rollout (restores)
-└── README.md
+deploy/kubernetes/tests/
+├── init.sh              committed   cluster up, apply, seed, then exit
+├── vars.env             committed   Gateway URLs, admin ClusterIP URLs, seed emails
+├── secrets.env          gitignored  PASSWORD + identity UUIDs, written by init.sh
+├── scenarios/*.hurl     committed   18 HTTP scenarios
+├── scripts/dump.sh      committed   cluster state for a failed CI run
+└── *.bats               committed   7 cluster-internal test files
 ```
 
-| File | Purpose |
+| File | What it does |
 |---|---|
-| `init.sh` | Creates the k3d cluster (or reuses it), switches the kube context to it, installs Cilium, Envoy Gateway, cert-manager and the Gateway, generates the chart secrets into `secrets.local.yml`, renders into `.k8s-local`, applies through `apply-local.sh`, waits for Kratos, Keto and Postgres, for the `kanae-migrate` Job and for kanae, opens port-forwards to the Kratos and Keto admin APIs, seeds six identities with their `members` rows and Keto role tuples, writes `secrets.env`, and exits, printing the hurl, bats and teardown commands for the cluster it built. Safe to re-run. |
-| `vars.env` | `KANAE_URL=https://kanae`, `KANAE_HTTP_URL=http://kanae`, `KRATOS_URL=https://kanae/auth`, and the six `*_EMAIL`. Committed, like `tests/integration/vars.env`. `init.sh` sources it for the emails, so there is one copy. |
-| `secrets.env` | `PASSWORD`, `ROOT_ID` ... `SCRATCH_ID` for `hurl --secrets-file`. Same role as `tests/integration/secrets.env`. |
-| `secrets.local.yml` | Every value `templates/secrets.yml` renders. Must survive between applies, see below. |
-| `scenarios/*.hurl` | One scenario per cross-component edge, derived from the 43. |
-| `*.bats` | The cluster internals hurl cannot see from outside, one file per concern. |
+| `init.sh` | Creates the k3d cluster from `deploy/kubernetes/k3d.yml`. Installs Cilium, Envoy Gateway, cert-manager and the Gateway. Renders the chart into `.k8s-local` without Secrets. Renders the Secrets from `deploy/kubernetes/init.sh --local`. Applies both as the kapp app `kanae-local`, then waits for `certificate/kanae-tls` Ready and `gateway/kanae` Programmed. Creates six identities through the Kratos admin API, upserts their `members` rows and writes their Keto role tuples, all with `kubectl exec deploy/kanae -- curl` or `psql`. Writes `secrets.env` and prints the hurl command. |
+| `vars.env` | `KANAE_URL`, `KANAE_HTTP_URL` and `KRATOS_URL` through the Gateway. `KRATOS_ADMIN_URL` and `KETO_WRITE_URL` at ClusterIP names, for `init.sh` only. The six `*_EMAIL`. |
+| `secrets.env` | `PASSWORD` and `ROOT_ID` to `SCRATCH_ID`, for `hurl --secrets-file`. `init.sh` reuses `PASSWORD` if the file exists. |
+| `deploy/kubernetes/secrets.local.yml` | Every chart secret, written by `deploy/kubernetes/init.sh --local`, which reads the file back and keeps its values. Postgres is initialised with these once; every later apply has to render the same values. This is the same file your local stack uses. |
 
-## Decisions and rationale
+## hurl scenarios
 
-### hurl owns every HTTP assertion; nothing re-implements it
+Put every HTTP assertion in hurl. Send every request through the Gateway; no scenario uses an
+admin URL. Make every file re-runnable against a stack that stays up: mint emails and
+passwords with `{{newUuid}}`, and delete what you create.
 
-The repository already has an HTTP test framework, pinned at 8.0.1, with 43 scenarios CI runs.
-hurl's `--test` mode runs files in parallel, reports per-file, and takes `--resolve`,
-`--insecure`, `--variables-file` and `--secrets-file`, which is everything the cluster needs.
-The Phase 9 question is HTTP-shaped -- does a request through the Gateway reach the right
-service and come back right -- so it goes to the HTTP tool.
+| File | Covers |
+|---|---|
+| `01_client_to_envoy` | Envoy's https and http listeners, the 308 redirect |
+| `02_envoy_to_kratos_rewrite` | Kratos's public port through the `/auth` rewrite |
+| `03_envoy_to_kanae` | kanae:8000 through the `/` route |
+| `04_kratos_to_kanae_webhooks` | the registration and settings webhooks writing `members`; **the exit gate** |
+| `05_password_change_revokes_sessions` | password change revoking other sessions |
+| `06_kanae_to_kratos_sessions_logout` | kanae to Kratos whoami and admin logout |
+| `07_kanae_to_valkey_cache` | the whoami cache in Valkey |
+| `08_kanae_to_keto_grants` | kanae to Keto read and write |
+| `09_seeded_role_matrix` | the seeded roles against the role gates |
+| `10_kanae_to_postgres` | kanae's write path to Postgres |
+| `11_leads_event_attendance` | the event journey for LEADS |
+| `12_manager_project_journey` | the project journey for MANAGER |
+| `13_kratos_to_internet_hibp_and_csrf` | Kratos's internet egress (HIBP) and CSRF |
+| `14_two_factor_backup_codes` | two-factor with backup codes |
+| `15_promotion_step_up_sudo` | promotion and step-up sudo |
+| `16_self_delete_account` | account self-deletion |
+| `17_sequential_argon2_load` | sequential argon2 load on Kratos |
+| `18_one_member_start_to_finish` | one member through every flow |
 
-### A separate, condensed scenario set rather than the 43
+## bats files
 
-The integration suite answers "given a correct stack, does the backend work", and pins API
-contracts field by field. The k8s question is different: does each edge the cluster adds --
-Gateway, TLS, the `/auth` rewrite, NetworkPolicies, rendered Secrets -- carry traffic.
-Running all 43 through the cluster re-asks the first question at k8s cost and still misses
-the webhook chain. So the e2e set derives from the 43 and condenses to one file per edge:
+Put in bats only what hurl cannot see from outside the Gateway.
 
-| File | Edge under test | Derived from |
+| File | Mutates | Asserts |
 |---|---|---|
-| `01` | client → Envoy; the http→https 308 listener pair | cluster-only |
-| `02` | Gateway → `kanae:8000` | 01, 05, 10 |
-| `03` | Gateway → `kratos:4433` through the `/auth` rewrite | cluster-only |
-| `04` | kanae → kratos whoami, kanae → valkey session cache | 02 |
-| `05` | kratos → kanae webhook → postgres -- **the exit gate** | cluster-only |
-| `06` | kanae → postgres, write path | 06 |
-| `07` | kanae → keto permission check | 07, 12 |
-| `08` | kanae → kratos admin (logout), cache invalidation | 04 |
+| `credentials.bats` | yes, restores | a poisoned `kanaePassword` fails kanae's rollout with `password authentication failed for user "kanae"` in its logs |
+| `migrate.bats` | no | the three migrate Jobs succeeded with no failed pod; every table belongs to its `*_migrate` role; the `kanae` role cannot create a table |
+| `netpol.bats` | no | from `envoy-gateway-system`, kanae:8000 and kratos:4433 open, and Kratos admin, both Keto ports, Valkey and Postgres closed; an unlabelled pod in `kanae` gets DNS and nothing else |
+| `pods.bats` | no | no container has restarted and no pod has failed |
+| `prune.bats` | yes, restores | kapp deletes the `postgres-checksum` CronJob when it is dropped from a copy of `.k8s-local` |
+| `pvc.bats` | yes, restores | after `kapp delete`, the claim stays Bound; after the re-apply, the claim and the `kanae-db` Secret keep their UIDs and the `members` rows keep their count and id digest |
+| `valkey-acl.bats` | no | the `default` user gets PING and nothing else; `kanae` authenticates, and is refused keys outside its patterns and admin commands |
 
-This also dissolves three plan tasks. No scenario calls a Keto or Kratos admin URL, so hurl
-never needs in-cluster placement or an admin API exposed. None needs object storage, so
-Garage in Docker is not a Phase 9 dependency. And `KRATOS_URL` goes through the Gateway, so
-the shared-origin cookie path gets exercised, which the Compose suite's separate Kratos origin
-never does.
+Follow these rules when you add or change a bats file:
 
-`05` asserts the webhook without a database client: `GET /members/me` returns
-`NotFoundResponse` when there is no row, so a 200 with the registered email proves the webhook
-wrote it. `response.ignore: false` on the web_hook and `- hook: session` after it make the
-ordering safe -- the session cookie exists only once the row does.
+- Leave the stack as you found it. In a mutating test, record each step's status with `run`,
+  restore, then assert.
+- Keep every file runnable alone and in any order. Do not pass `--jobs`; the files share one
+  cluster.
+- Start every file with a `setup_file` that refuses to run unless the kube context is
+  `k3d-kanae` and `deployment/kanae` exists. In files that re-apply, also refuse unless
+  `secrets.local.yml` matches the live `kanae-db` Secret.
+- Copy that precondition into each file. Do not add `helpers.bash` or any shared file.
+- Write every `@test` out. Do not generate tests in a loop.
+- Use `[[ ]]`, `run -0` and `run -N`. Do not add bats-assert or bats-support.
+- Do not use `sleep`, polling loops, background processes or port-forwards. Wait with
+  `kubectl wait` or `kubectl rollout status` and a timeout.
+- Name the container on every `kubectl exec statefulset/database`: `-c postgres`.
+- Read `valkey-cli`'s reply text. It exits 0 on an error reply.
+- Probe a NetworkPolicy from a namespace that no policy selects, and repeat an open control in
+  every deny test. A probe pod in `kanae` is refused by `default-deny`'s egress rule whatever
+  the target's policy says.
+- After a widened policy, confirm the deny tests go red before you trust them green.
+- Do not edit the chart or add a policy exception to make a test pass.
 
-The set is re-runnable, unlike the 43. `05` mints its email and password with hurl's
-`{{newUuid}}` and captures the email back from Kratos; `06` deletes the tag it creates.
-Re-running hurl against a stack that is already up is the inner loop, so it has to work.
+## The negative test
 
-### `init.sh` sets up and seeds; running and teardown are separate commands
+Poison `kanaePassword`, not `dbPassword`. `_helpers.tpl` builds the app's DSN from
+`kanaePassword`; `dbPassword` is only used at initdb.
 
-This is the integration suite's pattern: `tests/integration/init.sh` brings Compose up and
-seeds it, and `test.yml` runs hurl and tears down as separate steps. Two reasons to match it
-rather than keep one script that sets up, tests and tears down:
+In `credentials.bats`:
 
-- **The bats files need the stack too.** A single script with a teardown trap only works when
-  nothing else uses the cluster. With it, bats needed a `--keep` flag and an "export the path
-  I printed" handoff for the secrets file. With the stack simply staying up until the last
-  command, hurl and bats run against the same cluster and both workarounds disappear.
-- **Each CI step does one thing.** A failure in step 2 is a failing scenario, not "the e2e
-  script exited 1".
+1. Render the Secrets with `--set secrets.kanaePassword=not-the-kanae-password`.
+2. Deploy them with `kapp deploy ... --wait=false`.
+3. Run `kubectl rollout restart deployment/kanae`. The pod's checksum annotation does not
+   cover the Secret, so nothing else rolls it.
+4. Run `kubectl rollout status` with a 120s timeout, and expect it to fail. Do not use
+   `kubectl wait --for=condition=Available`.
+5. Collect the current and the `--previous` container logs.
+6. Restore with `apply-local.sh` at `WAIT=false`, restart again, and wait for the rollout.
+7. Assert.
 
-Seeding stays inside `init.sh` rather than a `seed.sh`. A script only another script calls is
-a helper, and the integration `init.sh` already does both jobs.
+## CI
 
-`init.sh` is idempotent so the loop is cheap: the cluster is reused if it exists, the
-namespace is applied rather than created, Kratos 409s fall back to a lookup, the `members`
-insert is `ON CONFLICT DO UPDATE`, Keto's PUT is a set-insert, and `PASSWORD` is reused from
-an existing `secrets.env` -- a re-run finds the identities already there with the old
-password, exactly as the integration script handles it.
+Run the e2e in the `Test` job of `.github/workflows/kubernetes.yml`, behind the `Changes`
+paths filter. Also run it every night at 06:00 UTC on `main`, whatever changed. Install
+every tool directly with a pinned `<TOOL>_VERSION` or commit; do not use mise.
 
-`init.sh` waits for the `kanae-migrate` Job to complete before it seeds, by label because
-kapp versions the Job's name, and for kanae to be Ready before it exits. `apply-local.sh`
-does not wait by default, and the Kratos, Keto and Postgres rollouts say nothing about
-kanae's schema: without the Job wait the `members` inserts race the migration, and without
-the kanae wait the first scenarios race the pod.
+Pin bats in the job's `env` and install it in the "Install BATS" step:
 
-### Measurement is not part of the workflow
+```yaml
+env:
+  BATS_COMMIT: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5 # v1.14.0
+```
 
-`k8s:measure` reads `memory.peak`, `memory.max` and `cpu.stat` from every container's
-cgroup: the highest memory the kernel recorded for the container's life, the limit it was
-given, and its average CPU. Phase 10 sets the memory requests and limits from those numbers.
-It reports rather than passes or fails, so it is not a step of the e2e run or of CI; it is
-run separately, against a live cluster, when Phase 10 needs the numbers.
+```bash
+git clone --quiet --depth 1 --revision "$BATS_COMMIT" \
+  https://github.com/bats-core/bats-core.git /tmp/bats-core
+sudo /tmp/bats-core/install.sh /usr/local
+```
 
-### Teardown is always the last command, never automatic
+`clone --revision` needs git 2.49 or later. To bump bats, take the new commit from
+`git ls-remote https://github.com/bats-core/bats-core.git 'refs/tags/v<version>^{}'`.
 
-A failed run leaves the cluster up so it can be looked at. Nothing tears down on failure,
-locally or in CI; deleting the cluster is the final step when you are done with it.
+Run the steps in this order: "Prepare cluster" (`init.sh`), "Run tests" (hurl), "Run cluster
+tests" (`bats --verbose-run deploy/kubernetes/tests/`), "Dump cluster state", "Clean up
+cluster". Do not add an `if:` to the bats step; it runs only when hurl passes.
 
-### CI and local both run on k3d
+Give "Dump cluster state" `if: ${{ failure() }}` and have it run
+`deploy/kubernetes/tests/scripts/dump.sh`. The script prints each section under a `log` header:
+pods in every namespace, Warning events in every namespace, `describe` of `gateway/kanae` and
+`certificate/kanae-tls`, then for each non-Ready pod in `kanae` its `describe`, each started
+container's last 200 log lines, and the `--previous` log of each container that restarted.
 
-One cluster, `deploy/kubernetes/k3d.yml`, everywhere. An earlier draft ran CI on kind with
-cloud-provider-kind for the `LoadBalancer`, which put the Gateway on an IP on the `kind`
-network. Under Docker Desktop that network is inside Docker's VM and unreachable from WSL,
-and cloud-provider-kind's proxy container published 80 on the host but not 443. k3d's loadbalancer publishes 80 and 443 on
-`127.0.0.1` from the start, so the same local hurl binary and the same `--resolve kanae:443:127.0.0.1`
-work on a laptop and on a runner. k3d is not yet pinned in the workflow.
+## Exit gate
 
-### Port-forwards live only as long as the seeding
+On a machine with no cluster:
 
-The admin APIs are reached over `kubectl port-forward` to seed, then closed by the script's
-EXIT trap. Nothing afterwards needs them. Port-forward goes around the NetworkPolicies rather
-than loosening them, so the cluster under test permits nothing production does not;
-`netpol.bats` pays for that by asserting the policies still bite.
+1. `init.sh` exits 0.
+2. hurl passes, including `04_kratos_to_kanae_webhooks`.
+3. `bats deploy/kubernetes/tests/` passes, including `credentials.bats`.
 
-### `secrets.local.yml` is kept, at a fixed path, beside the harness
+## Measuring
 
-`deploy/kubernetes/init.sh --local` generates the chart secrets, reads `LOCAL_VALUES` back when
-it exists, and writes it owner-only. The Postgres volume is initdb'd with those passwords
-once, so every later apply -- an `init.sh` re-run, and the re-applies in `prune.bats`,
-`pvc.bats` and `credentials.bats` -- must render the same values. A fixed path lets the bats
-files find it without being told, and keeping it in `tmp-e2e-harness/` rather than the
-default `deploy/kubernetes/secrets.local.yml` means a test run never overwrites a developer's
-own local secrets.
+Run `mise run k8s:measure` on its own, against a live cluster, when Phase 10 needs numbers.
+Run it after hurl and before bats. `pvc.bats` and `credentials.bats` recreate pods, and
+`memory.peak` resets with the container.
 
-`init.sh` calls it with stdout to `/dev/null`, not `>"$LOCAL_VALUES"`. The redirect would make
-the shell truncate the file before `init.sh --local` read it back, and every re-run would
-silently rotate every secret against a database that still has the old ones.
+## Known issues
 
-### bats for the internals, one file per concern
-
-Prune, PVC survival, the negative test and the NetworkPolicy probe are about cluster state,
-not HTTP, so they go to a shell test runner: they are `kubectl`, `kapp` and `helm` calls, and
-bats runs shell with pass/fail per test and nothing else.
-
-One file per concern, with every file leaving the stack as it found it. That is the property
-that matters; the file split follows from it. An earlier version merged everything into one
-`cluster.bats` because the credential test left the stack broken and had to run last -- and
-across files, "last" meant relying on `secrets.bats` sorting after the others. Making the
-credential test restore instead removes the ordering constraint, so the files are independent,
-any one can run alone, and `bats tmp-e2e-harness/` runs them all. Within `pvc.bats` the two
-tests are ordered on purpose: the second reads the rows the first brought back.
-
-Each file carries its own six-line `setup_file` check rather than sharing a `helpers.bash`.
-Duplicating a precondition beats a helper file only the tests source.
-
-No `test_` prefix. pytest needs one to discover files; bats runs every `*.bats` in a
-directory, so the prefix is noise.
-
-### No bats-assert
-
-bats-assert needs bats-support, and neither is in mise's registry -- only `bats` itself is --
-so they would arrive as git submodules or a clone step: two unpinned dependencies for six
-tests. What they mostly add is printing `$output` on failure, and bats-core 1.14 already does
-that: `run -0` / `run -1` print the captured output when the exit code is wrong, and
-`bats --verbose-run` prints every `run`'s output on failure.
-
-### The negative test poisons `kanaePassword` and restarts the pod
-
-`credentials.bats` renders the Secrets from `secrets.local.yml` with
-`--set secrets.kanaePassword=not-the-password`, deploys them, and expects
-`kubectl rollout status deployment/kanae` to fail with
-`password authentication failed for user "kanae"` in the pod's logs.
-
-It has to restart kanae itself. The DSN reaches the pod through the `kanae-config` Secret,
-read at startup, and the Deployment's checksum annotation covers `kanae.config.public` only
-(`kanae.yml:55`). A Secret change alone does not roll the pod, so without the restart the
-poisoned deploy succeeds and the running pod keeps its good connection -- a negative test that
-never goes red.
-
-It restores before asserting: re-apply with the real values, restart, wait for the rollout.
-
-## Rejected
-
-- **pytest as the harness** (this document's previous design). A `harness/` package of seven
-  modules -- `Toolchain`, `Cluster`, `Fitness`, `GatewayClient`, `Database`, `DisposableApp`,
-  `HurlRunner` -- to drive CLIs through `subprocess`, wrap hurl in a serial per-file loop that
-  `hurl --test` already does in parallel, and re-implement an HTTP client beside the HTTP test
-  tool. Every class was a translation layer between two tools that already talk to each other
-  through a shell. Parametrising one generated test per `.hurl` file went with it.
-- **One script that sets up, runs hurl and tears down** (`e2e.sh`, then `run.sh`). Correct only
-  while nothing else uses the stack. The bats files do.
-- **A single `cluster.bats`.** Its only reason was ordering, which the restoring credential
-  test removes.
-- **hurl from a pod, as the plan specifies.** Needs a NetworkPolicy amendment on Keto and on
-  kanae; the test would modify the thing it certifies.
-- **Running all 43 through the cluster.** Re-asks the integration suite's question, needs
-  Garage and single-shot databases, and still never touches the webhook.
+- `init.sh` cannot be re-run against a live cluster.
+- The e2e uses `deploy/kubernetes/secrets.local.yml`, the same file as your local stack.
+- `values.local.yml` pins the published `edge` image by digest, so the e2e does not test the
+  checkout's own kanae code.
+- If a mutating bats file is interrupted or its restore step fails, the stack stays broken.
+  Its `setup_file` then reports a secrets mismatch or a missing stack. Run `apply-local.sh` to
+  recover.
 
 ## Deviations from the plan's task list
 
 | Plan task | Here |
 |---|---|
-| Widen `e2e.sh` to the full scenario directory | Condensed set in `scenarios/`, see above. `deploy/kubernetes/tests/e2e.sh` is untouched until the harness moves |
-| `vars.env` with admin URLs at ClusterIP names | `vars.env` has Gateway URLs only; no scenario needs an admin URL |
-| Run hurl from a pod | From the host through the Gateway |
-| Kubernetes version of the integration `init.sh` | `init.sh`, ported to `kubectl exec` and port-forwards |
+| Widen `e2e.sh` to the full scenario directory | 18 scenarios in `scenarios/`, one per edge or journey |
+| `vars.env` with admin URLs at ClusterIP names | Yes, used by `init.sh` only |
+| Run hurl from a pod | Run it from the host through the Gateway |
+| Kubernetes version of the integration `init.sh` | `init.sh`, using `kubectl exec` |
 | `--secrets-file` as well as `--variables-file` | Yes |
-| Garage in Docker | Not needed; no e2e scenario touches storage |
-| Start with 01/02/22 | Superseded by the condensed set |
-| Negative test: `e2e.sh` fails on a wrong password | `credentials.bats` asserts the rollout fails with the Postgres error |
-| Test deletion both ways | `prune.bats`, `pvc.bats` |
-| Tear down whether it passed or failed | Not done, by decision: a failed run keeps its cluster |
-| `k8s:measure` before the cluster is deleted | Not part of the workflow; run separately |
-| Print events and non-Ready pod logs on failure | Deferred, by decision |
-| CI job on `kubernetes.yml` | Not done; see below |
-
-The exit gate changes shape accordingly: `init.sh` plus the hurl run go from no cluster to a
-signed-up member (`05`) and exit 0, and `credentials.bats` goes red without its restart --
-breaking the password on purpose fails the rollout with the Postgres authentication error in
-the output.
-
-## Open questions and risks
-
-- **Which image is under test?** `values.local.yml` pins the published `edge` digest, so as
-  written Phase 9 certifies a stack that does not run the checkout's code. Building and
-  `k3d image import`-ing it would go in `init.sh` step 1.
-- **The CI job itself.** Four steps on the existing `kubernetes.yml` behind the same
-  paths-filter output -- `init.sh`, hurl against `127.0.0.1`, bats, teardown -- plus
-  a nightly `schedule:`, tools installed directly with pinned `<TOOL>_VERSION`. No new
-  workflow file. Not written yet. bats is not yet pinned in `mise.toml`.
-- **Kratos is OOM-killed by concurrent logins -- found by the first run.** Five password POSTs
-  at once (hurl runs files in parallel) killed Kratos with exit 137 at its 512Mi limit: argon2
-  takes `memory: 128MB` per hash (`kratos.prod.yml:186`) and nothing bounds concurrency;
-  `dedicated_memory: 384MB` is used only by calibration. Production has the same config and
-  limit, so four or five simultaneous logins take production Kratos down. The fix belongs in
-  the chart, not the harness: a limit sized for the concurrency wanted, or a lower argon2
-  `memory`. The harness keeps hurl parallel so it stays red until then; `--jobs 1` passes.
-- **Verified on k3d** (Docker Desktop, WSL2): `init.sh` from nothing in 8m48s, then the 18
-  scenarios twice with the local hurl binary against `127.0.0.1`. 17 files pass both times;
-  15's final `/sudo/audit` 500 is a known kanae bug.
-- **Measuring against an e2e cluster.** `memory.peak` lives as long as the container, and
-  `pvc.bats` and `credentials.bats` recreate pods, so a measurement taken after bats misses
-  Postgres' initdb peak (138Mi in the plan). Measure before running bats, or on a cluster
-  bats never touched.
-- **Integration scenario 01's CORS assertion** (`http://localhost:5173` vs `https://kanae:5173`)
-  is not in the e2e set, but the mismatch would bite if a CORS assertion were added.
-- **`ory.publicOrigin`** is settled by the run: `04` and `05` pass, so the Kratos cookie
-  survives the `https://kanae:5173` / `https://kanae` mismatch.
-- **Still open:** whether the netpol probe reads as a timeout or a refusal (it passes either
-  way).
-
-## Next implementation step
-
-Run `init.sh` against a fresh machine, then again against the stack it left, and confirm the
-second run changes nothing -- same identities, same `PASSWORD`, Postgres still accepting the
-`kanae` role. Everything else sits on that.
+| Garage in Docker | Not needed; no scenario touches object storage |
+| Start with 01/02/22 | Superseded by the 18 scenarios |
+| Negative test: `e2e.sh` fails on a wrong password | `credentials.bats` |
+| Test deletion both ways | `prune.bats` and `pvc.bats` |
+| Tear down whether it passed or failed | Not done; a failed run keeps its cluster |
+| `k8s:measure` before the cluster is deleted | Run on its own, see Measuring |
+| Print events and non-Ready pod logs on failure | The "Dump cluster state" step |
+| CI job on `kubernetes.yml` | The `Test` job, plus a nightly `schedule:` |

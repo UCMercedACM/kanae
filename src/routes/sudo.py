@@ -26,7 +26,7 @@ class Sudo(BaseModel, frozen=True):
 
 
 class ActiveSudo(BaseModel, frozen=True):
-    member_id: uuid.UUID
+    member_id: Optional[uuid.UUID]
     granted_at: datetime.datetime
     expires_at: datetime.datetime
     reason: str

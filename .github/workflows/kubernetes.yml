@@ -9,6 +9,9 @@ on:
     branches:
       - main
 
+  schedule:
+    - cron: "0 6 * * *"
+
 jobs:
   Changes:
     name: Determine Changes
@@ -176,7 +179,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     needs: Changes
-    if: ${{ needs.Changes.outputs.kubernetes == 'true' }}
+    if: ${{ needs.Changes.outputs.kubernetes == 'true' || github.event_name == 'schedule' }}
 
     permissions:
       contents: read
@@ -187,6 +190,7 @@ jobs:
       K3D_VERSION: 5.9.0
       KAPP_VERSION: 0.65.4
       HURL_VERSION: 8.0.1
+      BATS_COMMIT: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5 # v1.14.0
 
     steps:
       - name: Checkout Repository
@@ -248,6 +252,13 @@ jobs:
 
           sudo apt-get install -y "/tmp/${HURL_ASSET}"
 
+      - name: Install BATS
+        run: |
+          git clone --quiet --depth 1 --revision "$BATS_COMMIT" \
+            https://github.com/bats-core/bats-core.git /tmp/bats-core
+
+          sudo /tmp/bats-core/install.sh /usr/local
+
       - name: Prepare cluster
         run: deploy/kubernetes/tests/init.sh
 
@@ -258,6 +269,13 @@ jobs:
             --variables-file deploy/kubernetes/tests/vars.env \
             --secrets-file deploy/kubernetes/tests/secrets.env \
             deploy/kubernetes/tests/scenarios/*.hurl
+
+      - name: Run cluster tests
+        run: bats --verbose-run deploy/kubernetes/tests
+
+      - name: Dump cluster state
+        if: ${{ failure() }}
+        run: deploy/kubernetes/tests/scripts/dump.sh
 
       - name: Clean up cluster
         run: k3d cluster delete --config deploy/kubernetes/k3d.yml

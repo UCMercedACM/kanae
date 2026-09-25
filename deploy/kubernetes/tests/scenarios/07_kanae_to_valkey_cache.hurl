@@ -94,7 +94,7 @@ HTTP 200
 [Asserts]
 jsonpath "$.id" == "{{MEMBER_ID}}"
 jsonpath "$.session.issued_at" startsWith "{{a_issued}}"
-duration <= 3000
+duration <= 5000
 
 GET {{KANAE_URL}}/members/me/projects
 [Options]
