@@ -4,7 +4,10 @@ set -uo pipefail
 
 NAMESPACE=${NAMESPACE:-kanae}
 
-log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
+log() {
+	printf '\n\033[1;34m==>\033[0m %s\n' "$*"
+	return 0
+}
 
 log "pods in every namespace"
 kubectl get pods -A -o wide
