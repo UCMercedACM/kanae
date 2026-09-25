@@ -203,6 +203,15 @@ deploy/kubernetes/secrets.yml
 # Throwaway credentials for a local cluster; never used anywhere else
 deploy/kubernetes/secrets.local.yml
 
+# Written by tmp-e2e-harness/init.sh: the e2e stack's chart secrets
+# (init.sh --local through LOCAL_VALUES) and the hurl PASSWORD + identity UUIDs
+tmp-e2e-harness/secrets.local.yml
+tmp-e2e-harness/secrets.env
+
+# Generated per-run by deploy/kubernetes/tests/init.sh — contains test PASSWORD + identity UUIDs
+deploy/kubernetes/tests/secrets.env
+
 # Mostly for long-term agent viewing
 decisions.tsv
 .audit
+.audits

@@ -9,6 +9,9 @@ on:
     branches:
       - main
 
+  schedule:
+    - cron: "0 6 * * *"
+
 jobs:
   Changes:
     name: Determine Changes
@@ -170,6 +173,112 @@ jobs:
         run: |
           git add --intent-to-add --ignore-removal -- deploy/kubernetes/dist
           git diff HEAD --exit-code -- 'deploy/kubernetes/dist/*.yml'
+
+  Test:
+    name: Test
+    runs-on: ubuntu-24.04
+
+    needs: Changes
+    if: ${{ needs.Changes.outputs.kubernetes == 'true' || github.event_name == 'schedule' }}
+
+    permissions:
+      contents: read
+
+    env:
+      HELM_VERSION: 4.3.0
+      HELMFILE_VERSION: 1.8.0
+      K3D_VERSION: 5.9.0
+      KAPP_VERSION: 0.65.4
+      HURL_VERSION: 8.0.1
+      BATS_COMMIT: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5 # v1.14.0
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install k3d
+        uses: nolar/setup-k3d-k3s@62c9d1bd2bc843275c85d2e7dcd696edc1160eee # v1.1.0
+        with:
+          k3d-tag: v${{ env.K3D_VERSION }}
+          skip-creation: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install tools
+        run: |
+          ARCH=$(uname -m)
+          case $ARCH in
+            aarch64) ARCH="arm64";;
+            x86_64) ARCH="amd64";;
+          esac
+
+          HELMFILE_ASSET="helmfile_${HELMFILE_VERSION}_linux_${ARCH}.tar.gz"
+          HELMFILE_RELEASE="https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}"
+          KAPP_ASSET="kapp-linux-${ARCH}"
+          KAPP_RELEASE="https://github.com/carvel-dev/kapp/releases/download/v${KAPP_VERSION}"
+
+          curl --proto "=https" -fsSL "${HELMFILE_RELEASE}/${HELMFILE_ASSET}" -o "/tmp/${HELMFILE_ASSET}"
+          curl --proto "=https" -fsSL "${HELMFILE_RELEASE}/helmfile_${HELMFILE_VERSION}_checksums.txt" \
+            | awk -v asset="$HELMFILE_ASSET" '$2 == asset { print $1 "  /tmp/" asset }' \
+            | sha256sum --check --strict -
+          tar -xzf "/tmp/${HELMFILE_ASSET}" -C /tmp helmfile
+
+          curl --proto "=https" -fsSL "${KAPP_RELEASE}/${KAPP_ASSET}" -o /tmp/kapp
+          curl --proto "=https" -fsSL "${KAPP_RELEASE}/checksums.txt" \
+            | awk -v asset="$KAPP_ASSET" '$2 == asset { print $1 "  /tmp/kapp" }' \
+            | sha256sum --check --strict -
+
+          sudo install -m 0755 /tmp/helmfile /tmp/kapp /usr/local/bin/
+
+      - name: Install Hurl
+        run: |
+          HURL_ASSET="hurl_${HURL_VERSION}_amd64.deb"
+          HURL_RELEASE="https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}"
+
+          curl --proto "=https" -fsSL "${HURL_RELEASE}/${HURL_ASSET}" -o "/tmp/${HURL_ASSET}"
+          curl --proto "=https" -fsSL "${HURL_RELEASE}/${HURL_ASSET}.sha256" \
+            | awk -v asset="/tmp/${HURL_ASSET}" '{ print $1 "  " asset }' \
+            | sha256sum --check --strict -
+
+          sudo apt-get install -y "/tmp/${HURL_ASSET}"
+
+      - name: Install BATS
+        run: |
+          git clone --quiet --depth 1 --revision "$BATS_COMMIT" \
+            https://github.com/bats-core/bats-core.git /tmp/bats-core
+
+          sudo /tmp/bats-core/install.sh /usr/local
+
+      - name: Prepare cluster
+        run: deploy/kubernetes/tests/init.sh
+
+      - name: Run tests
+        run: |
+          hurl --test --insecure \
+            --resolve kanae:443:127.0.0.1 --resolve kanae:80:127.0.0.1 \
+            --variables-file deploy/kubernetes/tests/vars.env \
+            --secrets-file deploy/kubernetes/tests/secrets.env \
+            deploy/kubernetes/tests/scenarios/*.hurl
+
+      - name: Run cluster tests
+        run: bats --verbose-run deploy/kubernetes/tests
+
+      - name: Dump cluster state
+        if: ${{ failure() }}
+        run: deploy/kubernetes/tests/scripts/dump.sh
+
+      - name: Clean up cluster
+        run: k3d cluster delete --config deploy/kubernetes/k3d.yml
 
   Render:
     name: Render

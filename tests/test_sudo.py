@@ -344,3 +344,64 @@ async def test_audit_lists_history_for_root(
     mine = [row for row in response.json() if row["member_id"] == member_id]
     assert len(mine) == 2
     assert {row["reason"] for row in mine} == {"first", "second"}
+
+
+async def test_audit_keeps_history_of_deleted_member(
+    client: KanaeTestClient, fake_ory: FakeOryClient, kanae: Kanae
+) -> None:
+    deleted_id = str(uuid.uuid4())
+    kept_id = str(uuid.uuid4())
+    await _seed_member(kanae, deleted_id)
+    await _seed_member(kanae, kept_id)
+    await kanae.sudo.grant(deleted_id, reason=f"{deleted_id} first")
+    await kanae.sudo.grant(deleted_id, reason=f"{deleted_id} second")
+    await kanae.sudo.grant(kept_id, reason=f"{kept_id} only")
+
+    before = await kanae.pool.fetch(
+        "SELECT id, granted_at, expires_at FROM sudo_audit "
+        "WHERE member_id = $1 ORDER BY id",
+        deleted_id,
+    )
+    assert len(before) == 2
+
+    await kanae.pool.execute("DELETE FROM members WHERE id = $1", deleted_id)
+
+    after = await kanae.pool.fetch(
+        "SELECT id, member_id, granted_at, expires_at FROM sudo_audit "
+        "WHERE id = ANY($1::bigint[]) ORDER BY id",
+        [row["id"] for row in before],
+    )
+    assert [row["member_id"] for row in after] == [None, None]
+    live_grants = await kanae.pool.fetchval(
+        "SELECT count(*) FROM sudo_grants WHERE member_id = $1", deleted_id
+    )
+    assert live_grants == 0
+
+    fake_ory.login_as(Role.ROOT)
+    response = await client.client.get("/sudo/audit")
+    assert response.status_code == 200
+
+    body = response.json()
+    orphaned = [row for row in body if row["reason"].startswith(deleted_id)]
+    assert len(orphaned) == 2
+    assert {row["reason"] for row in orphaned} == {
+        f"{deleted_id} first",
+        f"{deleted_id} second",
+    }
+    assert all(row["member_id"] is None for row in orphaned)
+    assert sorted(
+        (
+            datetime.datetime.fromisoformat(row["granted_at"]),
+            datetime.datetime.fromisoformat(row["expires_at"]),
+        )
+        for row in orphaned
+    ) == sorted((row["granted_at"], row["expires_at"]) for row in before)
+
+    kept = [row for row in body if row["reason"] == f"{kept_id} only"]
+    assert len(kept) == 1
+    assert kept[0]["member_id"] == kept_id
+
+    active = await client.client.get("/sudo/active")
+    assert active.status_code == 200
+    assert all(row["member_id"] != deleted_id for row in active.json())
+    assert any(row["member_id"] == kept_id for row in active.json())

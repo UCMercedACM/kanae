@@ -105,11 +105,11 @@ spec:
             timeoutSeconds: 3
           resources:
             requests:
-              memory: 512Mi
-              cpu: 100m
+              memory: 4Gi
+              cpu: 1000m
               ephemeral-storage: 64Mi
             limits:
-              memory: 512Mi
+              memory: 4Gi
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false

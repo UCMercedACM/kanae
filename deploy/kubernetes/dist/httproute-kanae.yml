@@ -23,6 +23,8 @@ spec:
             path:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
+      timeouts:
+        request: 45s
       backendRefs:
         - name: kratos
           port: 4433

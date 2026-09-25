@@ -1606,88 +1606,64 @@ A 404 on the second command means the rewrite is wrong.
 
 ## Phase 9. The end-to-end test
 
-**What you build.** One script that starts from nothing, brings up the stack,
-signs a user up, and checks the user exists. Then CI runs it.
+**What you build.** A cluster test that starts from nothing, brings up the
+stack, signs a user up, and checks the user exists. Then CI runs it.
 
 **Why it is the most valuable phase here.** Signup crosses four services. The
 browser talks to Kratos, Kratos creates the identity, Kratos calls a webhook
 into kanae, and kanae writes a member row. A break anywhere in that chain looks
 like "signup is broken" with no clue where.
 
-**How it goes.** Half of this phase is already written. `tests/integration/`
-holds 43 hurl scenarios covering signup, login, the permission matrix, and the
-event and project flows. `mise.toml` pins hurl 8.0.1 and
-`.github/workflows/test.yml` already runs them against Compose. Point them at
-the cluster and they become the cluster's test suite, so this phase writes no
-assertions in bash.
-
-What is new is the harness: create the cluster, build and import the images,
-apply, wait, run hurl through the Gateway, and tear down whether it passed or
-failed. Get that reliable first, because a harness that leaks clusters costs
-more time than the bugs it finds.
-
-Waiting for pods to be Ready is not a test. Every pod was Ready in the proof of
-concept while the stack was unusable. Then break it on purpose with a wrong
-database password, because a test that has never failed is one you have no
-reason to believe. Failures here surface far from their cause, so the failure
-output has to carry enough to find it.
+**How it goes.** Leave the 43 Compose scenarios in `tests/integration/` where
+they are. Write 18 cluster scenarios in `deploy/kubernetes/tests/scenarios/`,
+one per edge or journey, and put in bats only what hurl cannot see from outside
+the Gateway. Break the stack on purpose and watch the suite go red before you
+trust it green. `infra-plans/PHASE9_E2E_DESIGN.md` is the reference for the
+harness.
 
 ### Tasks
 
-- [ ] Widen `deploy/kubernetes/tests/e2e.sh`, built in Phase 2 and grown by every
-      phase since, from its per-phase assertions to the full scenario directory.
-- [ ] Write `deploy/kubernetes/test/vars.env` with the same variable names as
-      `tests/integration/vars.env`. `KANAE_URL` and `KRATOS_URL` point at the
-      Gateway; `KRATOS_ADMIN_URL`, `KETO_READ_URL` and `KETO_WRITE_URL` point at
-      ClusterIP names, because those three are never exposed and must not be.
-- [ ] Run hurl from a pod inside the cluster rather than from the runner. Eleven
-      of the 43 scenarios talk to Keto's read or write API directly, so an
-      outside-in run either fails or requires publishing an unauthenticated
-      admin API.
-- [ ] Write a Kubernetes version of `tests/integration/init.sh`. It does more
-      than start containers: it creates Kratos identities, inserts matching
-      `members` rows through `psql`, writes Keto tuples, and generates
-      `secrets.env`. Port it to `kubectl exec` and cluster URLs.
-- [ ] Pass `--secrets-file` as well as `--variables-file`, the way
-      `.github/workflows/test.yml` already does. Two of the three starter
-      scenarios below read `PASSWORD` and an identity id from it.
-- [ ] Bring up Garage in Docker for the object-storage scenarios. The Compose
-      test stack runs it as a sixth service and the cluster has no object
-      store, so scenarios 25, 26 and 43 have nothing to talk to without it.
-- [ ] Start with the three scenarios that prove the wiring rather than all 43:
-      `01_health_and_docs.hurl`, `02_login_admin_bootstrapped.hurl`, and
-      `22_full_journey_lead.hurl`. The last one covers signup end to end, which
-      is the chain this phase exists to check. Widen to the full directory once
-      the harness stops being the thing that fails.
-- [ ] Track the seed script bug separately, not here. It completes only part of
-      its fifteen members because of the rate-limit interaction in Finding 5.
-      It is an application fault, and it should not gate the phase carrying the
-      regression net for everything before it.
-- [ ] Add a negative test. Apply with a deliberately wrong database password and
-      confirm `e2e.sh` fails. A test that has never failed proves nothing about
-      the thing it tests.
-- [ ] Test deletion both ways. Remove a resource from the chart, re-render, run
-      `k8s:apply`, and confirm kapp removes it. Then run `kapp delete -a kanae`,
-      confirm the Postgres claim survives, re-apply, and confirm the database
-      comes back with its data. Pruning is the failure mode this pattern
-      introduces; the claim surviving is the branch where being wrong costs the
-      database.
-- [ ] Add `e2e.sh` to `.github/workflows/kubernetes.yml`, behind the same
-      `dorny/paths-filter` output as the rest of that workflow, plus a nightly
-      schedule so it still runs on the weeks nobody touches the cluster.
-      GitHub runners can run k3d.
-- [ ] Have the script print, on failure, the output of
-      `kubectl get events --sort-by=.lastTimestamp` and the logs of every pod
-      that is not Ready. The proof of concept found that failures surface far
-      from their cause, so the failure output has to carry enough to find the
-      cause.
+- [x] Run the e2e as three commands against one cluster:
+      `deploy/kubernetes/tests/init.sh`, hurl over
+      `deploy/kubernetes/tests/scenarios/*.hurl`, then
+      `bats deploy/kubernetes/tests/`.
+- [x] Write `deploy/kubernetes/tests/vars.env`. `KANAE_URL`, `KANAE_HTTP_URL`
+      and `KRATOS_URL` point at the Gateway; `KRATOS_ADMIN_URL` and
+      `KETO_WRITE_URL` point at ClusterIP names, and only `init.sh` reads them.
+- [ ] ~~Run hurl from a pod inside the cluster rather than from the runner.~~
+      **Dropped.** Run hurl from the host through the Gateway. No cluster
+      scenario touches an admin API.
+- [x] Port `tests/integration/init.sh` to `deploy/kubernetes/tests/init.sh`. It
+      creates the cluster and applies the stack, then over `kubectl exec`
+      creates six Kratos identities, upserts their `members` rows, writes their
+      Keto tuples, and writes `secrets.env`.
+- [x] Pass `--secrets-file deploy/kubernetes/tests/secrets.env` alongside
+      `--variables-file`.
+- [ ] ~~Bring up Garage in Docker for the object-storage scenarios.~~
+      **Dropped.** No cluster scenario touches object storage.
+- [ ] ~~Start with three scenarios and widen to the full directory.~~
+      **Superseded.** All 18 cluster scenarios run from the first commit.
+- [ ] ~~Track the seed script bug separately.~~ **Not tracked by this phase.**
+      Fix it with the application, outside the cluster work.
+- [x] Add a negative test. `credentials.bats` poisons `kanaePassword`, restarts
+      kanae, asserts the rollout fails with
+      `password authentication failed for user "kanae"` in its logs, and
+      restores the stack.
+- [x] Test deletion both ways. `prune.bats` drops the `postgres-checksum`
+      CronJob from a copy of the render and asserts kapp deletes it. `pvc.bats`
+      runs `kapp delete`, re-applies, and asserts the claim, the `kanae-db`
+      Secret and the `members` rows come back unchanged.
+- [x] Run the e2e in the `Test` job of `.github/workflows/kubernetes.yml`, behind
+      the `dorny/paths-filter` output and every night at 06:00 UTC.
+- [x] On failure, run `deploy/kubernetes/tests/scripts/dump.sh`. It prints pods
+      and Warning events in every namespace, the Gateway and certificate, and
+      the description and logs of every non-Ready pod in `kanae`.
 
 ### Exit gate
 
-`bash deploy/kubernetes/tests/e2e.sh` goes from no cluster to a signed-up member
-and exits
-0. Break the database password on purpose, run it again, and it exits non-zero
-with the Postgres authentication error in its output.
+On a machine with no cluster, `deploy/kubernetes/tests/init.sh` exits 0, hurl
+passes including `04_kratos_to_kanae_webhooks`, and `bats deploy/kubernetes/tests/`
+passes including `credentials.bats`.
 
 ---
 
@@ -1928,8 +1904,8 @@ Tick a phase only when its exit gate has passed on a real cluster.
 
 **Layer D. Proof and operations**
 
-- [ ] Phase 9. `e2e.sh` runs the full hurl suite against a cluster it built,
-      and fails when you break something on purpose
+- [x] Phase 9. `init.sh`, hurl and bats run against a cluster `init.sh` built,
+      and `credentials.bats` goes red on a broken password
 - [ ] Phase 10. A restore from a real backup matches the source, memory limits
       set from measurements, backup layout recorded against 3-2-1, runbook
       written
