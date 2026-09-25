@@ -15,6 +15,16 @@ in use today was OOM-killed in 11 of 12 trials with Go's default collector, two
 of them at only 2 signups per second. 1Gi with `GOMEMLIMIT=900MiB` holds 4
 simultaneous signups and 2 signups per second, and nothing more.
 
+**If 1.5Gi cannot be found, change the hasher rather than run 1Gi as it
+is.** At 1Gi with `GOMEMLIMIT=900MiB`, `hashers.argon2.memory: 64MB` with
+`iterations: 6` keeps today's cost per guess, halves the memory per signup and
+survived 8 in flight and 4 signups per second where today's 128MB hasher was
+killed; the OWASP Argon2id floor (19MiB, 2 iterations, parallelism 1) removes
+memory as the constraint and lifted capacity here from 6 to 36 signups per
+second. Ory's `calibrate` command cannot be used to choose between them in
+v26.2.0: it adds half a second of its own overhead to every hash it times.
+The "Calibrating the hasher" section has the measurements.
+
 **75 signups per second is not a memory-limit question on this node.** Kratos
 sustained at most 6 signups per second on the 3 CPUs used here, and the
 production node's own hash time is unknown: the 504 ms `DECISIONS.md` recorded
@@ -91,7 +101,7 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 - open: Poisson arrivals at a target rate, with exponential gaps so there is
   no start-up burst, and a user cap of 6 × rate so pile-up is bounded.
 
-**Design and bias control.** 159 trials in three phases:
+**Design and bias control.** 204 trials in four phases:
 
 | phase | factors | levels | reps | trials |
 | --- | --- | --- | --- | --- |
@@ -101,9 +111,10 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 | 2 | plateau check, 60 s instead of 20 s | C ∈ {4, 6, 8} | 2 | 6 |
 | 2 | `hashers.argon2.parallelism` 3 vs 16 | C ∈ {2, 4} | 3 | 6 |
 | 3 | verification: limit × `GOMEMLIMIT` × load | {1Gi, 1Gi+900MiB, 1.5Gi+1400MiB, 2Gi+1850MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 48 |
+| 4 | recalibrated hashers at 1Gi + `GOMEMLIMIT=900MiB` | {64MB/6 it, 64MB/3 it, 19MiB/2 it/p1} × {C=4, C=8, C=16, 2/s, 4/s} | 3 | 45 |
 
 Within each phase the trial order was shuffled with a recorded seed
-(20260925, 7, 11) so drift in the machine could not line up with a factor
+(20260925, 7, 11, 13) so drift in the machine could not line up with a factor
 level. Every trial started a new Kratos process, a new cgroup and a new
 database cloned from the migrated template, so heap retention and table growth
 could not carry over. Arrival gaps used a per-replicate seed so replicates
@@ -279,13 +290,26 @@ whole node for one pod and cannot schedule beside the rest.
    limit holds. A 429 at the
    gateway is a retry for one person; an OOM kill is a failed signup for
    everyone in flight.
-4. Do not size for 75 signups per second on this node. It needs either the
+4. If the node cannot give Kratos 1.5Gi, keep 1Gi with `GOMEMLIMIT=900MiB` and
+   set `hashers.argon2.memory: 64MB`, `iterations: 6` in `kratos.prod.yml`,
+   which the Compose production stack also loads. That keeps the time an
+   attacker spends per guess equal to today's and holds 8 in flight. Going to
+   the OWASP floor (`19MB`, `iterations: 2`, `parallelism: 1`) is a security
+   decision to record in `DECISIONS.md` against its current "the point of
+   argon2 is the memory" entry; the numbers say it is what makes this node
+   comfortable, and 19MiB is what OWASP calls the minimum, not a weak setting.
+   Existing hashes keep their own parameters in the `$argon2id$` string and
+   verify unchanged; new registrations and password changes take the new ones.
+   Do not use `kratos hashers argon2 calibrate` to pick these until the
+   overhead in its CLI wrapper is fixed upstream; time the hash with
+   `tests/load/locustfile.py` at `-u 1` on the node instead.
+5. Do not size for 75 signups per second on this node. It needs either the
    argon2 memory parameter lowered, which `DECISIONS.md` rejected on security
    grounds, or a node with roughly 75 × 0.5 s × 128MB ≈ 4.7 GB of headroom for
    Kratos alone plus the CPU to hash 75 times per second. Three cores here
    completed 6 signups per second, 0.5 core-seconds each, so 75 per second is
    about 40 cores at this machine's speed.
-5. When running the hurl suite against a limited Kratos, pass `--jobs 4` or
+6. When running the hurl suite against a limited Kratos, pass `--jobs 4` or
    lower; the default is one job per CPU and each job is a login.
 
 ## Calibrating the hasher
@@ -348,11 +372,71 @@ memory constraint, which is what the tool's load test approximates.
 
 ### Hash time on 3 CPUs, raw argon2id
 
-<!-- ARGON2_GRID -->
+Warm medians of 7 calls after 2 warm-up calls, one hash at a time, Kratos's
+production settings in bold, measured on idle CPUs (a first run overlapped the
+swarm and was discarded). The cold column is the first call, which pays the
+page faults for a freshly mapped block; a Kratos hash pays that whenever the
+runtime has handed the previous block back to the kernel.
+
+| memory | iterations | parallelism | warm median | cold first call |
+| --- | --- | --- | --- | --- |
+| 19MiB | 2 | 1 | 30 ms | 49 ms |
+| 19MiB | 2 | 16 | 15 ms | 92 ms |
+| 46MiB | 1 | 1 | 42 ms | 94 ms |
+| 32MB | 4 | 16 | 47 ms | 149 ms |
+| 64MB | 3 | 16 | 72 ms | 268 ms |
+| 64MB | 6 | 16 | 140 ms | 333 ms |
+| 96MB | 3 | 16 | 108 ms | 419 ms |
+| **128MB** | **3** | **16** | **147 ms** | **575 ms** |
+| 128MB | 3 | 3 | 141 ms | 544 ms |
+| 128MB | 1 | 16 | 53 ms | 460 ms |
+
+Two things follow. Cost scales with memory × iterations, so 64MB at 6
+iterations costs an attacker the same time per guess as today's 128MB at 3
+while holding half the memory. And Ory's own target of 0.5 to 1 s per hash
+(the calibrate help text) is not met by any row on this CPU, today's included;
+meeting it would push memory or iterations up, against the budget. The
+duration target belongs to the production node and has to be measured there.
+
+The OWASP Password Storage Cheat Sheet lists `m=19456 (19 MiB), t=2, p=1` as
+the Argon2id minimum, with `m=47104 (46 MiB), t=1, p=1` and lower-memory,
+higher-iteration equivalents beside it
+([OWASP CheatSheetSeries, Password_Storage_Cheat_Sheet.md](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Password_Storage_Cheat_Sheet.md)).
+Today's 128MB is 6.7 times that floor.
 
 ### Swarm against the recalibrated configs
 
-<!-- PHASE4 -->
+Three candidates, everything else in `kratos.prod.yml` unchanged, each run
+against the constrained pod, 1Gi with `GOMEMLIMIT=900MiB`, under the loads
+that killed the 128MB hasher at that limit (table E). 45 trials, 3 replicates
+per cell, shuffled order; the three trials that overlapped the timing grid were
+discarded and re-run. "Killed" is the kernel OOM killer; peaks are means over
+the 3 trials in Mi; capacity is completed signups per second at the best
+closed-loop point.
+
+| hasher | hash here | C = 4 | C = 8 | C = 16 | 2 /s | 4 /s | capacity |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 128MB, 3 it, p16 (today, from table E) | 147 ms | ok, 1011 | killed 3/3 | not run | ok, 932 | killed 2/3 | 5.7 /s |
+| 64MB, 6 it, p16 | 140 ms | ok, 696 | ok, 953 | killed 3/3 | ok, 481 | ok, 751 | 5.8 /s |
+| 64MB, 3 it, p16 | 72 ms | ok, 707 | ok, 974 | ok, 1010 | ok, 374 | ok, 673 | 10.1 /s |
+| 19MiB, 2 it, p1 (OWASP floor) | 30 ms | ok, 385 | ok, 460 | ok, 659 | ok, 126 | ok, 162 | 35.6 /s |
+
+Per-signup slopes over the unkilled closed trials: 64.2 (±6.0) Mi with 64MB
+at 6 iterations, R² 0.97, which is one 64MB block, matching the 113.5 Mi per
+128MB block of table C; 23.1 (±1.4) Mi with the OWASP floor, R² 0.97. The
+64MB, 3-iteration row shows no slope (22 ±6, R² 0.67) because at 16 in flight
+its 1010 Mi peak is the limit itself: the collector was holding the line, with
+throughput still at 8 /s, and one more in flight would have killed it.
+
+What each buys under 1Gi. Same attacker cost as today, half the memory:
+64MB at 6 iterations holds 8 in flight and 4 signups per second where today's
+hasher dies, and dies at 16. Half the cost: 64MB at 3 iterations holds 16 at
+the edge and nearly doubles capacity. The OWASP floor takes memory off the
+table (659 Mi at 16 in flight, under a 1Gi pod with room to spare) and lifts
+capacity on this CPU to 35 signups per second; it is the only configuration
+in this study under which 75 signups per second is within reach of a 3 CPU
+node, and that still needs the webhook, Postgres and the node's own hash
+speed measured before it is believed.
 
 ## Threats to validity
 
