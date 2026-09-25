@@ -1,5 +1,5 @@
 image:
-  tag: "edge@sha256:91e10508037a1d43eba79cc6dcbe8061b5da3f28d8a064c86fd79e10e396f410"
+  tag: "edge@sha256:4e1f69048f8a36ddd2cd1ea71d63241345877919e02d5a1118c1ca5afa57ae77"
   pullPolicy: Always
 
 kanae:
