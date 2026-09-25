@@ -16,10 +16,10 @@ of them at only 2 signups per second. 1Gi with `GOMEMLIMIT=900MiB` holds 4
 simultaneous signups and 2 signups per second, and nothing more.
 
 **75 signups per second is not a memory-limit question on this node.** Kratos
-sustained at most 6 signups per second on the 3 CPUs used here, and this
-machine hashes about three times faster than the production node (170 ms per
-signup here against the 504 ms hash median `DECISIONS.md` recorded in-cluster).
-Above capacity, in-flight hashes pile up and the cgroup grows at 221 MiB/s
+sustained at most 6 signups per second on the 3 CPUs used here, and the
+production node's own hash time is unknown: the 504 ms `DECISIONS.md` recorded
+in-cluster came from a calibrate command that adds about half a second of its
+own overhead to every hash (see "Calibrating the hasher" below). Above capacity, in-flight hashes pile up and the cgroup grows at 221 MiB/s
 (SD 16, n = 15) until whatever limit is set kills the container: 3 s at 1Gi,
 5 s at 1.5Gi, 16 s at 4Gi, which is the whole node. A larger limit only buys
 seconds. Every rate of 10 signups per second or more was OOM-killed at 4Gi
@@ -230,14 +230,15 @@ stays under each limit:
 | 2048Mi | 6 | 12 |
 
 And what concurrency means in production. Here one signup took 170 ms at C = 1
-and capacity was 6 /s. `DECISIONS.md` measured the hash alone at a 504 ms
-median on the cluster node, so read production at a third of the rates here:
-capacity of about 2 signups per second, and a sustained 1 per second in
-production looks like 3 per second here, which sat between the 2/s row (1.9 in
-flight) and the 4/s row (13.8 in flight) in table B, so roughly 5 in flight.
-At 2 per second production is where this machine was at 6 per second: the
-queue is unstable. Under Little's law in flight equals rate times latency, and
-latency rises with contention, so these are optimistic at the top end.
+and capacity was 6 /s. Those are this CPU's numbers. The production node's
+per-hash time has not been validly measured: the 504 ms median `DECISIONS.md`
+records came from `kratos hashers argon2 calibrate`, which in v26.2.0 adds
+0.4 to 1.3 s of its own overhead to every hash it times (see "Calibrating the
+hasher"). Measure it by running `tests/load/locustfile.py` at `-u 1` against
+the cluster: the ratio of its median to 170 ms is the factor to divide every
+rate in this document by. Under Little's law in flight equals rate times
+latency, and latency rises with contention, so the scaled rates are
+optimistic at the top end.
 
 Against the node budget in `KANAE_INFRA_PLAN.md`, using the templates as they
 are today: kanae 512Mi, Postgres 1Gi (`postgres.yml` line 190, not the 512Mi
@@ -265,17 +266,17 @@ whole node for one pod and cannot schedule beside the rest.
    concurrency the limit is sized for. Record it in `DECISIONS.md` next to the
    512Mi entry, which this supersedes.
 2. If 1.5Gi cannot be found on the node, 1Gi with `GOMEMLIMIT=900MiB` is the
-   floor: it holds 4 simultaneous signups and 2 signups per second here, which
-   scales to about 0.7 per second in production. Plain 1Gi without
-   `GOMEMLIMIT` should not be run; it died at 2 signups per second.
+   floor: it holds 4 simultaneous signups and 2 signups per second on this
+   CPU, less on a slower one. Plain 1Gi without `GOMEMLIMIT` should not be
+   run; it died at 2 signups per second.
 3. Bound concurrency in front of Kratos, because no limit survives sustained
    overload. Envoy Gateway's `BackendTrafficPolicy` with `rateLimit.local` can
    target the HTTPRoute for `/auth/self-service/registration` and
    `/auth/self-service/login`
    ([Envoy Gateway: local rate limit](https://github.com/envoyproxy/gateway/blob/main/site/content/en/latest/tasks/traffic/local-rate-limit.md)).
-   The number to set is below the production capacity of about 2 signups per
-   second, so 1 per second sustained with a burst that keeps in flight under
-   the 8 the limit holds. A 429 at the
+   The number to set is below the production capacity, which the `-u 1`
+   measurement above gives, with a burst that keeps in flight under the 8 the
+   limit holds. A 429 at the
    gateway is a retry for one person; an OOM kill is a failed signup for
    everyone in flight.
 4. Do not size for 75 signups per second on this node. It needs either the
@@ -283,16 +284,82 @@ whole node for one pod and cannot schedule beside the rest.
    grounds, or a node with roughly 75 × 0.5 s × 128MB ≈ 4.7 GB of headroom for
    Kratos alone plus the CPU to hash 75 times per second. Three cores here
    completed 6 signups per second, 0.5 core-seconds each, so 75 per second is
-   about 40 cores at this machine's speed and over 100 at the cluster's.
+   about 40 cores at this machine's speed.
 5. When running the hurl suite against a limited Kratos, pass `--jobs 4` or
    lower; the default is one job per CPU and each job is a login.
 
+## Calibrating the hasher
+
+`DECISIONS.md` rejected lowering `hashers.argon2.memory` because "the point of
+argon2 is the memory". That holds while the node can afford 1.5Gi for Kratos.
+If it cannot, the hasher is the remaining knob, and Ory ships a tool for it:
+`kratos hashers argon2 calibrate <requests-per-minute>`
+([CLI reference](https://www.ory.com/docs/kratos/cli/kratos-hashers-argon2)).
+
+### What calibrate does
+
+From [`cmd/hashers/argon2/calibrate.go` at v26.2.0](https://github.com/ory/kratos/blob/v26.2.0/cmd/hashers/argon2/calibrate.go):
+it hashes one password at a time, raising memory in `--adjust-memory-by` steps
+until a hash takes longer than `--min-duration` (500 ms), lowering it back
+under, then doing the same with iterations. It then runs up to five load tests
+([`loadtest.go`](https://github.com/ory/kratos/blob/v26.2.0/cmd/hashers/argon2/loadtest.go)),
+each firing `requests-per-minute / 3` hashes over a 20 s window and sampling
+`runtime.MemStats.HeapAlloc` once a second, and nudges memory or iterations by
+64MB or 1 until the median is over the target, the maximum under target plus
+deviation, and the heap under `--dedicated-memory`. At 15 requests per minute
+that is five hashes 4 s apart: they never overlap, so the "memory used" it
+reports is one hash plus the runtime, not a peak under concurrency. The
+concurrency argument is `--max-concurrent` and it is not read anywhere on the
+serving path.
+
+### Why its timings cannot be used in v26.2.0
+
+Every probe was run on this machine pinned to 3 CPUs, and every probe took
+between 0.4 and 1.3 s regardless of the parameters:
+
+| what calibrate or load-test timed | it reported | raw `argon2.IDKey` at the same parameters |
+| --- | --- | --- |
+| probe, 8MB, 1 iteration | 623 ms | 4 ms |
+| probes while it halved memory down to 64 bytes | 870 to 1006 ms each | under 1 ms |
+| load-test 60/min at 8MB, 1 iteration, 20 s | median 762 ms, min 425 ms, max 1281 ms | 4 ms |
+
+The cause is in [`cmd/hashers/argon2/root.go`](https://github.com/ory/kratos/blob/v26.2.0/cmd/hashers/argon2/root.go):
+the CLI wraps the hasher in an `argon2Config` whose `Config()` method writes
+all eight argon2 keys into the live configuration store with `config.Set`, and
+`Generate` in `hash/hasher_argon2.go` calls `h.c.Config().HasherArgon2(ctx)` on
+every hash. The half second is that round-trip, and `strace -c` on a probe
+shows it as `futex`, `epoll_pwait` and `nanosleep`, not CPU. Two consequences:
+
+- The calibration loop does not terminate when the first probe is already
+  over the target: it halves memory forever, and the step size reaches zero.
+  The matrix run for this study (4 memory ceilings × 3 request rates) had to
+  be killed after its first cell had spent 129 probes descending to 64 bytes.
+- The 504 ms median that `DECISIONS.md` records from the in-cluster
+  calibration on 2026-09-14 is this overhead plus a hash. It says nothing
+  about the node's hash speed, and its memory choice of 128MB with 3
+  iterations is the tool's starting default (`Argon2DefaultMemory` is 128MB
+  in `driver/config/config.go`) bounded by `--dedicated-memory`, not a
+  measurement.
+
+So the calibration below follows the algorithm's rule by hand, with two
+instruments that measure what they claim to: raw `argon2.IDKey` timings for
+the duration constraint, and the Locust swarm against a real Kratos for the
+memory constraint, which is what the tool's load test approximates.
+
+### Hash time on 3 CPUs, raw argon2id
+
+<!-- ARGON2_GRID -->
+
+### Swarm against the recalibrated configs
+
+<!-- PHASE4 -->
+
 ## Threats to validity
 
-- **CPU speed and contention.** This sandbox hashes about 3 times faster than
-  the production node, and Postgres did not compete for Kratos's cores. Both
-  make the rates here optimistic; the per-concurrency memory slopes do not
-  depend on CPU speed.
+- **CPU speed and contention.** The production node's hash speed is unknown
+  (the one in-cluster figure is unusable, see "Calibrating the hasher"), and
+  Postgres did not compete for Kratos's cores here. Both make the rates here
+  optimistic; the per-concurrency memory slopes do not depend on CPU speed.
 - **Storage.** Postgres 16 with `fsync=off`, not Postgres 18 on a block
   volume. Slower commits would lengthen each signup slightly and raise in
   flight at a given rate.
