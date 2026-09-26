@@ -19,8 +19,17 @@ in use today was OOM-killed in 11 of 12 trials with Go's default collector, two
 of them at only 2 signups per second. 1Gi with `GOMEMLIMIT=900MiB` holds 4
 simultaneous signups and 2 signups per second, and nothing more.
 
-**If 1.5Gi cannot be found, change the hasher rather than run 1Gi as it
-is.** At 1Gi with `GOMEMLIMIT=900MiB`, `hashers.argon2.memory: 64MB` with
+**The better answer for a 4 GB node is 1024Mi with the hasher halved:
+`memory: 64MB`, `iterations: 6`, `parallelism: 3`, `GOMEMLIMIT=870MiB`.**
+Doubling the iterations keeps $m \cdot t = 384$, so an attacker's time per guess
+is unchanged, and the paired comparison (table J) found this hasher at 1Gi
+holds the same 10 in flight as today's hasher at 1.5Gi, at equal or higher
+throughput, with 0 kills in 18 trials, while taking 512Mi off the node budget:
+3.34Gi at steady state instead of 3.84Gi with Postgres at 1Gi. What is given
+up is memory hardness against a parallel (GPU) attacker, halved; 64MB is still
+3.4 times OWASP's Argon2id floor.
+
+**If the hasher stays at 128MB, change it rather than run 1Gi as it is.** At 1Gi with `GOMEMLIMIT=900MiB`, `hashers.argon2.memory: 64MB` with
 `iterations: 6` keeps today's cost per guess, halves the memory per signup and
 survived 8 in flight and 4 signups per second where today's 128MB hasher was
 killed; the OWASP Argon2id floor (19MiB, 2 iterations, parallelism 1) removes
@@ -134,7 +143,7 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 - open: Poisson arrivals at a target rate, with exponential gaps so there is
   no start-up burst, and a user cap of 6 × rate so pile-up is bounded.
 
-**Design and bias control.** 243 trials in six phases:
+**Design and bias control.** 297 trials in seven phases:
 
 | phase | factors | levels | reps | trials |
 | --- | --- | --- | --- | --- |
@@ -147,9 +156,10 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 | 4 | recalibrated hashers at 1Gi + `GOMEMLIMIT=900MiB` | {64MB/6 it, 64MB/3 it, 19MiB/2 it/p1} × {C=4, C=8, C=16, 2/s, 4/s} | 3 | 45 |
 | 5 | calibrate's proposal, 224MB/5 it | {1.5Gi+1400MiB, 1Gi+900MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 24 |
 | 6 | `GOMEMLIMIT` at 85% | 1.5Gi+1306MiB × {C=8, C=10, 4/s}; 1Gi+870MiB × {C=4, 2/s} | 3 | 15 |
+| 7 | paired hashers | {128MB/3/p16 at 1.5Gi, 64MB/6/p3 at 1Gi, 64MB/6/p3 at 1.5Gi} × {C=4, 8, 10, 16, 2/s, 4/s} | 3 | 54 |
 
 Within each phase the trial order was shuffled with a recorded seed
-(20260925, 7, 11, 13, 17, 19) so drift in the machine could not line up with a factor
+(20260925, 7, 11, 13, 17, 19, 23) so drift in the machine could not line up with a factor
 level. Every trial started a new Kratos process, a new cgroup and a new
 database cloned from the migrated template, so heap retention and table growth
 could not carry over. Arrival gaps used a per-replicate seed so replicates
@@ -294,6 +304,40 @@ of the headroom, one trial at C = 4 touched the limit without being killed,
 and throughput fell as the collector worked harder. That is one more reason
 the 1Gi pod needs the 64MB hasher rather than a different `GOMEMLIMIT`.
 
+### J. Paired comparison: today's hasher at 1.5Gi against a halved hasher at 1Gi
+
+The question was whether lowering `hashers.argon2.memory` to 64MB, with its
+"relative values" (iterations doubled to 6 so $m \cdot t$ is unchanged,
+parallelism 3 to match the core count), lets Kratos run in 1Gi and give the
+node its 512Mi back. Each hasher ran at the pod it would ship with, 85%
+headroom, the same six loads, 3 replicates, 54 trials shuffled with seed 23.
+The halved hasher was also run at 1.5Gi to see the difference at an equal pod.
+
+| load | 128MB/3/p16 at 1.5Gi + 1300MiB | 64MB/6/p3 at 1Gi + 870MiB | 64MB/6/p3 at 1.5Gi + 1300MiB |
+| --- | --- | --- | --- |
+| C = 4 | 1306 Mi, margin 174, 4.00 /s | 698 Mi, margin 291, 5.37 /s | 677 Mi, margin 843, 5.47 /s |
+| C = 8 | 1384 Mi, margin 142, 4.13 /s | 944 Mi, margin 67, 4.93 /s | 1090 Mi, margin 388, 4.80 /s |
+| C = 10 | 1409 Mi, margin 117, 3.67 /s | 968 Mi, margin 46, 4.82 /s | 1300 Mi, margin 156, 4.90 /s |
+| C = 16 | killed 3/3 | killed 3/3 | 1348 Mi, margin 157, 4.53 /s |
+| 2 /s | 1099 Mi, 1.80 /s, p50 560 ms | 477 Mi, 1.93 /s, p50 310 ms | 607 Mi, 1.88 /s, p50 343 ms |
+| 4 /s | 1341 Mi, 3.02 /s, p50 980 ms | 765 Mi, 3.13 /s, p50 697 ms | 799 Mi, 3.42 /s, p50 543 ms |
+
+At an equal pod the halved hasher takes 294 Mi less at 8 in flight and 109 Mi
+less at 10, and survives 16 where today's is killed. Its per-signup slope is
+$b = 54.1\,(\pm 9.6)$ Mi at 1.5Gi and $47.3\,(\pm 5.5)$ Mi at 1Gi against 113.5 Mi
+for the 128MB block; today's hasher shows no slope at 1.5Gi ($17.5 \pm 3.7$,
+$R^2 = 0.76$) because from 4 in flight upward the collector is already holding
+the line at $G$. Throughput is equal or better with the halved hasher at every
+load (Welch $p = 0.001$ at C = 4 and C = 16, $p = 0.09$ at 8 and 10), which is
+the 3-lane hash fitting 3 CPUs and the smaller block fitting cache. Latency at
+2 and 4 signups per second is lower for the same reason.
+
+The halved hasher at 1Gi and today's hasher at 1.5Gi hold the same 10 in
+flight and die at the same 16. The difference is 512Mi of node budget. The 1Gi
+margins at 8 and 10 in flight (67 and 46 Mi) are thinner than the 1.5Gi ones
+(142 and 117 Mi), which is the price of the smaller pod and why the rate
+limit's burst should be 8, not 10.
+
 ## What a limit buys
 
 From the two models, the largest concurrency whose upper 95% prediction bound
@@ -336,8 +380,14 @@ whole node for one pod and cannot schedule beside the rest.
 
 ## Recommendation
 
-1. Kratos: `requests.memory: 1536Mi`, `limits.memory: 1536Mi`, and add
-   `GOMEMLIMIT=1300MiB` to the container `env` in
+1. On a 4 GB node: `requests.memory: 1024Mi`, `limits.memory: 1024Mi`,
+   `GOMEMLIMIT=870MiB`, and in `kratos.prod.yml` `memory: 64MB`,
+   `iterations: 6`, `parallelism: 3` (table J). Record in `DECISIONS.md` that
+   $m \cdot t$ is unchanged and memory hardness is halved, superseding "the
+   point of argon2 is the memory". If the node grows or Postgres returns to
+   512Mi, the alternative below keeps today's hasher.
+1. (alternative) Kratos: `requests.memory: 1536Mi`, `limits.memory: 1536Mi`,
+   and add `GOMEMLIMIT=1300MiB` to the container `env` in
    `deploy/kubernetes/src/templates/kratos.yml`. 1300MiB is 85% of the limit:
    more headroom than the Go guide's 5 to 10%, because the collector
    overshoots the soft target by about one block (table I measured the
