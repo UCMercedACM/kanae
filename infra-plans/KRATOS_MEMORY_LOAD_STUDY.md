@@ -598,15 +598,11 @@ whole node for one pod and cannot schedule beside the rest.
    CPU, less on a slower one. Plain 1Gi without `GOMEMLIMIT` should not be
    run; it died at 2 signups per second.
 3. Bound concurrency in front of Kratos, because no limit survives sustained
-   overload. Envoy Gateway's `BackendTrafficPolicy` with `rateLimit.local` can
-   target the HTTPRoute for `/auth/self-service/registration` and
-   `/auth/self-service/login`
-   ([Envoy Gateway: local rate limit](https://github.com/envoyproxy/gateway/blob/main/site/content/en/latest/tasks/traffic/local-rate-limit.md)).
-   The number to set is below the production capacity, which the `-u 1`
-   measurement above gives, with a burst that keeps in flight under the 8 the
-   limit holds. A 429 at the
-   gateway is a retry for one person; an OOM kill is a failed signup for
-   everyone in flight.
+   overload. The objects are in "The rate limit, derived" below: a second
+   HTTPRoute carrying only the two password-hashing POSTs and a
+   `BackendTrafficPolicy` with `rateLimit.local` on it, `requests: 2,
+   unit: Second` per route. A 429 at the gateway is a retry for one person;
+   an OOM kill is a failed signup for everyone in flight.
 4. If the node cannot give Kratos 1.5Gi, keep 1Gi with `GOMEMLIMIT=900MiB` and
    set `hashers.argon2.memory: 64MB`, `iterations: 6` in `kratos.prod.yml`,
    which the Compose production stack also loads. That keeps the time an
@@ -869,6 +865,151 @@ block is what put Kratos at 113.5 Mi per in-flight signup and made 1Gi
 unsafe; halving it is what lets the node hold 10 in flight at 1Gi. The
 security trade is a smaller block per guess in exchange for twice the passes,
 and every cost model above says the attacker pays the same or more.
+
+## The rate limit, derived
+
+### What the limiter is
+
+Envoy Gateway's local rate limit is a token bucket, not a fixed window and
+not a leaky bucket. `internal/xds/translator/local_ratelimit.go` (v1.9.1,
+lines 155 to 161 and 242 to 248) builds Envoy's `TokenBucket` with
+`max_tokens = requests`, `tokens_per_fill = requests` and
+`fill_interval = unit`. So `requests: r, unit: Second` admits at most
+$r$ requests in any burst and refills $r$ per second: the burst $B$ and
+the sustained rate $\lambda$ are the same number, and the only way to get a
+different burst is a different unit, which makes it worse (`unit: Minute`
+with `requests: 120` is 2 per second sustained with a burst of 120). A
+fixed-window counter would admit $2B$ across a window edge, which is why it
+is the wrong choice here; a leaky bucket smooths output rather than bounding
+admissions, and Envoy does not offer one.
+
+The bucket is per Envoy route, and Envoy Gateway expands every HTTPRoute
+`match` into its own route (`irRouteName(httpRoute, ruleIdx, matchIdx)` in
+`internal/gatewayapi/route.go`), so registration and login each get their
+own bucket. Two matches at $r$ each admit $2r$ per second in total.
+
+What a token bucket guarantees: in any interval of length $T$ the number
+admitted is at most $B + \lambda T$.
+
+### The bound
+
+Little's law, $C = \lambda W$, gives the in-flight count from the admitted
+rate and the time each request spends in Kratos. The limiter fixes
+$\lambda$; $W$ depends on how busy Kratos is. Treating the hashing stage as
+one server of capacity $\mu$ (the measured signups per second at
+saturation, which already includes the slowdown parallel hashes cause each
+other) with Poisson arrivals, M/M/1 gives
+
+$$\rho = \frac{\lambda}{\mu}, \qquad \bar W = \frac{1}{\mu - \lambda}, \qquad \bar C = \lambda \bar W = \frac{\rho}{1 - \rho}.$$
+
+Exponential service is pessimistic for a hash whose time barely varies, so
+$\bar W$ is an upper estimate. A burst adds its $B$ tokens on top of the
+steady state, so the count to design against is
+
+$$C_{\text{worst}} = B + \lambda \bar W = B + \frac{\lambda}{\mu - \lambda}.$$
+
+The requirement is $C_{\text{worst}} \le C_{\text{safe}}$, where table L
+puts $C_{\text{safe}} = 8$ for 1Gi at `GOMEMLIMIT=750MiB` (121 Mi of margin
+over 60 s, 0 kills in 3) and 6 is the same with one spare block. The
+capacity to use is the slowest one measured, $\mu = 5.1$ per second (phase
+7's host); phase 9's host did 7.6. The production node's $\mu$ is unknown
+and must be measured (`tests/load/locustfile.py` at `-u 4` for 60 s, read
+`submit password` requests per second); if it comes out under 5, re-solve.
+
+With two routes at $r$ each, $\lambda = B = 2r$:
+
+| $r$ per route | $\lambda$, $B$ | $\rho$ at $\mu = 5.1$ | $\bar W$ | $C_{\text{worst}}$ at $\mu = 5.1$ | at $\mu = 7.6$ |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 2 | 0.39 | 0.32 s | 2.6 | 2.4 |
+| 2 | 4 | 0.78 | 0.91 s | 7.6 | 5.1 |
+| 3 | 6 | 1.18 | unstable | unbounded | 9.8 |
+
+$r = 2$ is the largest integer that stays under $C_{\text{safe}} = 8$ on
+the slow host, and it is what the 4 per second open-loop trials ran: 137 Mi
+of margin at 870MiB over 60 s (table L), 0 kills in 6 across phases 7 and
+9. $r = 3$ exceeds the slow host's capacity outright, and past $\mu$ the
+queue grows without bound until the 45 s route timeout, which is the
+overload the study measured as a certain kill. $r = 1$ is what to set if
+$C_{\text{safe}} = 6$ is the target, or if the production node measures
+under 5 per second.
+
+Why 4 per second was stated earlier without this derivation: it was read
+off the open-loop trials as "the highest rate that never killed the 1Gi
+pod", which is the same answer by measurement rather than by model.
+
+### The objects
+
+For `deploy/kubernetes/src/templates/routing.yml`, after the existing
+HTTPRoute. The name says what the route carries: the two requests that hash
+a password. Gateway API gives a method-plus-path match precedence over the
+existing `/auth` prefix rule, so the first HTTPRoute keeps everything else
+and needs no change.
+
+```yaml
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Values.serviceNames.kratos }}-password
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/services"
+spec:
+  parentRefs:
+    - name: {{ .Values.serviceNames.kanae }}
+      sectionName: https
+  hostnames:
+    - {{ .Values.gateway.hostname | quote }}
+  rules:
+    - matches:
+        - method: POST
+          path:
+            type: PathPrefix
+            value: /auth/self-service/registration
+        - method: POST
+          path:
+            type: PathPrefix
+            value: /auth/self-service/login
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      timeouts:
+        request: 45s
+      backendRefs:
+        - name: {{ .Values.serviceNames.kratos }}
+          port: 4433
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ .Values.serviceNames.kratos }}-password
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/services"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Values.serviceNames.kratos }}-password
+  rateLimit:
+    type: Local
+    local:
+      rules:
+        - limit:
+            requests: 2
+            unit: Second
+```
+
+`ReplacePrefixMatch` with `replacePrefixMatch: /` on a `PathPrefix` of
+`/auth/self-service/registration` rewrites to `/self-service/registration`,
+which is what Kratos serves; the existing route's rewrite of `/auth` works
+the same way. The flow-initialising `GET /auth/self-service/registration/browser`
+stays on the first route and unlimited: it creates a flow row and hashes
+nothing. `kubeconform` needs the `BackendTrafficPolicy` schema, which the
+datreeio catalog already configured for `EnvoyProxy` carries.
 
 ## Calibrating the hasher
 
