@@ -22,6 +22,13 @@ kanae:
 gateway:
   className: kanae
   hostname: api.ucmacm.dev
+  authRateLimit:
+    # Per route, on the registration and login POSTs. Derived in
+    # infra-plans/KRATOS_MEMORY_LOAD_STUDY.md, "The rate limit, derived":
+    # the largest integer that keeps in-flight hashes under 8 at the slowest
+    # capacity measured (5.1 signups/s). Re-solve once the node's own
+    # capacity is measured.
+    requestsPerSecond: 2
   tls:
     provider: acme
     issuers:

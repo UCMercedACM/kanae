@@ -10,6 +10,10 @@ kanae:
 
 gateway:
   hostname: kanae
+  authRateLimit:
+    # k3d has no memory ceiling to protect, and `hurl --test` logs in from
+    # several files at once. High enough never to fire; the object still renders.
+    requestsPerSecond: 50
   tls:
     provider: selfSigned
 
