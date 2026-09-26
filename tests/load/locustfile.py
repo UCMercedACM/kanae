@@ -40,6 +40,7 @@ MODE = os.environ.get("LOAD_MODE", "closed")
 RATE = float(os.environ.get("LOAD_RATE", "1"))
 SEED = int(os.environ.get("LOAD_SEED", "1"))
 DOMAIN = os.environ.get("LOAD_EMAIL_DOMAIN", "ucmerced.edu")
+CA_BUNDLE = os.environ.get("LOAD_CA_BUNDLE", "")
 
 _rng = random.Random(SEED)  # noqa: S311 - load pacing, not security
 
@@ -56,7 +57,10 @@ class Signup(HttpUser):
     wait_time = exp_wait if MODE == "open" else constant(0)
 
     def on_start(self) -> None:
-        """Stagger the first signup; a Poisson process has no burst at t=0."""
+        """Trust the given CA, then stagger the first signup; Poisson has no burst at t=0."""
+        if CA_BUNDLE:
+            # Locust's session ignores REQUESTS_CA_BUNDLE (trust_env is off), so set it here.
+            self.client.verify = CA_BUNDLE
         if MODE == "open":
             gevent.sleep(exp_wait(self))
 
