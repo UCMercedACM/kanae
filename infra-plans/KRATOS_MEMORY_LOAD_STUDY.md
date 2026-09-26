@@ -7,10 +7,14 @@ signup load such as 75 signups per second.
 
 ## The answer
 
-**1536Mi request and limit, with `GOMEMLIMIT=1400MiB` in the container's
-environment.** That configuration survived every verification trial (0 OOM
-kills in 12), including 8 simultaneous signups and a sustained Poisson arrival
-rate of 4 signups per second, which is above what 3 CPUs can hash. The 1Gi limit
+**1536Mi request and limit, with `GOMEMLIMIT=1300MiB` in the container's
+environment.** That limit survived every verification trial (0 OOM kills in 12 at
+`GOMEMLIMIT=1400MiB`, 0 in 9 at `1300MiB`), including 10 simultaneous signups
+and a sustained Poisson arrival rate of 4 signups per second, which is above
+what 3 CPUs can hash. 1300MiB rather than 1400MiB because the collector
+overshoots its soft target by about one 128MB block under a burst: at
+1400MiB, 8 in flight peaked 33 Mi under the limit; at 1300MiB, 135 Mi under,
+with the same throughput (table I). The 1Gi limit
 in use today was OOM-killed in 11 of 12 trials with Go's default collector, two
 of them at only 2 signups per second. 1Gi with `GOMEMLIMIT=900MiB` holds 4
 simultaneous signups and 2 signups per second, and nothing more.
@@ -130,7 +134,7 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 - open: Poisson arrivals at a target rate, with exponential gaps so there is
   no start-up burst, and a user cap of 6 × rate so pile-up is bounded.
 
-**Design and bias control.** 228 trials in five phases:
+**Design and bias control.** 243 trials in six phases:
 
 | phase | factors | levels | reps | trials |
 | --- | --- | --- | --- | --- |
@@ -142,9 +146,10 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 | 3 | verification: limit × `GOMEMLIMIT` × load | {1Gi, 1Gi+900MiB, 1.5Gi+1400MiB, 2Gi+1850MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 48 |
 | 4 | recalibrated hashers at 1Gi + `GOMEMLIMIT=900MiB` | {64MB/6 it, 64MB/3 it, 19MiB/2 it/p1} × {C=4, C=8, C=16, 2/s, 4/s} | 3 | 45 |
 | 5 | calibrate's proposal, 224MB/5 it | {1.5Gi+1400MiB, 1Gi+900MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 24 |
+| 6 | `GOMEMLIMIT` at 85% | 1.5Gi+1306MiB × {C=8, C=10, 4/s}; 1Gi+870MiB × {C=4, 2/s} | 3 | 15 |
 
 Within each phase the trial order was shuffled with a recorded seed
-(20260925, 7, 11, 13, 17) so drift in the machine could not line up with a factor
+(20260925, 7, 11, 13, 17, 19) so drift in the machine could not line up with a factor
 level. Every trial started a new Kratos process, a new cgroup and a new
 database cloned from the migrated template, so heap retention and table growth
 could not carry over. Arrival gaps used a per-replicate seed so replicates
@@ -261,6 +266,34 @@ which bounds the probability below 12%. The 1.5Gi row at C = 8 peaked at
 1503Mi against a 1536Mi limit: it held because `GOMEMLIMIT` kept the collector
 ahead of the limit, and 8 in flight is the edge of what 1.5Gi holds.
 
+### I. How much `GOMEMLIMIT` headroom, 9% or 15%
+
+`GOMEMLIMIT` is a soft target: when a burst of signups allocates blocks faster
+than the collector frees them, total memory overshoots it. The verification at
+1400MiB (91%) left only 33 Mi between the 8-in-flight peak and the limit. The
+same swarm at 85%, 15 trials, 3 replicates, shuffled:
+
+| pod | load | `GOMEMLIMIT` | peak Mi | margin to limit | completed /s | killed |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1.5Gi | C = 8 | 1400MiB (91%) | 1503 [1473, 1533] | 33 | 4.38 ± 0.08 | 0/3 |
+| 1.5Gi | C = 8 | 1306MiB (85%) | 1385 [1349, 1421] | 135 | 4.32 ± 0.30 | 0/3 |
+| 1.5Gi | C = 10 | 1306MiB (85%) | 1393 [1383, 1404] | 139 | 4.03 ± 0.23 | 0/3 |
+| 1.5Gi | 4 /s | 1400MiB (91%) | 1461 [1333, 1590] | 75 | 3.18 ± 0.08 | 0/3 |
+| 1.5Gi | 4 /s | 1306MiB (85%) | 1350 [1327, 1372] | 176 | 3.37 ± 0.06 | 0/3 |
+| 1Gi | C = 4 | 900MiB (88%) | 1011 [982, 1040] | 13 | 5.05 ± 0.56 | 0/3 |
+| 1Gi | C = 4 | 870MiB (85%) | 1020 [1008, 1031] | 0 | 4.33 ± 1.11 | 0/3 |
+| 1Gi | 2 /s | 900MiB (88%) | 932 [859, 1006] | 92 | 1.62 ± 0.28 | 0/3 |
+| 1Gi | 2 /s | 870MiB (85%) | 851 [572, 1129] | 78 | 1.95 ± 0.20 | 0/3 |
+
+At 1.5Gi the extra headroom costs nothing and buys a block of margin: the
+peak sits 80 to 100 Mi above $G$ either way, so lowering $G$ by 94 Mi moved the
+peak down by the same amount, throughput is unchanged within its interval,
+and 10 in flight held where the 91% setting was only verified to 8. At 1Gi
+with the 128MB hasher the headroom does not help: the overshoot is the size
+of the headroom, one trial at C = 4 touched the limit without being killed,
+and throughput fell as the collector worked harder. That is one more reason
+the 1Gi pod needs the 64MB hasher rather than a different `GOMEMLIMIT`.
+
 ## What a limit buys
 
 From the two models, the largest concurrency whose upper 95% prediction bound
@@ -304,13 +337,17 @@ whole node for one pod and cannot schedule beside the rest.
 ## Recommendation
 
 1. Kratos: `requests.memory: 1536Mi`, `limits.memory: 1536Mi`, and add
-   `GOMEMLIMIT=1400MiB` to the container `env` in
-   `deploy/kubernetes/src/templates/kratos.yml`. 1400MiB is 91% of the limit,
-   inside the Go guide's 5 to 10% headroom, and above the 8-hash live set
+   `GOMEMLIMIT=1300MiB` to the container `env` in
+   `deploy/kubernetes/src/templates/kratos.yml`. 1300MiB is 85% of the limit:
+   more headroom than the Go guide's 5 to 10%, because the collector
+   overshoots the soft target by about one block (table I measured the
+   overshoot at 80 to 100 Mi), so the headroom has to hold a block and some
+   change. It is still above the 8-hash live set
    ($L(8) = 278 + 113.5 \times 8 = 1186$ Mi) so the collector does not thrash at the
-   concurrency the limit is sized for. Record it in `DECISIONS.md` next to the
+   concurrency the limit is sized for, and it held 10 in flight in the
+   verification. Record it in `DECISIONS.md` next to the
    512Mi entry, which this supersedes.
-2. If 1.5Gi cannot be found on the node, 1Gi with `GOMEMLIMIT=900MiB` is the
+2. If 1.5Gi cannot be found on the node, 1Gi with `GOMEMLIMIT` at 85% is the
    floor: it holds 4 simultaneous signups and 2 signups per second on this
    CPU, less on a slower one. Plain 1Gi without `GOMEMLIMIT` should not be
    run; it died at 2 signups per second.
@@ -532,7 +569,7 @@ resources:
     memory: 1536Mi
 env:
   - name: GOMEMLIMIT
-    value: 1400MiB
+    value: 1300MiB
 ```
 
 with `docker/ory/config/kratos/kratos.prod.yml` unchanged:
@@ -544,19 +581,22 @@ hashers:
     memory: 128MB
     iterations: 3
     parallelism: 16
-    dedicated_memory: 1400MB   # documents the budget; not read on the serving path
+    dedicated_memory: 1300MB   # documents the budget; not read on the serving path
 ```
 
-Derivation, with the Go guide's 5 to 10% headroom:
+Derivation. The headroom must cover the collector's overshoot of its soft
+target, measured at 80 to 100 Mi (about one block, $b$), plus memory the Go
+runtime does not account for, so $1 - G/\text{limit} \ge 2b/\text{limit} \approx 15\%$:
 
-$$G = 0.91 \times 1536 = 1400\ \text{MiB}, \qquad C_{\max} = \left\lfloor \frac{G - B}{b} \right\rfloor = \left\lfloor \frac{1400 - 278}{113.5} \right\rfloor = 9$$
+$$G = 0.85 \times 1536 = 1306 \approx 1300\ \text{MiB}, \qquad C_{\max} = \left\lfloor \frac{G - B}{b} \right\rfloor = \left\lfloor \frac{1300 - 278}{113.5} \right\rfloor = 9$$
 
-on the mean line, 8 on the upper 95% prediction bound, and 8 is the number
-the verification ran at. `parallelism`
+on the mean line, 7 on the upper 95% prediction bound; the verification held
+8 with 135 Mi to spare and 10 with 139 Mi to spare (table I), so 8 is the
+number to size the rate limit on and 10 is the measured edge. `parallelism`
 can stay at 16 or drop to 3; table D found no difference on 3 CPUs, and
 OWASP's reference settings all use 1.
 
-If the pod must be 1Gi, `GOMEMLIMIT=900MiB` and
+If the pod must be 1Gi, `GOMEMLIMIT=870MiB` (85%, verified at 900MiB) and
 
 ```yaml
     memory: 64MB
@@ -565,7 +605,7 @@ If the pod must be 1Gi, `GOMEMLIMIT=900MiB` and
 
 which keeps $m \cdot t = 384$ (today's cost per guess) and gives $b = 64$ Mi, so
 
-$$C_{\max} = \left\lfloor \frac{900 - 278}{64} \right\rfloor = 9, \qquad \text{verified at } 8.$$
+$$C_{\max} = \left\lfloor \frac{870 - 278}{64} \right\rfloor = 9, \qquad \text{verified at } 8 \text{ with } G = 900.$$
 
 The rate limit on the registration and login routes goes below the measured
 capacity, $\lambda < \min(\text{capacity},\ C_{\max}/W)$, with a burst of
