@@ -339,44 +339,45 @@ local-path-provisioner, which reserve roughly 200m, so about 2800m is usable.
 
 | Pod | CPU request | Set in |
 | --- | --- | --- |
-| kanae | 250m | Phase 7 |
-| postgres | 250m | Phase 4 |
-| envoy proxy, one per Gateway | 100m | Phase 8 |
-| kratos | 1000m | Phase 9 |
-| keto | 100m | Phase 6 |
-| valkey | 50m | Phase 4 |
-| envoy gateway control plane | 50m | Phase 8 |
-| cert-manager controller | 50m | Phase 8 |
-| cert-manager cainjector | 25m | Phase 8 |
-| cert-manager webhook | 25m | Phase 8 |
-| **Reserved** | **1900m** | |
+| kratos | 1000m | `templates/kratos.yml` |
+| kanae | 250m | `templates/kanae.yml` |
+| postgres | 250m | `templates/postgres.yml` |
+| envoy proxy, `envoy` container | 100m | `envoy.yml` |
+| envoy proxy, `shutdown-manager` sidecar | 10m | fixed by the controller |
+| keto | 100m | `templates/keto.yml` |
+| valkey | 50m | `templates/valkey.yml` |
+| envoy gateway control plane | 50m | `helmfile.yaml` |
+| cert-manager controller | 50m | `helmfile.yaml` |
+| cert-manager cainjector | 25m | `helmfile.yaml` |
+| cert-manager webhook | 25m | `helmfile.yaml` |
+| **Reserved** | **1910m** | |
 
 ### Deploy-time
 
 | Pod | CPU request | Set in |
 | --- | --- | --- |
-| atlas migration Job | 250m | Phase 5 |
+| kanae-migrate Job | 250m | `templates/jobs-migrate.yml` |
+| kratos-migrate Job | 100m | `templates/jobs-migrate.yml` |
+| keto-migrate Job | 100m | `templates/jobs-migrate.yml` |
+| postgres `check-version` init container | 50m | `templates/postgres.yml`; free, smaller than the pod |
+| postgres-checksum CronJob | 50m | `templates/postgres.yml` |
 | borgmatic, CronJob and pre-upgrade | 250m | Phase 10 |
-| kratos migration Job | 100m | Phase 6 |
-| keto migration Job | 100m | Phase 6 |
-| seed Job, local runs only | 100m | Phase 5 |
-| database-creation Job | 50m | Phase 5 |
 
-The migration wave adds 450m, so a deploy peaks at 2350m. A backup landing on
-top of one reaches 2600m, which still fits.
+The migration wave adds 450m, so a deploy peaks at 2360m. A backup landing on
+top of one reaches 2610m, which fits under 2800m.
 
 ### Rules
 
-- Postgres and kanae carry the largest requests, which under contention gives
-  those two roughly half the node between them.
-- These are reservations, not measurements. Every number here sits well above
-  what the service burns at idle, and over-reserving costs nothing until the
-  sum passes allocatable and pods start sitting `Pending`.
+- Postgres and kanae carry the largest requests after Kratos, which under
+  contention gives Kratos about half the node and those two a quarter
+  between them. Kratos hashes at about 0.5 core-seconds per signup, two
+  cores busy at the rate limit's 4 per second.
+- These are reservations, not measurements, and they are final. Change a
+  request in the template and in this table together, and leave CPU limits
+  unset.
 - Being wrong here is cheap, so spend your attention on the memory table
   instead. An under-set request costs share under contention; an under-set
   memory limit kills the container.
-- Phase 10 re-totals this table from `k8s:measure`, which reports CPU in the
-  same output as memory.
 
 ---
 
@@ -1724,9 +1725,9 @@ are six real messages that will happen again.
       and replace their rows. Set both request and limit above the observed
       peak rather than the steady state, because the limit is what the pod is
       killed for exceeding.
-- [ ] Re-total the CPU budget from the same `k8s:measure` output, and leave CPU
-      limits unset. Write the reason beside the values so the next person does
-      not read the gap as an oversight and fill it in.
+- [x] Re-total the CPU budget from the templates as they stand, and leave CPU
+      limits unset. The table above is the reservation; the reason the limits
+      are absent is written beside it.
 - [ ] Write `deploy/kubernetes/RUNBOOK.md`, keyed on exact error strings. Start
       with the six findings in POC_FINDINGS.md, since each one is a real error
       message somebody will see again: `Init:Error`, `ImagePullBackOff`, `chown:
