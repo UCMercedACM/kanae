@@ -598,10 +598,10 @@ whole node for one pod and cannot schedule beside the rest.
    CPU, less on a slower one. Plain 1Gi without `GOMEMLIMIT` should not be
    run; it died at 2 signups per second.
 3. Bound concurrency in front of Kratos, because no limit survives sustained
-   overload. The objects are in "The rate limit, derived" below: a second
-   HTTPRoute carrying only the two password-hashing POSTs and a
-   `BackendTrafficPolicy` with `rateLimit.local` on it, `requests: 2,
-   unit: Second` per route. A 429 at the gateway is a retry for one person;
+   overload. The objects are in "The rate limit, derived" below: a named
+   rule carrying only the two password-hashing POSTs and a
+   `BackendTrafficPolicy` with `rateLimit.local` targeting that rule by
+   `sectionName`, `requests: 2, unit: Second`. A 429 at the gateway is a retry for one person;
    an OOM kill is a failed signup for everyone in flight.
 4. If the node cannot give Kratos 1.5Gi, keep 1Gi with `GOMEMLIMIT=900MiB` and
    set `hashers.argon2.memory: 64MB`, `iterations: 6` in `kratos.prod.yml`,
@@ -939,29 +939,26 @@ pod", which is the same answer by measurement rather than by model.
 
 ### The objects
 
-For `deploy/kubernetes/src/templates/routing.yml`, after the existing
-HTTPRoute. The name says what the route carries: the two requests that hash
-a password. Gateway API gives a method-plus-path match precedence over the
-existing `/auth` prefix rule, so the first HTTPRoute keeps everything else
-and needs no change.
+A `BackendTrafficPolicy` attaches to a whole HTTPRoute, or, with
+`targetRefs[].sectionName`, to one named rule of it: Envoy Gateway v1.9.1
+resolves the section name against `rules[].name`
+(`internal/gatewayapi/backendtrafficpolicy.go`, lines 1212 to 1225, and the
+Gateway API v1.6.1 experimental CRDs the chart ships carry `name` on
+`HTTPRouteRule`). So the limit needs its own rule, because a rule is the
+unit that carries matches, and the existing `/auth` rule matches every
+Kratos path. It does not need its own route. The rule repeats the
+`URLRewrite` because filters belong to a rule, not to the route; there is
+no redirect involved.
+
+In `deploy/kubernetes/src/templates/routing.yml`, the existing HTTPRoute
+gains one rule ahead of the `/auth` rule. Gateway API orders by
+specificity, so a method-plus-path match wins over the prefix whatever the
+order, but putting it first says what it is for:
 
 ```yaml
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: {{ .Values.serviceNames.kratos }}-password
-  namespace: {{ .Values.namespace }}
-  annotations:
-    kapp.k14s.io/change-rule: "upsert after upserting kanae/services"
-spec:
-  parentRefs:
-    - name: {{ .Values.serviceNames.kanae }}
-      sectionName: https
-  hostnames:
-    - {{ .Values.gateway.hostname | quote }}
   rules:
-    - matches:
+    - name: password
+      matches:
         - method: POST
           path:
             type: PathPrefix
@@ -981,6 +978,16 @@ spec:
       backendRefs:
         - name: {{ .Values.serviceNames.kratos }}
           port: 4433
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /auth
+      # ... the existing rule, unchanged
+```
+
+and one new object after the HTTPRoutes:
+
+```yaml
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
@@ -993,7 +1000,8 @@ spec:
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      name: {{ .Values.serviceNames.kratos }}-password
+      name: {{ .Values.serviceNames.kanae }}
+      sectionName: password
   rateLimit:
     type: Local
     local:
@@ -1003,13 +1011,16 @@ spec:
             unit: Second
 ```
 
-`ReplacePrefixMatch` with `replacePrefixMatch: /` on a `PathPrefix` of
+`replacePrefixMatch: /` on a `PathPrefix` of
 `/auth/self-service/registration` rewrites to `/self-service/registration`,
-which is what Kratos serves; the existing route's rewrite of `/auth` works
-the same way. The flow-initialising `GET /auth/self-service/registration/browser`
-stays on the first route and unlimited: it creates a flow row and hashes
-nothing. `kubeconform` needs the `BackendTrafficPolicy` schema, which the
-datreeio catalog already configured for `EnvoyProxy` carries.
+the same mechanism the `/auth` rule uses. The flow-initialising
+`GET /auth/self-service/registration/browser` stays on the `/auth` rule and
+unlimited: it creates a flow row and hashes nothing. Two things to check
+on the first `k8s:validate`: the datreeio HTTPRoute schema must know
+`rules[].name` (it is a Gateway API v1.2 experimental field, standard in
+later bundles), or `-strict` rejects it; and `kubeconform` needs the
+`BackendTrafficPolicy` schema, which the catalog configured for
+`EnvoyProxy` carries.
 
 ## Calibrating the hasher
 
