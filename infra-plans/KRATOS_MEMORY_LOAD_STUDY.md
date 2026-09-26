@@ -1015,6 +1015,32 @@ The rate limit on the registration and login routes goes below the measured
 capacity, $\lambda < \min(\text{capacity},\ C_{\max}/W)$, with a burst of
 $C_{\max}$; on this CPU that is under 6 per second, burst 8.
 
+**How `memory: 64MB`, `iterations: 6`, `parallelism: 3` were arrived at, in
+one paragraph.** The memory parameter was set by the pod, not by the hasher:
+ordinary least squares on 30 closed-loop trials gave peak memory as
+$L(C) = B + bC$ with $b = 113.5$ Mi per in-flight signup at 128MB (95% CI
+from the regression's standard error), and $C_{\max} = \lfloor (G - B)/b \rfloor$
+put a 1Gi pod at 5 in flight, which the verification trials confirmed by
+being killed above it. Halving $m$ halves $b$ (measured 47 to 54 Mi in
+table J) and doubles $C_{\max}$ to 9 on the mean line, 8 on the upper 95%
+prediction bound. The iteration count then follows from holding
+$m \cdot t$ constant, since an attacker's work per guess is proportional to
+$m \cdot t$ under both the CPU-time and the memory-bandwidth models: $t = 384/64 = 6$.
+Parallelism was set to the node's core count because table D found no
+memory or throughput difference between 3 and 16 lanes on 3 CPUs (Welch's
+$t$, $p = 0.25$ at C = 2), and fewer lanes raise the time-area cost to an
+ASIC attacker. The three values were then tested as a unit rather than
+assumed: a paired design, 54 trials shuffled with seed 23, ran this hasher at
+1Gi against today's at 1.5Gi under the same six loads with three replicates
+each, and the comparison used 95% $t$ intervals on peak memory and Welch's
+$t$ on throughput ($p = 0.001$ at C = 4 and C = 16, $p = 0.09$ at 8 and 10,
+all favouring or tying the halved hasher). Zero kills in 18 trials at 1Gi
+bounds the per-trial kill probability below 15% at 95% confidence (rule of
+three, $1 - 0.05^{1/18}$), which is why the rate limit's burst is set to 8
+rather than the measured edge of 10. The raw hash was timed on the same
+three idle CPUs (median of 5 warm calls) to check that the wall time per
+guess had not moved: 178 ms against 187 ms.
+
 ## Threats to validity
 
 - **CPU speed and contention.** The production node's hash speed is unknown
