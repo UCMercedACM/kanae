@@ -598,10 +598,10 @@ whole node for one pod and cannot schedule beside the rest.
    CPU, less on a slower one. Plain 1Gi without `GOMEMLIMIT` should not be
    run; it died at 2 signups per second.
 3. Bound concurrency in front of Kratos, because no limit survives sustained
-   overload. The objects are in "The rate limit, derived" below: a named
-   rule carrying only the two password-hashing POSTs and a
-   `BackendTrafficPolicy` with `rateLimit.local` targeting that rule by
-   `sectionName`, `requests: 2, unit: Second`. A 429 at the gateway is a retry for one person;
+   overload. The object is in "The rate limit, derived" below: one
+   `BackendTrafficPolicy` on the existing HTTPRoute whose two local rules
+   select the password-hashing POSTs by method and path, `requests: 2,
+   unit: Second` each. A 429 at the gateway is a retry for one person;
    an OOM kill is a failed signup for everyone in flight.
 4. If the node cannot give Kratos 1.5Gi, keep 1Gi with `GOMEMLIMIT=900MiB` and
    set `hashers.argon2.memory: 64MB`, `iterations: 6` in `kratos.prod.yml`,
@@ -937,55 +937,28 @@ Why 4 per second was stated earlier without this derivation: it was read
 off the open-loop trials as "the highest rate that never killed the 1Gi
 pod", which is the same answer by measurement rather than by model.
 
-### The objects
+### The object
 
-A `BackendTrafficPolicy` attaches to a whole HTTPRoute, or, with
-`targetRefs[].sectionName`, to one named rule of it: Envoy Gateway v1.9.1
-resolves the section name against `rules[].name`
-(`internal/gatewayapi/backendtrafficpolicy.go`, lines 1212 to 1225, and the
-Gateway API v1.6.1 experimental CRDs the chart ships carry `name` on
-`HTTPRouteRule`). So the limit needs its own rule, because a rule is the
-unit that carries matches, and the existing `/auth` rule matches every
-Kratos path. It does not need its own route. The rule repeats the
-`URLRewrite` because filters belong to a rule, not to the route; there is
-no redirect involved.
+The strip of `/auth` has nothing to do with the limiter. Kratos generates
+URLs carrying `/auth` (`SERVE_PUBLIC_BASE_URL` in `templates/kratos.yml`)
+but serves its routes at the root, so every request forwarded to it must
+lose the prefix, and the existing `/auth` rule's `URLRewrite` is what does
+that (plan, Phase 8). The earlier drafts here repeated that rewrite because
+they gave the limiter its own rule or route, which Gateway API filters are
+scoped to. Neither is needed.
 
-In `deploy/kubernetes/src/templates/routing.yml`, the existing HTTPRoute
-gains one rule ahead of the `/auth` rule. Gateway API orders by
-specificity, so a method-plus-path match wins over the prefix whatever the
-order, but putting it first says what it is for:
-
-```yaml
-  rules:
-    - name: password
-      matches:
-        - method: POST
-          path:
-            type: PathPrefix
-            value: /auth/self-service/registration
-        - method: POST
-          path:
-            type: PathPrefix
-            value: /auth/self-service/login
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: /
-      timeouts:
-        request: 45s
-      backendRefs:
-        - name: {{ .Values.serviceNames.kratos }}
-          port: 4433
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /auth
-      # ... the existing rule, unchanged
-```
-
-and one new object after the HTTPRoutes:
+A local rate limit rule can select its own traffic: `clientSelectors`
+takes `methods` and `path` (Exact, PathPrefix or RegularExpression),
+`RateLimitSelectCondition` in the v1.9 API. Envoy Gateway turns the path
+selector into a descriptor on Envoy's `:path` header
+(`buildPathMatchLocalRateLimitAction`, `internal/xds/translator/local_ratelimit.go`),
+which is the path as the request arrived, before the router's rewrite, so
+the selector matches the `/auth/...` form. A request that matches no rule
+falls to the default bucket, and when every rule has selectors that bucket
+is `math.MaxUint32` requests (`buildLocalRateLimit`,
+`internal/gatewayapi/backendtrafficpolicy.go`, v1.9.1), so everything else
+on the route is unlimited. So the whole change is one object attached to
+the HTTPRoute as it stands, in `deploy/kubernetes/src/templates/routing.yml`:
 
 ```yaml
 ---
@@ -1001,25 +974,35 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: {{ .Values.serviceNames.kanae }}
-      sectionName: password
   rateLimit:
     type: Local
     local:
       rules:
-        - limit:
+        - clientSelectors:
+            - methods:
+                - value: POST
+              path:
+                type: PathPrefix
+                value: /auth/self-service/registration
+          limit:
+            requests: 2
+            unit: Second
+        - clientSelectors:
+            - methods:
+                - value: POST
+              path:
+                type: PathPrefix
+                value: /auth/self-service/login
+          limit:
             requests: 2
             unit: Second
 ```
 
-`replacePrefixMatch: /` on a `PathPrefix` of
-`/auth/self-service/registration` rewrites to `/self-service/registration`,
-the same mechanism the `/auth` rule uses. The flow-initialising
-`GET /auth/self-service/registration/browser` stays on the `/auth` rule and
-unlimited: it creates a flow row and hashes nothing. Two things to check
-on the first `k8s:validate`: the datreeio HTTPRoute schema must know
-`rules[].name` (it is a Gateway API v1.2 experimental field, standard in
-later bundles), or `-strict` rejects it; and `kubeconform` needs the
-`BackendTrafficPolicy` schema, which the catalog configured for
+Each rule is its own token bucket, so registration and login get 2 per
+second each, which is the $2r$ the derivation counts. The flow-initialising
+`GET /auth/self-service/registration/browser` matches neither rule and is
+unlimited: it creates a flow row and hashes nothing. `kubeconform` needs the
+`BackendTrafficPolicy` schema, which the datreeio catalog configured for
 `EnvoyProxy` carries.
 
 ## Calibrating the hasher
