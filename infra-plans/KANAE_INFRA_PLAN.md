@@ -268,19 +268,21 @@ than scattered across five phases.
 
 ### Steady state
 
-| Pod | Request = limit | Set in |
+| Pod | Request = limit | Basis |
 | --- | --- | --- |
-| kanae | 512Mi | Phase 7 |
-| postgres | 512Mi | Phase 4 |
-| kratos | 512Mi | Phase 6 |
-| keto | 256Mi | Phase 6 |
-| valkey | 256Mi | Phase 4 |
-| envoy proxy, one per Gateway | 64Mi | Phase 8 |
-| envoy gateway control plane | 64Mi | Phase 8 |
-| cert-manager controller | 64Mi | Phase 8 |
-| cert-manager cainjector | 128Mi | Phase 8 |
-| cert-manager webhook | 32Mi | Phase 8 |
-| **Reserved** | **~2.6Gi** | |
+| kanae | 512Mi | Phase 7 estimate |
+| postgres | 1Gi | Phase 4 estimate |
+| kratos | 1Gi, `GOMEMLIMIT=750MiB` | Measured: `deploy/kubernetes/docs/kratos-load-study/` |
+| keto | 256Mi | Phase 6 estimate |
+| valkey | 256Mi | Phase 4 estimate |
+| envoy proxy pod: `envoy` 64Mi, `shutdown-manager` 32Mi request | 96Mi | Measured; the controller fixes the sidecar |
+| envoy gateway control plane | 128Mi, `GOMEMLIMIT=110MiB` | 61Mi reading with this cluster's objects |
+| cert-manager controller | 64Mi | Phase 8 estimate |
+| cert-manager cainjector | 128Mi | Phase 8 estimate |
+| cert-manager webhook | 32Mi | Phase 8 estimate |
+| **Reserved, kanae and controllers** | **3520Mi (3.44Gi)** | |
+| CoreDNS and metrics-server in `kube-system` | 140Mi | k3s packaged manifests |
+| **Reserved, everything the scheduler counts** | **3660Mi (3.57Gi)** | |
 
 A pod's effective request is the larger of its biggest init container and the
 sum of its app containers. kanae's 64Mi init container therefore adds nothing on
@@ -289,16 +291,18 @@ biggest thing in the pod.
 
 ### Deploy-time peak
 
-Three migration Jobs at 256Mi each are alive while they run, and under
-`RollingUpdate` a second kanae pod at 512Mi exists before the first is killed.
-That is 1.3Gi on top of steady state, against a node reporting materially less
-than 4 GB as allocatable.
+One migration Job at a time, 256Mi, on top of steady state: 3916Mi.
+`strategy: Recreate` on kanae removes the rolling surge, and the apply order
+finishes each migration Job before app pods schedule, so nothing else
+overlaps.
 
-Two decisions keep it under. `strategy: Recreate` on kanae removes the surge, at
-the cost of a few seconds of downtime per deploy, which is already true of the
-systemd deploy it runs alongside. The apply order in Phase 4 finishes the
-migration Jobs and releases their pods before app pods are scheduled, so the two
-never overlap. With both, the peak is one migration wave above steady state.
+### Headroom
+
+Against a 4 GiB node, allocatable is 3996Mi after the kubelet's 100Mi
+eviction threshold: 336Mi free at steady state, 80Mi during a migration
+wave. Against a decimal 4 GB node (3815Mi), 55Mi free and a 201Mi shortfall
+during a migration wave. On such a node, return Postgres to 512Mi before the
+first deploy. Kratos at 1.5Gi fits on neither.
 
 ### Rules
 
@@ -309,7 +313,12 @@ never overlap. With both, the peak is one migration wave above steady state.
   section below.
 - The borgmatic CronJob is not in the table. A backup firing mid-deploy competes
   for the same headroom, so schedule it away from deploy windows.
-- Phase 10 replaces these estimates with measurements and re-totals the table.
+- Measure kanae, postgres, keto and valkey with `k8s:measure` under load and
+  replace their rows. Do not change the kratos row without re-running the
+  load study.
+- Keep `gateway.authRateLimit.requestsPerSecond` at or under the value the
+  load study derives. It is what holds Kratos under the 8 hashes in flight
+  its limit was sized for.
 
 A laptop k3d cluster will never reproduce a shortfall here. This table is the
 only thing between a clean local run and `Pending: Insufficient memory` on the
@@ -330,44 +339,45 @@ local-path-provisioner, which reserve roughly 200m, so about 2800m is usable.
 
 | Pod | CPU request | Set in |
 | --- | --- | --- |
-| kanae | 250m | Phase 7 |
-| postgres | 250m | Phase 4 |
-| envoy proxy, one per Gateway | 100m | Phase 8 |
-| kratos | 100m | Phase 6 |
-| keto | 100m | Phase 6 |
-| valkey | 50m | Phase 4 |
-| envoy gateway control plane | 50m | Phase 8 |
-| cert-manager controller | 50m | Phase 8 |
-| cert-manager cainjector | 25m | Phase 8 |
-| cert-manager webhook | 25m | Phase 8 |
-| **Reserved** | **1000m** | |
+| kratos | 1000m | `templates/kratos.yml` |
+| kanae | 250m | `templates/kanae.yml` |
+| postgres | 250m | `templates/postgres.yml` |
+| envoy proxy, `envoy` container | 100m | `envoy.yml` |
+| envoy proxy, `shutdown-manager` sidecar | 10m | fixed by the controller |
+| keto | 100m | `templates/keto.yml` |
+| valkey | 50m | `templates/valkey.yml` |
+| envoy gateway control plane | 50m | `helmfile.yaml` |
+| cert-manager controller | 50m | `helmfile.yaml` |
+| cert-manager cainjector | 25m | `helmfile.yaml` |
+| cert-manager webhook | 25m | `helmfile.yaml` |
+| **Reserved** | **1910m** | |
 
 ### Deploy-time
 
 | Pod | CPU request | Set in |
 | --- | --- | --- |
-| atlas migration Job | 250m | Phase 5 |
+| kanae-migrate Job | 250m | `templates/jobs-migrate.yml` |
+| kratos-migrate Job | 100m | `templates/jobs-migrate.yml` |
+| keto-migrate Job | 100m | `templates/jobs-migrate.yml` |
+| postgres `check-version` init container | 50m | `templates/postgres.yml`; free, smaller than the pod |
+| postgres-checksum CronJob | 50m | `templates/postgres.yml` |
 | borgmatic, CronJob and pre-upgrade | 250m | Phase 10 |
-| kratos migration Job | 100m | Phase 6 |
-| keto migration Job | 100m | Phase 6 |
-| seed Job, local runs only | 100m | Phase 5 |
-| database-creation Job | 50m | Phase 5 |
 
-The migration wave adds 450m, so a deploy peaks at 1450m. A backup landing on
-top of one reaches 1700m, which still fits.
+The migration wave adds 450m, so a deploy peaks at 2360m. A backup landing on
+top of one reaches 2610m, which fits under 2800m.
 
 ### Rules
 
-- Postgres and kanae carry the largest requests, which under contention gives
-  those two roughly half the node between them.
-- These are reservations, not measurements. Every number here sits well above
-  what the service burns at idle, and over-reserving costs nothing until the
-  sum passes allocatable and pods start sitting `Pending`.
+- Postgres and kanae carry the largest requests after Kratos, which under
+  contention gives Kratos about half the node and those two a quarter
+  between them. Kratos hashes at about 0.5 core-seconds per signup, two
+  cores busy at the rate limit's 4 per second.
+- These are reservations, not measurements, and they are final. Change a
+  request in the template and in this table together, and leave CPU limits
+  unset.
 - Being wrong here is cheap, so spend your attention on the memory table
   instead. An under-set request costs share under contention; an under-set
   memory limit kills the container.
-- Phase 10 re-totals this table from `k8s:measure`, which reports CPU in the
-  same output as memory.
 
 ---
 
@@ -1234,10 +1244,9 @@ port-forwarded test will pass while the real path fails.
       `max_conns=20&max_idle_conns=4` until every pool size in the system is
       chosen together. The reasoning the task gives is recorded in
       `deploy/kubernetes/docs/DECISIONS.md` so nobody reads "50 is under 100"
-      and opens the taps. One correction to it while checking: Postgres runs
-      with a 1Gi limit today, not the 512Mi the node budget above assumes, so
-      there is more headroom than the plan describes. Phase 10 measures both
-      and sets the pool sizes and that limit against each other.
+      and opens the taps. Postgres runs with a 1Gi limit, which the node budget
+      above carries. Phase 10 measures it and sets the pool sizes and that
+      limit against each other.
 - [x] Note that the chart mounts `kratos.prod.yml` while the Compose stack seeds
       against `kratos.yml`. A local Kubernetes run therefore exercises a
       combination the Compose stack never has. Decide whether that is what you
@@ -1254,25 +1263,12 @@ port-forwarded test will pass while the real path fails.
 - [x] Set a memory request and limit, equal to each other, on the Kratos and
       Keto containers, and on the Kratos and Keto migration containers. 256Mi
       is a starting point for each. Phase 10 corrects them.
-      Kratos ended at 512Mi, the other three at 256Mi. The migration Jobs
-      already had it from Phase 5.
-      Corrected twice. `k8s:measure` on an idle cluster reports Kratos at 48Mi
-      and Keto at 15Mi, which reads as room to spare, and Kratos idle is not the
-      number that matters. `hashers.argon2.memory` is 128MB per hash, and
-      nothing bounds how many run at once, so one hash takes the container's
-      cgroup peak to 179.8MiB and two concurrent admin identity creations
-      `OOMKilled` it at 256Mi. Both reproduced.
-      Retuned rather than deferred to Phase 10, because the pod was one
-      simultaneous login away from falling over.
-      `kratos hashers argon2 calibrate 15 --dedicated-memory=384MB
-      --max-memory=384MB --expected-deviation=500ms`, run in-cluster, settled on
-      memory 128MB with 3 iterations at a 504ms median and 146.86MB used.
-      15 logins per minute is the assumed worst case until real traffic argues
-      otherwise. 512Mi holds three concurrent hashes, and the node budget table
-      above is re-totalled from ~2.1Gi to ~2.6Gi for it. `dedicated_memory` was
-      set to 384MB to match the calibration, but it bounds nothing at runtime;
-      only the pod limit does. That and the reproduction are in
-      `deploy/kubernetes/docs/DECISIONS.md`.
+      Kratos runs at 1Gi with `GOMEMLIMIT=750MiB` and
+      `hashers.argon2` at 64MB, 6 iterations, 3 lanes; Keto and both
+      migration Jobs at 256Mi. `deploy/kubernetes/docs/kratos-load-study/`
+      sets the Kratos numbers. Do not size Kratos from
+      `kratos hashers argon2 calibrate`: in v26.2.0 its wrapper adds about
+      half a second to every hash it times.
 - [x] Set a CPU request of 100m on each of those four containers, and no CPU
       limit. See the CPU budget.
 - [x] Annotate the Kratos and Keto Deployments into `kanae/services`, and add
@@ -1490,7 +1486,8 @@ The controller is **Envoy Gateway**, chosen because it installs from one Helm
 chart on any cluster: local and production run the same controller the same way,
 with nothing borrowed from a distribution's bundle. It supports
 `HTTPRoutePathRewrite`, which the route above needs. It runs as a control plane
-pod plus one Envoy proxy per Gateway, 36Mi each idle.
+pod plus one Envoy proxy per Gateway, which peaks at 22Mi with 100
+connections open.
 
 **TLS terminates at the Gateway, and nowhere else.** Every provider offers to
 terminate at their load balancer instead, which moves the certificate into that
@@ -1515,17 +1512,12 @@ pod and never touches the Gateway.
 - [x] Install cert-manager the same way, after Envoy Gateway, because
       `--enable-gateway-api` needs the Gateway API CRDs to already exist.
       Without this step the exit gate below cannot pass locally.
-- [ ] ~~Override the chart's control plane memory request. It defaults to
-      `requests.memory: 256Mi` and `limits.memory: 1024Mi` against 36Mi
-      measured idle.~~ Rule 7 makes the request equal the limit, and the
-      scheduler reserves the request, so the default reserves seven times what
-      the pod uses on a node that has other work to do.
-      **Deliberately not done.** 36Mi was read with no Gateway present, and the
-      same pod reads 61Mi on k3d with one Gateway and one HTTPRoute, so idle is
-      a floor rather than a working set. The chart's defaults stand until a
-      measurement taken under load replaces them. See
-      `deploy/kubernetes/docs/DECISIONS.md`. Until then the node budget reserves
-      256Mi on this row instead of 64Mi.
+- [x] Set the control plane to 128Mi request and limit with
+      `GOMEMLIMIT=110MiB` through the chart's `extraEnv` in
+      `deploy/kubernetes/helmfile.yaml`, from the 61Mi reading with one
+      Gateway and one HTTPRoute. Confirm it with
+      `k8s:measure --namespace envoy-gateway-system` after e2e. If the peak
+      passes 100Mi, restore the chart's 256Mi.
 - [x] Set the CPU requests for the five pods these two charts bring: 100m for
       the Envoy proxy, 50m for the control plane, 50m for the cert-manager
       controller, 25m each for cainjector and webhook. No CPU limits. See the
@@ -1727,13 +1719,15 @@ are six real messages that will happen again.
 - [ ] Put the offsite copy somewhere that is not the cluster's provider. A
       backup held on the same account as the thing it protects survives a disk
       failure and very little else.
-- [ ] Replace the memory estimates from Phases 4, 6, and 7 with the numbers
-      `k8s:measure` collected. Keep request and limit equal, and set both above
-      the observed peak rather than the steady state, because the limit is what
-      the pod is killed for exceeding. Re-total the node budget.
-- [ ] Re-total the CPU budget from the same `k8s:measure` output, and leave CPU
-      limits unset. Write the reason beside the values so the next person does
-      not read the gap as an oversight and fill it in.
+- [x] Replace the Kratos and Envoy estimates with the numbers the load study
+      measured, keep request and limit equal, and re-total the node budget.
+- [ ] Measure kanae, postgres, keto and valkey with `k8s:measure` under load
+      and replace their rows. Set both request and limit above the observed
+      peak rather than the steady state, because the limit is what the pod is
+      killed for exceeding.
+- [x] Re-total the CPU budget from the templates as they stand, and leave CPU
+      limits unset. The table above is the reservation; the reason the limits
+      are absent is written beside it.
 - [ ] Write `deploy/kubernetes/RUNBOOK.md`, keyed on exact error strings. Start
       with the six findings in POC_FINDINGS.md, since each one is a real error
       message somebody will see again: `Init:Error`, `ImagePullBackOff`, `chown:

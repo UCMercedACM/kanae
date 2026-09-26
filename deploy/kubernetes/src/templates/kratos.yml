@@ -100,6 +100,8 @@ spec:
             - /etc/secrets/overrides.yml
             - --watch-courier
           env:
+            - name: GOMEMLIMIT
+              value: 750MiB
             - name: COOKIES_SECURE
               value: {{ ternary "true" "false" .Values.ory.secureCookies | quote }}
             - name: SERVE_PUBLIC_BASE_URL
@@ -145,11 +147,11 @@ spec:
             timeoutSeconds: 3
           resources:
             requests:
-              memory: 4Gi
+              memory: 1Gi
               cpu: 1000m
               ephemeral-storage: 64Mi
             limits:
-              memory: 4Gi
+              memory: 1Gi
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false

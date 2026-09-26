@@ -187,15 +187,16 @@ data:
     ciphers:
       algorithm: xchacha20-poly1305
 
+    # The values below are the official production values
     hashers:
       algorithm: argon2
       argon2:
         expected_duration: 500ms
         expected_deviation: 500ms
-        dedicated_memory: 384MB
-        parallelism: 16
-        memory: 128MB
-        iterations: 3
+        dedicated_memory: 512MB
+        parallelism: 3
+        memory: 64MB
+        iterations: 6
         salt_length: 16
         key_length: 32
 
