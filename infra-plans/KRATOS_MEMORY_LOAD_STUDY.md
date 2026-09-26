@@ -20,11 +20,15 @@ of them at only 2 signups per second. 1Gi with `GOMEMLIMIT=900MiB` holds 4
 simultaneous signups and 2 signups per second, and nothing more.
 
 **The better answer for a 4 GB node is 1024Mi with the hasher halved:
-`memory: 64MB`, `iterations: 6`, `parallelism: 3`, `GOMEMLIMIT=870MiB`.**
+`memory: 64MB`, `iterations: 6`, `parallelism: 3`, `GOMEMLIMIT=750MiB`.**
 Doubling the iterations keeps $m \cdot t = 384$, so an attacker's time per guess
 is unchanged, and the paired comparison (table J) found this hasher at 1Gi
 holds the same 10 in flight as today's hasher at 1.5Gi, at equal or higher
-throughput, with 0 kills in 18 trials, while taking 512Mi off the node budget:
+throughput, with 0 kills in 18 trials, while taking 512Mi off the node budget.
+750MiB rather than the 85% rule's 870MiB because 60 s trials on a faster
+CPU (table L) found 870MiB left 2 Mi at 8 in flight and was killed once in
+three at 10, while 750MiB held 8 with 121 Mi to spare at the same throughput.
+The budget:
 3.56Gi at steady state with the templates as they are, against 4.06Gi with
 Kratos at 1.5Gi ("The full memory state"). What is given
 up is memory hardness against a parallel (GPU) attacker, halved; 64MB is still
@@ -157,7 +161,7 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 - open: Poisson arrivals at a target rate, with exponential gaps so there is
   no start-up burst, and a user cap of 6 × rate so pile-up is bounded.
 
-**Design and bias control.** 360 trials in eight phases:
+**Design and bias control.** 393 trials in nine phases:
 
 | phase | factors | levels | reps | trials |
 | --- | --- | --- | --- | --- |
@@ -172,9 +176,10 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 | 6 | `GOMEMLIMIT` at 85% | 1.5Gi+1306MiB × {C=8, C=10, 4/s}; 1Gi+870MiB × {C=4, 2/s} | 3 | 15 |
 | 7 | paired hashers | {128MB/3/p16 at 1.5Gi, 64MB/6/p3 at 1Gi, 64MB/6/p3 at 1.5Gi} × {C=4, 8, 10, 16, 2/s, 4/s} | 3 | 54 |
 | 8 | Envoy proxy limit × load, through TLS | {no limit, 64Mi, 128Mi} × {C=4, 8, 16, 32, 64, 75/s, 75/s rate-limited} | 3 | 63 |
+| 9 | 64MB/6 at 1Gi, 60 s: parallelism paired, then `GOMEMLIMIT` | {p16, p3} × {C=4, 8, 10} at 870MiB; p3 × {C=6, 4/s} at 870MiB, C=8 at {800, 750}MiB, C=10 at 800MiB | 3 | 33 |
 
 Within each phase the trial order was shuffled with a recorded seed
-(20260925, 7, 11, 13, 17, 19, 23, 29) so drift in the machine could not line up with a factor
+(20260925, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41) so drift in the machine could not line up with a factor
 level. Every trial started a new Kratos process, a new cgroup and a new
 database cloned from the migrated template, so heap retention and table growth
 could not carry over. Arrival gaps used a per-replicate seed so replicates
@@ -451,6 +456,79 @@ The `fixed_heap` monitor reported 25% pressure at the worst load under the
 $C_{\text{stop}}$ the proxy refuses new requests, which is the graceful
 failure; it is never OOM-killed first because the cap sits under the limit.
 
+### L. Parallelism 16 against 3 at 64MB, and how much `GOMEMLIMIT` headroom 1Gi needs over 60 s
+
+Phase 9 answered whether `parallelism` matters once the block is 64MB, with
+a design that phases 4 and 7 had not given: both lane counts at the same
+limit (1Gi), the same `GOMEMLIMIT` (870MiB), the same three loads, 60 s
+trials, three replicates with shared arrival seeds, all 18 shuffled with
+seed 31 so the two sides ran interleaved. Differences are paired by
+replicate; intervals are 95% $t$.
+
+| C | metric | p=16 | p=3 | paired difference, p16 minus p3 | Welch $t$ |
+| --- | --- | --- | --- | --- | --- |
+| 4 | peak Mi | 767 ± 47 | 777 ± 121 | −11 [−174, +153] | −0.35 |
+| 4 | signups/s | 7.62 ± 0.27 | 7.90 ± 0.18 | −0.28 [−0.71, +0.16] | −3.77 |
+| 4 | p50 ms | 450 ± 25 | 427 ± 14 | +23 [−15, +61] | 3.50 |
+| 8 | peak Mi | 1001 ± 39 | 1015 ± 22 | −14 [−63, +36] | −1.32 |
+| 8 | signups/s | 7.36 ± 0.50 | 7.56 ± 0.30 | −0.20 [−0.43, +0.03] | −1.57 |
+| 8 | p50 ms | 953 ± 52 | 893 ± 29 | +60 [+35, +85] | 4.37 |
+| 10 | peak Mi | 1013 ± 24 | 1012 ± 27 | +1 [−5, +6] | 0.07 |
+| 10 | signups/s | 7.16 ± 1.13 | 6.62 ± 3.90 | +0.5 [−2.3, +3.4] | 0.57 |
+| 10 | p50 ms | 1233 ± 143 | 1133 ± 143 | +100 [+100, +100] | 2.12 |
+
+Memory does not move: every paired interval for peak includes zero, as it
+must when the block allocated per hash is the same size and the lanes only
+share it. Throughput ties: the paired intervals include zero at all three
+loads, and the one Welch statistic past 3 (C = 4) is a 4% edge to 3 lanes,
+not to 16. Latency favours 3 lanes at every load, by 60 ms [35, 85] at
+C = 8, which is the cost of scheduling 16 goroutines per hash onto 3 cores.
+So 3 lanes: equal memory, equal throughput, lower latency, and the higher
+time-area cost to an attacker from "What halving the hasher costs in
+security". One trial was OOM-killed, at p3, C = 10.
+
+That kill is the second result of the phase. This machine hashed at 7.6
+signups per second in phase 9 against 5.1 in phase 7 (a faster host, not a
+change in Kratos), and 60 s trials rather than phase 7's 20 s. At 1Gi with
+`GOMEMLIMIT=870MiB` that left almost nothing:
+
+| load, `GOMEMLIMIT` | peak Mi [95% CI] | max | margin to 1024 | kills | signups/s | p50 ms | time above `GOMEMLIMIT` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| C = 4, 870MiB | 777 [656, 898] | 827 | 197 | 0/3 | 7.90 | 427 | 0% |
+| C = 6, 870MiB | 954 [841, 1068] | 985 | 39 | 0/3 | 7.71 | 673 | 9% |
+| C = 8, 870MiB | 1015 [993, 1037] | 1022 | 2 | 0/3 | 7.56 | 893 | 41% |
+| C = 8, 800MiB | 929 [891, 967] | 945 | 79 | 0/3 | 7.92 | 837 | 57% |
+| C = 8, 750MiB | 896 [870, 922] | 903 | 121 | 0/3 | 7.66 | 893 | 72% |
+| C = 10, 870MiB | 1012 [985, 1040] | 1024 | 0 | 1/3 | 6.62 | 1133 | 56% |
+| C = 10, 800MiB | 962 [947, 976] | 968 | 56 | 0/3 | 7.40 | 1100 | 78% |
+| 4 /s, 870MiB | 812 [525, 1099] | 887 | 137 | 0/3 | 3.64 | 267 | 1% |
+
+"Time above `GOMEMLIMIT`" is the share of 0.1 s samples in which the cgroup
+exceeded the soft limit. At C = 8 and 870MiB the process sat above its
+target 41% of the run: the collector was already running as hard as it is
+allowed to and the live set plus one collection's garbage still cleared
+1000 Mi. Lowering the target does what a lower target should: at 800MiB the
+peak fell 86 Mi, at 750MiB 119 Mi, and throughput did not move (7.56, 7.92,
+7.66 per second), because hashing is what the CPUs are doing and the
+collector's extra work fits beside it. At C = 10 the same drop to 800MiB
+turned a kill in three into 56 Mi of margin and raised throughput from 6.62
+to 7.40, since a collector that is not fighting the cgroup wastes less.
+750MiB is $278 + 8 \times 50 = 678$ Mi of live set plus 72 Mi, about one
+block, so it is the lowest target that does not make the collector thrash at
+the concurrency the limit is sized for; below it the collector would be
+chasing a live set it cannot shrink.
+
+The 4 /s row is the production case with the rate limit in place: 137 Mi of
+margin over 60 s, and the cgroup above the soft target 1% of the time.
+
+What this changes. The 85% headroom that table I found sufficient at 1.5Gi
+is not sufficient at 1Gi on a CPU this fast, because the overshoot is a
+fixed number of blocks of garbage, not a percentage of the pod, and on the
+smaller pod the same overshoot is a larger share. `GOMEMLIMIT=750MiB` (73%)
+is the number for a 1Gi pod. The 1.5Gi alternative's 1300MiB was verified
+in 20 s trials at 5 signups per second and has not been re-run at 60 s on
+this faster host; if that alternative is used, run it.
+
 ## What a limit buys
 
 From the two models, the largest concurrency whose upper 95% prediction bound
@@ -494,8 +572,13 @@ whole node for one pod and cannot schedule beside the rest.
 ## Recommendation
 
 1. On a 4 GB node: `requests.memory: 1024Mi`, `limits.memory: 1024Mi`,
-   `GOMEMLIMIT=870MiB`, and in `kratos.prod.yml` `memory: 64MB`,
-   `iterations: 6`, `parallelism: 3` (table J). Record in `DECISIONS.md` that
+   `GOMEMLIMIT=750MiB`, and in `kratos.prod.yml` `memory: 64MB`,
+   `iterations: 6`, `parallelism: 3` (tables J and L). 750MiB is 73% of the
+   limit, not the 85% used at 1.5Gi: over 60 s on a fast CPU, 870MiB left
+   2 Mi at 8 in flight and was killed once at 10, and 750MiB held 8 with
+   121 Mi and 10 with 56 Mi at 800MiB, at the same throughput (table L).
+   Size the rate limit so in-flight stays at or under 6, where the
+   margin is 39 Mi even at 870MiB. Record in `DECISIONS.md` that
    $m \cdot t$ is unchanged and memory hardness is halved, superseding "the
    point of argon2 is the memory". If the node grows or Postgres returns to
    512Mi, the alternative below keeps today's hasher.
@@ -667,7 +750,7 @@ recommendation.
 | --- | --- | --- | --- |
 | kanae | 512Mi | 512Mi | `templates/kanae.yml` |
 | postgres | 1024Mi | 1024Mi (the plan's table says 512Mi) | `templates/postgres.yml`; its 64Mi `check-version` init container adds nothing |
-| kratos | 4096Mi | 1024Mi, `GOMEMLIMIT=870MiB`, hasher 64MB/6/p3 | `templates/kratos.yml` since Phase 9 (6ea3574); table J |
+| kratos | 4096Mi | 1024Mi, `GOMEMLIMIT=750MiB`, hasher 64MB/6/p3 | `templates/kratos.yml` since Phase 9 (6ea3574); tables J and L |
 | keto | 256Mi | 256Mi | `templates/keto.yml` |
 | valkey | 256Mi | 256Mi | `templates/valkey.yml` |
 | envoy proxy, `envoy` container | 64Mi | 64Mi | `envoy.yml`; table K |
@@ -1000,7 +1083,8 @@ number to size the rate limit on and 10 is the measured edge. `parallelism`
 can stay at 16 or drop to 3; table D found no difference on 3 CPUs, and
 OWASP's reference settings all use 1.
 
-If the pod must be 1Gi, `GOMEMLIMIT=870MiB` (85%, verified at 900MiB) and
+If the pod must be 1Gi, `GOMEMLIMIT=750MiB` (73%; 85% was verified at 900MiB
+in 20 s trials and found 2 Mi short at 8 in flight over 60 s, table L) and
 
 ```yaml
     memory: 64MB
@@ -1009,7 +1093,7 @@ If the pod must be 1Gi, `GOMEMLIMIT=870MiB` (85%, verified at 900MiB) and
 
 which keeps $m \cdot t = 384$ (today's cost per guess) and gives $b = 64$ Mi, so
 
-$$C_{\max} = \left\lfloor \frac{870 - 278}{64} \right\rfloor = 9, \qquad \text{verified at } 8 \text{ with } G = 900.$$
+$$C_{\max} = \left\lfloor \frac{750 - 278}{64} \right\rfloor = 7 \ \text{on the } 64 \text{ Mi bound}, \qquad 9 \ \text{on the measured } b = 50, \qquad \text{verified at } 8 \text{ with } G = 750 \text{ over 60 s}.$$
 
 The rate limit on the registration and login routes goes below the measured
 capacity, $\lambda < \min(\text{capacity},\ C_{\max}/W)$, with a burst of
@@ -1028,8 +1112,9 @@ $m \cdot t$ constant, since an attacker's work per guess is proportional to
 $m \cdot t$ under both the CPU-time and the memory-bandwidth models: $t = 384/64 = 6$.
 Parallelism was set to the node's core count because table D found no
 memory or throughput difference between 3 and 16 lanes on 3 CPUs (Welch's
-$t$, $p = 0.25$ at C = 2), and fewer lanes raise the time-area cost to an
-ASIC attacker. The three values were then tested as a unit rather than
+$t$, $p = 0.25$ at C = 2), table L's paired 18 trials at 64MB found the same
+on memory and throughput with 60 ms [35, 85] lower median latency at 3
+lanes, and fewer lanes raise the time-area cost to an ASIC attacker. The three values were then tested as a unit rather than
 assumed: a paired design, 54 trials shuffled with seed 23, ran this hasher at
 1Gi against today's at 1.5Gi under the same six loads with three replicates
 each, and the comparison used 95% $t$ intervals on peak memory and Welch's
