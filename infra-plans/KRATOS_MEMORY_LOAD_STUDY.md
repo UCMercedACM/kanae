@@ -26,7 +26,7 @@ is unchanged, and the paired comparison (table J) found this hasher at 1Gi
 holds the same 10 in flight as today's hasher at 1.5Gi, at equal or higher
 throughput, with 0 kills in 18 trials, while taking 512Mi off the node budget:
 3.56Gi at steady state with the templates as they are, against 4.06Gi with
-Kratos at 1.5Gi ("The budget as it adds up"). What is given
+Kratos at 1.5Gi ("The full memory state"). What is given
 up is memory hardness against a parallel (GPU) attacker, halved; 64MB is still
 3.4 times OWASP's Argon2id floor.
 
@@ -656,33 +656,74 @@ than on trials, and it is checkable in the place the reading came from:
 has driven cert-manager's challenge route through the controller. If the
 peak there is over 100 Mi, the number is wrong and 256Mi stands.
 
-### The budget as it adds up
+### The full memory state
 
-Requests are what the scheduler reserves, so requests are what has to fit.
-Rows are the templates' current values, not the plan's table, which still
-says 512Mi for Postgres and 64Mi for the control plane.
+Requests are what the scheduler reserves, so requests are what has to fit;
+every row is request = limit unless the row says otherwise. "Today" is what
+the templates and charts set on this branch; "proposed" is this study's
+recommendation.
 
-| Pod | today | proposed | source |
+| Pod, container | today | proposed | source |
 | --- | --- | --- | --- |
 | kanae | 512Mi | 512Mi | `templates/kanae.yml` |
-| postgres | 1024Mi | 1024Mi | `templates/postgres.yml` |
-| kratos | 1024Mi | 1024Mi | table J, hasher halved, `GOMEMLIMIT=870MiB` |
+| postgres | 1024Mi | 1024Mi (the plan's table says 512Mi) | `templates/postgres.yml`; its 64Mi `check-version` init container adds nothing |
+| kratos | 4096Mi | 1024Mi, `GOMEMLIMIT=870MiB`, hasher 64MB/6/p3 | `templates/kratos.yml` since Phase 9 (6ea3574); table J |
 | keto | 256Mi | 256Mi | `templates/keto.yml` |
 | valkey | 256Mi | 256Mi | `templates/valkey.yml` |
-| envoy proxy pod | 64Mi + 32Mi | 64Mi + 32Mi | `envoy.yml` plus the shutdown-manager sidecar |
-| envoy gateway control plane | 256Mi | 128Mi | chart default; the reading above |
-| cert-manager, three pods | 224Mi | 224Mi | `helmfile.yaml` |
-| **steady state** | **3648Mi (3.56Gi)** | **3520Mi (3.44Gi)** | |
-| + one migration Job at deploy | 3904Mi (3.81Gi) | 3776Mi (3.69Gi) | `templates/jobs-migrate.yml` |
+| envoy proxy, `envoy` container | 64Mi | 64Mi | `envoy.yml`; table K |
+| envoy proxy, `shutdown-manager` sidecar | 32Mi request, no limit | 32Mi request, no limit | `resource.go`, not settable through `EnvoyProxy` |
+| envoy gateway control plane | 256Mi request, 1024Mi limit | 128Mi, `GOMEMLIMIT=110MiB` | chart default; the 61 Mi reading in `DECISIONS.md` |
+| cert-manager controller | 64Mi | 64Mi | `helmfile.yaml` |
+| cert-manager cainjector | 128Mi | 128Mi | `helmfile.yaml` |
+| cert-manager webhook | 32Mi | 32Mi | `helmfile.yaml` |
+| **kanae and controllers, steady state** | **6720Mi (6.56Gi)** | **3520Mi (3.44Gi)** | |
+| CoreDNS | 70Mi request, 170Mi limit | same | k3s `manifests/coredns.yaml` |
+| metrics-server | 70Mi request | same | k3s `manifests/metrics-server/metrics-server-deployment.yaml` |
+| Cilium agent and operator | no request, about 200Mi in use | same | `helmfile.yaml` sets none; `DECISIONS.md` |
+| local-path-provisioner | no request | same | k3s packaged |
+| **everything the scheduler counts** | **6860Mi** | **3660Mi (3.57Gi)** | |
 
-The "3.6Gi" in circulation is the top row of the first column: Kratos at 1Gi,
-Postgres at 1Gi, the control plane at the chart's 256Mi, and the sidecar
-missing. A 4 GB node is 3815Mi before the kubelet and system reservations,
-and `kube-system` is not in the table at all: `DECISIONS.md` puts Cilium at
-about 200 Mi of use there. With the control plane at 128Mi, Kratos at 1.5Gi
-and today's hasher would total 4032Mi, which does not fit; with Postgres back
-at the plan's 512Mi it would total 3520Mi, which does. Those are the two
-levers the node has, and neither is the proxy.
+Today's column cannot schedule at all: the 4Gi Kratos placeholder from Phase
+9 alone is the node. With the plan's 1Gi in that row instead, today's
+steady state is 3648Mi for the namespace and 3788Mi with `kube-system`.
+
+Deploy time adds one migration Job at a time, 256Mi each
+(`templates/jobs-migrate.yml`), because the apply order finishes each Job
+before app pods schedule and `strategy: Recreate` on kanae removes the
+rolling surge (plan, "Deploy-time peak"):
+
+| | proposed steady | proposed with one migration Job | Kratos at 1.5Gi instead |
+| --- | --- | --- | --- |
+| scheduler's total | 3660Mi | 3916Mi | 4172Mi |
+
+What the node offers is the number the plan's rule says to copy from
+`kubectl describe node` and nobody has yet. Two bounds, with the kubelet's
+default hard eviction threshold of `memory.available<100Mi`
+([Kubernetes: node-pressure eviction](https://github.com/kubernetes/website/blob/main/content/en/docs/concepts/scheduling-eviction/node-pressure-eviction.md))
+and no other reservation, which is k3s's default:
+
+| node | allocatable | headroom, proposed steady | during a migration Job | Kratos at 1.5Gi |
+| --- | --- | --- | --- | --- |
+| 4 GiB (4096Mi) | 3996Mi | 336Mi | 80Mi | 176Mi short, Pending |
+| 4 GB decimal (3815Mi) | 3715Mi | 55Mi | 201Mi short, Pending at deploy | 457Mi short |
+
+Headroom here is scheduler headroom. Physical headroom is smaller by what
+runs outside every request: Cilium's roughly 200 Mi, the `shutdown-manager`
+sidecar's use above its 32Mi, and the k3s server process itself (API server,
+scheduler, controller manager, kubelet in one binary), which no row counts
+and the plan's "k3s and the kubelet take their cut first" refers to. On the
+4 GiB bound that leaves the node with about 100 Mi of physical slack at
+steady state; on the decimal bound, none.
+
+Two levers move it. Postgres back at the plan's 512Mi takes 512Mi off every
+cell: 848Mi and 592Mi of headroom on the 4 GiB node at steady state and
+during a migration, and Kratos at 1.5Gi would then fit with 336Mi to spare.
+The control plane at 128Mi instead of 256Mi is already in the proposed
+column; it is what turns "does not fit" into "fits" for the 1Gi Kratos on
+the decimal-4GB bound. The proxy is not a lever: it is 64Mi in both columns,
+and moving it to 128Mi while dropping the control plane to 64Mi sums to the
+same 192Mi and puts the tight limit on the one process whose reading (61 Mi)
+is within 3 Mi of it.
 
 ### What halving the hasher costs in security
 
