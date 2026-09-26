@@ -136,10 +136,23 @@
     "gateway": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["className", "hostname", "tls"],
+      "required": ["className", "hostname", "authRateLimit", "tls"],
       "properties": {
         "className": { "$ref": "#/$defs/dnsSubdomain" },
         "hostname": { "$ref": "#/$defs/dnsSubdomain" },
+        "authRateLimit": {
+          "description": "Local rate limit on the password-hashing POSTs, registration and login, applied per route by the kratos-auth-limiter BackendTrafficPolicy. Bounds the amount of argon2 hashes Kratos will run.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requestsPerSecond"],
+          "properties": {
+            "requestsPerSecond": {
+              "description": "Requests admitted per second on each of the two routes. Envoy Gateway's local limiter refills this many tokens per second and holds this many, so it is also the burst.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
         "tls": {
           "type": "object",
           "additionalProperties": false,

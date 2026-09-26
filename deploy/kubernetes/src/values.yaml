@@ -22,6 +22,10 @@ kanae:
 gateway:
   className: kanae
   hostname: api.ucmacm.dev
+  authRateLimit:
+    # This isn't random; it's mathmatically derived from the worst case possible
+    # See infra-plans/KRATOS_MEMORY_LOAD_STUDY.md
+    requestsPerSecond: 2
   tls:
     provider: acme
     issuers:
