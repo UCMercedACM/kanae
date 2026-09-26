@@ -62,9 +62,38 @@ makes 75/s survivable is admission control in front of Kratos, not memory.
   ([Kubernetes: resource management](https://github.com/kubernetes/website/blob/main/content/en/docs/concepts/configuration/manage-resources-containers.md)).
   A restart drops every in-flight signup.
 
-Both measured slopes below match this arithmetic: about 231Mi per concurrent
-signup with defaults, which is two 128MB blocks, and about 113Mi with
-`GOMEMLIMIT` binding, which is one block.
+Both measured slopes below match this arithmetic: $b \approx 231$ Mi per
+concurrent signup with defaults, which is $2 \times 128$ MB, two blocks, and
+$b \approx 113$ Mi with `GOMEMLIMIT` binding, one block.
+
+## Notation
+
+| symbol | meaning |
+| --- | --- |
+| $C$ | signups in flight at once; in closed-loop trials the Locust user count, so also the number of live argon2 blocks |
+| $B$ | intercept of the memory model: live memory with no signup in flight (runtime, config, pool, servers) |
+| $b$ | slope of the memory model: memory each additional in-flight signup costs, one argon2 block |
+| $G$ | `GOMEMLIMIT`, the soft ceiling the Go collector works to hold |
+| $m, t, p$ | argon2id memory, iterations and parallelism (`hashers.argon2` in `kratos.prod.yml`) |
+| $\lambda, W$ | arrival rate of signups and latency per signup |
+
+The relations the study rests on:
+
+$$L(C) = B + bC \qquad\text{(live memory under a binding } G\text{)}$$
+
+$$\widehat{\text{peak}}(C) \approx B' + 2bC \qquad\text{(Go defaults, GOGC = 100 lets the heap double)}$$
+
+$$C_{\max} = \left\lfloor \frac{G - B}{b} \right\rfloor \qquad\text{(in-flight signups a pod holds)}$$
+
+$$C = \lambda W \qquad\text{(Little's law)} \qquad\qquad \text{cost per hash} \propto m \cdot t$$
+
+Statistics: every cell mean is reported with a 95% two-sided interval
+$\bar{x} \pm t_{n-1,\,0.975}\, s/\sqrt{n}$; models are ordinary least squares
+$\hat{y} = \beta_0 + \beta_1 C$ with residual standard error $s_{\text{res}}$,
+coefficient of determination $R^2$, and 95% prediction intervals for a single
+future trial; two-group comparisons use Welch's $t$; zero OOM kills in $n$
+trials bounds the per-trial kill probability by $p_{\text{kill}} < 3/n$ at 95%
+confidence (rule of three).
 
 ## Method
 
@@ -150,10 +179,11 @@ Throughput peaks at 2 in flight and falls from there; at 16 and above the
 median signup takes longer than 8 s and the peak was still climbing when the
 trial ended. No trial in this series was killed (12Gi cgroup).
 
-Model on the sustainable regime, C ≤ 8 including the 60 s trials (n = 24):
+Model on the sustainable regime, $C \le 8$ including the 60 s trials ($n = 24$):
 
-    peak_Mi = 285 (±53) + 231.2 (±10.4) × C      residual SE 121 Mi, R² 0.958
-    slope 95% CI [210, 253] Mi per concurrent signup
+$$\widehat{\text{peak}} = 285\,(\pm 53) + 231.2\,(\pm 10.4)\,C \ \text{Mi}, \qquad s_{\text{res}} = 121\ \text{Mi}, \quad R^2 = 0.958$$
+
+Slope 95% CI: $[210,\ 253]$ Mi per concurrent signup.
 
 A consistency check, not a fit: `hurl --test` runs files in parallel with one
 job per CPU by default ([Hurl 8.0.1 manual, `--jobs`](https://github.com/Orange-OpenSource/hurl/blob/8.0.1/docs/manual.md)),
@@ -194,12 +224,14 @@ ramp had not reached it yet.
 | 8 | 1995 [1768, 2223] | 1616 [1496, 1736] | 1049 [1042, 1056] |
 | 16 | 3320 [2463, 4177] | 2075 [2057, 2093] | 2043 [1969, 2118] |
 
-Where the limit binds (`GOMEMLIMIT=768MiB`, peak above 845Mi, n = 12):
+Where the limit binds (`GOMEMLIMIT=768MiB`, peak above 845Mi, $n = 12$):
 
-    peak_Mi = 278 + 113.5 (±3.4) × C      residual SE 127 Mi, R² 0.991
+$$L(C) = 278 + 113.5\,(\pm 3.4)\,C \ \text{Mi}, \qquad s_{\text{res}} = 127\ \text{Mi}, \quad R^2 = 0.991$$
 
-Throughput is unchanged up to C = 4 (5.67 ± 0.26 /s against 4.95 ± 0.22 /s
-with defaults) and drops at C = 8 (2.15 ± 0.54 /s), where 8 × 128MB of live
+so $B = 278$ Mi and $b = 113.5$ Mi, which is $0.93$ of the 122 MiB block.
+
+Throughput is unchanged up to $C = 4$ ($5.67 \pm 0.26$ /s against $4.95 \pm 0.22$ /s
+with defaults) and drops at $C = 8$ ($2.15 \pm 0.54$ /s), where $8 \times 128$ MB of live
 blocks exceed the 768MiB limit and the collector runs continuously. That is the
 thrashing the Go GC guide describes, and it is why `GOMEMLIMIT` must sit above
 the live set the limit is meant to hold, not just under the container limit.
@@ -207,10 +239,10 @@ the live set the limit is meant to hold, not just under the container limit.
 ### D. `hashers.argon2.parallelism` does not matter on 3 CPUs
 
 `DECISIONS.md` left `parallelism: 16` against a 100m CPU request unresolved.
-At C = 2, 16 lanes gave 6.03 ± 0.39 signups/s and 3 lanes 5.67 ± 0.06
-(Welch t = 1.59, p = 0.25); at C = 4, 4.95 ± 0.22 against 4.96 ± 0.18
-(p = 0.95). Peaks were 634 against 731 Mi and 1281 against 1344 Mi (p = 0.34
-and 0.39). The setting can stay; it changes nothing measurable here.
+At $C = 2$, 16 lanes gave $6.03 \pm 0.39$ signups/s and 3 lanes $5.67 \pm 0.06$
+(Welch $t = 1.59$, $p = 0.25$); at $C = 4$, $4.95 \pm 0.22$ against $4.96 \pm 0.18$
+($p = 0.95$). Peaks were 634 against 731 Mi and 1281 against 1344 Mi ($p = 0.34$
+and $0.39$). The setting can stay; it changes nothing measurable here.
 
 ### E. Verification at candidate limits, 3 trials each
 
@@ -221,8 +253,9 @@ and 0.39). The setting can stay; it changes nothing measurable here.
 | 1.5Gi | 1400MiB | 0/3, peak 1261, 4.58 /s | 0/3, peak 1503, 4.38 /s | 0/3, peak 1172 | 0/3, peak 1461, 3.18 /s |
 | 2Gi | 1850MiB | 0/3, peak 1265, 4.65 /s | 0/3, peak 1789, 4.18 /s | 0/3, peak 1167 | 0/3, peak 1776, 2.42 /s |
 
-Zero kills in 3 trials only bounds the per-trial kill probability below 63% at
-95% confidence (rule of three), so the verification confirms the models rather
+Zero kills in $n$ trials bounds the per-trial kill probability by
+$p_{\text{kill}} < 1 - 0.05^{1/n}$ at 95% confidence, which is $3/n$ for large
+$n$ (the rule of three) and only 63% for $n = 3$, so the verification confirms the models rather
 than standing alone. Across all 24 trials at 1.5Gi and 2Gi there were no kills,
 which bounds the probability below 12%. The 1.5Gi row at C = 8 peaked at
 1503Mi against a 1536Mi limit: it held because `GOMEMLIMIT` kept the collector
@@ -248,9 +281,9 @@ records came from `kratos hashers argon2 calibrate`, which in v26.2.0 adds
 0.4 to 1.3 s of its own overhead to every hash it times (see "Calibrating the
 hasher"). Measure it by running `tests/load/locustfile.py` at `-u 1` against
 the cluster: the ratio of its median to 170 ms is the factor to divide every
-rate in this document by. Under Little's law in flight equals rate times
-latency, and latency rises with contention, so the scaled rates are
-optimistic at the top end.
+rate in this document by. Under Little's law, $C = \lambda W$, in-flight work is arrival rate times
+latency, and $W$ rises with contention, so the scaled rates are optimistic at
+the top end.
 
 Against the node budget in `KANAE_INFRA_PLAN.md`, using the templates as they
 are today: kanae 512Mi, Postgres 1Gi (`postgres.yml` line 190, not the 512Mi
@@ -274,7 +307,7 @@ whole node for one pod and cannot schedule beside the rest.
    `GOMEMLIMIT=1400MiB` to the container `env` in
    `deploy/kubernetes/src/templates/kratos.yml`. 1400MiB is 91% of the limit,
    inside the Go guide's 5 to 10% headroom, and above the 8-hash live set
-   (278 + 113.5 × 8 = 1186Mi) so the collector does not thrash at the
+   ($L(8) = 278 + 113.5 \times 8 = 1186$ Mi) so the collector does not thrash at the
    concurrency the limit is sized for. Record it in `DECISIONS.md` next to the
    512Mi entry, which this supersedes.
 2. If 1.5Gi cannot be found on the node, 1Gi with `GOMEMLIMIT=900MiB` is the
@@ -306,10 +339,10 @@ whole node for one pod and cannot schedule beside the rest.
    `tests/load/locustfile.py` at `-u 1` on the node instead.
 5. Do not size for 75 signups per second on this node. It needs either the
    argon2 memory parameter lowered, which `DECISIONS.md` rejected on security
-   grounds, or a node with roughly 75 × 0.5 s × 128MB ≈ 4.7 GB of headroom for
-   Kratos alone plus the CPU to hash 75 times per second. Three cores here
-   completed 6 signups per second, 0.5 core-seconds each, so 75 per second is
-   about 40 cores at this machine's speed.
+   grounds, or a node with roughly $\lambda W m = 75\ \text{s}^{-1} \times 0.5\ \text{s} \times 128\ \text{MB} \approx 4.7$ GB
+   of headroom for Kratos alone plus the CPU to hash 75 times per second.
+   Three cores here completed 6 signups per second, $0.5$ core-seconds each,
+   so 75 per second is $75 \times 0.5 \approx 40$ cores at this machine's speed.
 6. When running the hurl suite against a limited Kratos, pass `--jobs 4` or
    lower; the default is one job per CPU and each job is a login.
 
@@ -395,9 +428,9 @@ runtime has handed the previous block back to the kernel.
 | 128MB | 3 | 3 | 141 ms | 544 ms |
 | 128MB | 1 | 16 | 53 ms | 460 ms |
 
-Two things follow. Cost scales with memory × iterations, so 64MB at 6
-iterations costs an attacker the same time per guess as today's 128MB at 3
-while holding half the memory. And Ory's own target of 0.5 to 1 s per hash
+Two things follow. Cost scales with $m \cdot t$, so 64MB at 6 iterations
+($m \cdot t = 384$) costs an attacker the same time per guess as today's 128MB
+at 3 ($m \cdot t = 384$) while holding half the memory. And Ory's own target of 0.5 to 1 s per hash
 (the calibrate help text) is not met by any row on this CPU, today's included;
 meeting it would push memory or iterations up, against the budget. The
 duration target belongs to the production node and has to be measured there.
@@ -425,10 +458,11 @@ closed-loop point.
 | 64MB, 3 it, p16 | 72 ms | ok, 707 | ok, 974 | ok, 1010 | ok, 374 | ok, 673 | 10.1 /s |
 | 19MiB, 2 it, p1 (OWASP floor) | 30 ms | ok, 385 | ok, 460 | ok, 659 | ok, 126 | ok, 162 | 35.6 /s |
 
-Per-signup slopes over the unkilled closed trials: 64.2 (±6.0) Mi with 64MB
-at 6 iterations, R² 0.97, which is one 64MB block, matching the 113.5 Mi per
-128MB block of table C; 23.1 (±1.4) Mi with the OWASP floor, R² 0.97. The
-64MB, 3-iteration row shows no slope (22 ±6, R² 0.67) because at 16 in flight
+Per-signup slopes over the unkilled closed trials: $b = 64.2\,(\pm 6.0)$ Mi
+with 64MB at 6 iterations, $R^2 = 0.97$, which is one 64MB block, matching the
+$b = 113.5$ Mi per 128MB block of table C; $b = 23.1\,(\pm 1.4)$ Mi with the
+OWASP floor, $R^2 = 0.97$. The 64MB, 3-iteration row shows no slope
+($b = 22 \pm 6$, $R^2 = 0.67$) because at 16 in flight
 its 1010 Mi peak is the limit itself: the collector was holding the line, with
 throughput still at 8 /s, and one more in flight would have killed it.
 
@@ -458,10 +492,13 @@ here three times.
 
 The proposal is the tool's answer, so it was put under the same swarm as the
 study's values, at both pods. The model's predictions were written down first:
-b = 0.93 × 213.6 = 199 Mi per signup, so C_max = ⌊(1400 − 278) / 199⌋ = 5 at
-1.5Gi and ⌊(900 − 278) / 199⌋ = 3 at 1Gi; cost per hash 224 × 5 / (128 × 3) =
-2.9 times today's, so capacity about 2 signups per second, which makes 2/s
-unstable and 4/s a certain kill. 24 trials, 3 replicates, shuffled:
+
+$$b = 0.93 \times 213.6 = 199\ \text{Mi}, \qquad C_{\max} = \left\lfloor \frac{1400 - 278}{199} \right\rfloor = 5 \ \text{at 1.5Gi}, \qquad \left\lfloor \frac{900 - 278}{199} \right\rfloor = 3 \ \text{at 1Gi}$$
+
+$$\frac{\text{cost per hash}}{\text{today's}} = \frac{224 \times 5}{128 \times 3} = 2.9$$
+
+so capacity about 2 signups per second, which makes 2/s unstable and 4/s a
+certain kill. 24 trials, 3 replicates, shuffled:
 
 | hasher | pod | C = 4 | C = 8 | 2 /s | 4 /s |
 | --- | --- | --- | --- | --- | --- |
@@ -473,7 +510,7 @@ unstable and 4/s a certain kill. 24 trials, 3 replicates, shuffled:
 Every prediction held: 4 in flight survives, 8 is killed, 2 signups per
 second is already over capacity (0.08 completed per second before the kill),
 and the one surviving cell at 1Gi peaked at 991 Mi against a 1024 Mi limit,
-the "borderline" the arithmetic gave for C_max = 3. Calibrate's proposal is
+the "borderline" the arithmetic gave for $C_{\max} = 3$. Calibrate's proposal is
 worse than today's hasher on every axis this study measures: a third of the
 throughput, three times the memory per signup, and the same pod is killed at
 loads the study's values survive. The reason is structural, not a bug: the
@@ -510,9 +547,12 @@ hashers:
     dedicated_memory: 1400MB   # documents the budget; not read on the serving path
 ```
 
-Derivation: G = 0.91 × 1536 = 1400 (Go guide headroom); C_max =
-⌊(G − B) / b⌋ = ⌊(1400 − 278) / 113.5⌋ = 9 on the mean line, 8 on the upper
-95% prediction bound, and 8 is the number the verification ran at. `parallelism`
+Derivation, with the Go guide's 5 to 10% headroom:
+
+$$G = 0.91 \times 1536 = 1400\ \text{MiB}, \qquad C_{\max} = \left\lfloor \frac{G - B}{b} \right\rfloor = \left\lfloor \frac{1400 - 278}{113.5} \right\rfloor = 9$$
+
+on the mean line, 8 on the upper 95% prediction bound, and 8 is the number
+the verification ran at. `parallelism`
 can stay at 16 or drop to 3; table D found no difference on 3 CPUs, and
 OWASP's reference settings all use 1.
 
@@ -523,10 +563,13 @@ If the pod must be 1Gi, `GOMEMLIMIT=900MiB` and
     iterations: 6
 ```
 
-which keeps m × t at 384 (today's cost per guess), gives b = 64 Mi and
-C_max = ⌊(900 − 278) / 64⌋ = 9, verified at 8. The rate limit on the
-registration and login routes goes below the measured capacity with a burst
-of C_max; on this CPU that is under 6 per second, burst 8.
+which keeps $m \cdot t = 384$ (today's cost per guess) and gives $b = 64$ Mi, so
+
+$$C_{\max} = \left\lfloor \frac{900 - 278}{64} \right\rfloor = 9, \qquad \text{verified at } 8.$$
+
+The rate limit on the registration and login routes goes below the measured
+capacity, $\lambda < \min(\text{capacity},\ C_{\max}/W)$, with a burst of
+$C_{\max}$; on this CPU that is under 6 per second, burst 8.
 
 ## Threats to validity
 
