@@ -25,7 +25,8 @@ Doubling the iterations keeps $m \cdot t = 384$, so an attacker's time per guess
 is unchanged, and the paired comparison (table J) found this hasher at 1Gi
 holds the same 10 in flight as today's hasher at 1.5Gi, at equal or higher
 throughput, with 0 kills in 18 trials, while taking 512Mi off the node budget:
-3.34Gi at steady state instead of 3.84Gi with Postgres at 1Gi. What is given
+3.56Gi at steady state with the templates as they are, against 4.06Gi with
+Kratos at 1.5Gi ("The budget as it adds up"). What is given
 up is memory hardness against a parallel (GPU) attacker, halved; 64MB is still
 3.4 times OWASP's Argon2id floor.
 
@@ -48,6 +49,19 @@ own overhead to every hash (see "Calibrating the hasher" below). Above capacity,
 seconds. Every rate of 10 signups per second or more was OOM-killed at 4Gi
 within a 20 s trial (5 of 6 trials at 10 and 15/s, 12 of 12 at 20 to 75/s). What
 makes 75/s survivable is admission control in front of Kratos, not memory.
+
+**The Envoy proxy in front of it needs nothing beyond the 64Mi it has.** The
+same swarm sent through Envoy v1.39.1, configured as Envoy Gateway v1.9.1
+renders it, peaked at 21.6 Mi with 100 connections held open against a
+saturated Kratos, and the fit is $15.0 + 0.068\,C$ Mi per open connection
+($R^2 = 0.995$, table K). Envoy Gateway caps Envoy's heap at 80% of the memory
+limit and stops accepting requests at 98% of that cap, so a 64Mi limit turns
+into a 50 Mi ceiling, which the fit puts at about 500 open connections, five
+times what any trial held and fifty times what Kratos can serve. The row that
+is wrong in the budget is the control plane: the chart reserves 256Mi for a
+process the repository measured at 61 Mi, and that reservation, not the proxy,
+is what makes 1.5Gi for Kratos not fit. See "The Envoy Gateway defaults and
+the node budget".
 
 ## Why Kratos behaves this way
 
@@ -143,7 +157,7 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 - open: Poisson arrivals at a target rate, with exponential gaps so there is
   no start-up burst, and a user cap of 6 × rate so pile-up is bounded.
 
-**Design and bias control.** 297 trials in seven phases:
+**Design and bias control.** 360 trials in eight phases:
 
 | phase | factors | levels | reps | trials |
 | --- | --- | --- | --- | --- |
@@ -157,9 +171,10 @@ flow the Chapter-Website and the hurl scenarios use. Two arrival models:
 | 5 | calibrate's proposal, 224MB/5 it | {1.5Gi+1400MiB, 1Gi+900MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 24 |
 | 6 | `GOMEMLIMIT` at 85% | 1.5Gi+1306MiB × {C=8, C=10, 4/s}; 1Gi+870MiB × {C=4, 2/s} | 3 | 15 |
 | 7 | paired hashers | {128MB/3/p16 at 1.5Gi, 64MB/6/p3 at 1Gi, 64MB/6/p3 at 1.5Gi} × {C=4, 8, 10, 16, 2/s, 4/s} | 3 | 54 |
+| 8 | Envoy proxy limit × load, through TLS | {no limit, 64Mi, 128Mi} × {C=4, 8, 16, 32, 64, 75/s, 75/s rate-limited} | 3 | 63 |
 
 Within each phase the trial order was shuffled with a recorded seed
-(20260925, 7, 11, 13, 17, 19, 23) so drift in the machine could not line up with a factor
+(20260925, 7, 11, 13, 17, 19, 23, 29) so drift in the machine could not line up with a factor
 level. Every trial started a new Kratos process, a new cgroup and a new
 database cloned from the migrated template, so heap retention and table growth
 could not carry over. Arrival gaps used a per-replicate seed so replicates
@@ -168,7 +183,8 @@ check found the 20 s peaks 3% low at C=4, 13% low at C=6 and 10% low at C=8,
 so the 20 s peaks at C ≥ 6 are slightly censored and the models below include
 the 60 s points. Intervals are 95% two-sided t intervals; regressions are
 ordinary least squares with prediction intervals. The trial data is in
-`kratos-memory-trials.csv` beside this file.
+`kratos-memory-trials.csv` beside this file; phase 8's is in
+`envoy-memory-trials.csv`.
 
 ## Results
 
@@ -338,6 +354,103 @@ margins at 8 and 10 in flight (67 and 46 Mi) are thinner than the 1.5Gi ones
 (142 and 117 Mi), which is the price of the smaller pod and why the rate
 limit's burst should be 8, not 10.
 
+### K. The Envoy proxy under the same swarm
+
+Phase 8 put Envoy v1.39.1 between Locust and Kratos, because that is the
+image Envoy Gateway v1.9.1 pins
+(`api/v1alpha1/shared_types.go`, `DefaultEnvoyProxyImage`, [envoyproxy/gateway v1.9.1](https://github.com/envoyproxy/gateway/blob/v1.9.1/api/v1alpha1/shared_types.go)),
+with a static configuration copied from what the controller renders for
+`deploy/kubernetes/src/templates/routing.yml`: an HTTPS listener terminating
+TLS, an HTTP listener that answers 308, `/auth` prefix-rewritten to Kratos
+with the route's 45 s request timeout, `/` to a kanae stub, 32 KiB
+per-connection buffers (`tcpListenerPerConnectionBufferLimitBytes` in
+`internal/xds/translator/listener.go`), and the bootstrap's overload manager
+(`internal/xds/bootstrap/bootstrap.yaml.tpl`). Locust spoke TLS to Envoy on
+CPUs 0 to 2, which Envoy shared with Kratos as they share the node's 3 vCPU.
+Kratos ran the halved hasher with `GOMEMLIMIT=1300MiB` in a cgroup large
+enough that it never died, so every Envoy number below is Envoy holding
+connections against a live but saturated backend, not against a crashed one.
+Envoy ran with `--concurrency 3`, the worker count it would pick on a 3 vCPU
+node with no CPU limit.
+
+Loads: 4, 8, 16, 32 and 64 users signing up back to back; 75 signups per
+second Poisson with the pile-up capped at 100 connections; and the same 75
+per second with the study's recommended local rate limit on the registration
+POST (4 per second, burst 8). The 75/s loads are the overload case the rate
+limit exists for: 100 connections open, most of them waiting up to 45 s for
+a hash that will not come.
+
+| limit | load | n | peak Mi | 95% CI | max | heap Mi | connections | overload actions | 5xx | 429 | OOM | signups/s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| none | C=4 | 3 | 15.2 | [14.9, 15.6] | 15.4 | 10 | 4 | 0 | 0 | 0 | 0 | 5.52 |
+| none | C=8 | 3 | 15.6 | [15.2, 15.9] | 15.6 | 12 | 8 | 0 | 0 | 0 | 0 | 5.29 |
+| none | C=16 | 3 | 16.1 | [15.7, 16.4] | 16.1 | 12 | 16 | 0 | 0 | 0 | 0 | 5.30 |
+| none | C=32 | 3 | 17.1 | [17.1, 17.1] | 17.1 | 12 | 32 | 0 | 0 | 0 | 0 | 2.12 |
+| none | C=64 | 3 | 19.3 | [19.0, 19.7] | 19.4 | 16 | 64 | 0 | 0 | 0 | 0 | 1.75 |
+| none | 75/s | 3 | 21.1 | [20.7, 21.4] | 21.1 | 16 | 100 | 0 | 0 | 0 | 0 | 1.68 |
+| none | 75/s, rate limit | 3 | 21.4 | [21.4, 21.4] | 21.4 | 16 | 100 | 0 | 0 | 976 | 0 | 6.89 |
+| 64Mi | C=4 | 3 | 15.2 | [14.9, 15.6] | 15.4 | 12 | 4 | 0 | 0 | 0 | 0 | 5.55 |
+| 64Mi | C=8 | 3 | 15.6 | [15.6, 15.6] | 15.6 | 12 | 8 | 0 | 0 | 0 | 0 | 5.46 |
+| 64Mi | C=16 | 3 | 16.3 | [16.0, 16.7] | 16.4 | 12 | 16 | 0 | 0 | 0 | 0 | 5.45 |
+| 64Mi | C=32 | 3 | 17.2 | [16.9, 17.6] | 17.4 | 12 | 32 | 0 | 0 | 0 | 0 | 2.17 |
+| 64Mi | C=64 | 3 | 19.1 | [18.7, 19.4] | 19.1 | 16 | 64 | 0 | 0 | 0 | 0 | 1.51 |
+| 64Mi | 75/s | 3 | 21.1 | [20.7, 21.4] | 21.1 | 16 | 100 | 0 | 0 | 0 | 0 | 1.66 |
+| 64Mi | 75/s, rate limit | 3 | 21.5 | [21.1, 21.8] | 21.6 | 16 | 100 | 0 | 0 | 1084 | 0 | 7.67 |
+| 128Mi | C=4 | 3 | 15.5 | [15.1, 15.8] | 15.6 | 12 | 4 | 0 | 0 | 0 | 0 | 5.62 |
+| 128Mi | C=8 | 3 | 15.6 | [15.6, 15.6] | 15.6 | 12 | 8 | 0 | 0 | 0 | 0 | 5.33 |
+| 128Mi | C=16 | 3 | 16.1 | [16.1, 16.2] | 16.1 | 12 | 16 | 0 | 0 | 0 | 0 | 5.40 |
+| 128Mi | C=32 | 3 | 17.2 | [16.8, 17.6] | 17.4 | 12 | 32 | 0 | 0 | 0 | 0 | 2.19 |
+| 128Mi | C=64 | 3 | 19.2 | [18.9, 19.6] | 19.4 | 16 | 64 | 0 | 0 | 0 | 0 | 1.82 |
+| 128Mi | 75/s | 3 | 21.1 | [21.1, 21.1] | 21.1 | 16 | 100 | 0 | 0 | 0 | 0 | 1.64 |
+| 128Mi | 75/s, rate limit | 3 | 21.5 | [21.2, 21.9] | 21.6 | 16 | 100 | 0 | 0 | 1020 | 0 | 7.24 |
+
+Peak is the cgroup's high-water mark, as in every other table; "heap" is the
+largest `server.memory_heap_size` Envoy's admin endpoint reported, which
+tcmalloc grows in 4 Mi steps; "overload actions" counts trials in which
+`stop_accepting_requests` ever became active; "signups/s" is what Kratos
+completed behind the proxy, and at 75/s the rate-limited run completed more
+than the unlimited one because the limiter kept Kratos at a concurrency where
+it still finishes hashes (table J found the same knee).
+
+The limit made no difference to anything, as expected while the heap sat far
+under its cap. Across the 15 closed-loop trials with no limit, ordinary least
+squares gives
+
+$$P(C) = 15.0 + 0.068\,C\ \text{Mi},\qquad R^2 = 0.995,\qquad \text{residual SE } 0.1\ \text{Mi},$$
+
+with $b \in [0.065, 0.070]$ Mi per open connection and $B \in [14.9, 15.1]$
+Mi (95% CI), where $C$ here counts open client connections rather than
+in-flight hashes. Prediction intervals: 21.4 to 22.1 Mi at 100 connections,
+which the 75/s trials confirmed at 21.1 to 21.6; 27.9 to 29.1 Mi at 200. The
+cost per connection is what the 32 KiB read and write buffers and the TLS
+session amount to, and a saturated backend does not raise it: the 45 s
+timeouts in the 75/s trials (89 to 99 per trial) came back as 504s without
+moving the peak.
+
+Envoy Gateway derives an overload-manager heap cap from the limit:
+`calculateMaxHeapSizeBytes` in
+`internal/infrastructure/kubernetes/proxy/resource.go` returns 80% of
+`limits.memory`, and the bootstrap template triggers `shrink_heap` at 95% of
+that and `stop_accepting_requests` at 98%
+([envoyproxy/gateway#3082](https://github.com/envoyproxy/gateway/commit/07f8a472), April 2024).
+Without a limit no cap is set. So the number a limit $M$ actually
+enforces on the proxy is
+
+$$H_{\text{stop}}(M) = 0.98 \times 0.8 \times M = 0.784\,M,$$
+
+and the connections that reach it are $C_{\text{stop}} = (H_{\text{stop}} - B)/b$:
+
+| limit $M$ | heap cap | stops accepting at | $C_{\text{stop}}$ |
+| --- | --- | --- | --- |
+| 48Mi | 38.4 Mi | 37.6 Mi | 330 |
+| 64Mi | 51.2 Mi | 50.2 Mi | 520 |
+| 128Mi | 102.4 Mi | 100.4 Mi | 1260 |
+
+The `fixed_heap` monitor reported 25% pressure at the worst load under the
+64Mi cap, and neither overload action fired in any of the 63 trials. Past
+$C_{\text{stop}}$ the proxy refuses new requests, which is the graceful
+failure; it is never OOM-killed first because the cap sits under the limit.
+
 ## What a limit buys
 
 From the two models, the largest concurrency whose upper 95% prediction bound
@@ -432,6 +545,206 @@ whole node for one pod and cannot schedule beside the rest.
    so 75 per second is $75 \times 0.5 \approx 40$ cores at this machine's speed.
 6. When running the hurl suite against a limited Kratos, pass `--jobs 4` or
    lower; the default is one job per CPU and each job is a login.
+7. Leave the Envoy proxy at `64Mi` request and limit in `envoy.yml`; table K
+   measured it at 22 Mi with 100 connections open and the controller's heap
+   cap makes it refuse rather than die past about 500. Count the pod as 96Mi
+   in the budget for the `shutdown-manager` sidecar the controller adds.
+8. Lower the Envoy Gateway control plane to `128Mi` request and limit with
+   `GOMEMLIMIT=110MiB` in `helmfile.yaml`, on the strength of the 61 Mi
+   reading in `DECISIONS.md`, and check it with `k8s:measure` in
+   `envoy-gateway-system` after e2e. That is the 128Mi that decides whether
+   the node has room.
+
+## The Envoy Gateway defaults and the node budget
+
+### Where the numbers in the chart come from
+
+`deploy/kubernetes/envoy.yml` already sets the proxy container to 64Mi
+request and limit with a 100m CPU request, so the proxy does not run on the
+controller's defaults. What it would run on is `requests.memory: 512Mi`,
+`requests.cpu: 100m` and no limits, from `DefaultDeploymentMemoryResourceRequests`
+in `api/v1alpha1/shared_types.go`, introduced with the first support for
+setting the proxy's resources at all
+([envoyproxy/gateway#1197](https://github.com/envoyproxy/gateway/commit/666bf2aae), March 2023).
+The commit adds the constants without a measurement or a comment on how they
+were chosen. The upstream task page reads the same way: its example sets
+`requests: 150m / 640Mi, limits: 500m / 1Gi` as an illustration of the
+`envoyDeployment.container.resources` field, not as guidance
+(`site/content/en/v1.9/tasks/operations/customize-envoyproxy.md`, "Customize
+EnvoyProxy Deployment Resources"). Table K says why none of those figures
+matter here: this Gateway's proxy peaks at 22 Mi with 100 connections open.
+
+The proxy pod also carries a second container the budget has never counted.
+`resource.go` appends a `shutdown-manager` container to every proxy pod, with
+`requests: 10m / 32Mi` from `DefaultShutdownManagerContainerResourceRequirements`
+and no limit, and `EnvoyProxy` has no field to change those. The pod the
+scheduler reserves for is therefore 96Mi, not 64Mi.
+
+The control plane's `requests.memory: 256Mi` and `limits.memory: 1024Mi` in
+`charts/gateway-helm/values.tmpl.yaml` were `64Mi` and `128Mi` (with a 10m
+CPU request) until
+[envoyproxy/gateway#1617](https://github.com/envoyproxy/gateway/commit/005b5b3c)
+("bump resource limits for Envoy Gateway deployment", July 2023) raised all
+three, citing issue #1613. The issue's text is not reachable from the network
+this study ran on; what the commit shows is that the numbers are a response
+to a reported problem in general use, sized for whatever cluster reported it,
+and have not moved since. `DECISIONS.md` chose to keep them until a
+measurement under load replaced them, and measured 36 Mi idle and 61 Mi with
+one Gateway and one HTTPRoute.
+
+### What the swarm can and cannot size
+
+The swarm sizes the proxy, because every byte the proxy holds is a
+connection or a buffer, and table K measures those directly. It does not size
+the control plane, because the control plane carries no traffic: it watches
+the API server and pushes an xDS snapshot to the proxy when a Gateway, route,
+Secret or Service changes. Its memory is a function of how many of those
+objects exist, and in this repository that number is fixed at one Gateway,
+two HTTPRoutes and, during an ACME challenge, one more. No signup rate
+changes it, so no load test can bound it; only a reading with those objects
+present can, which is the 61 Mi `DECISIONS.md` took. This study ran in a
+sandbox with no API server, so it adds no reading of its own.
+
+### The proxy: 64Mi stays, now measured
+
+The worst load's mean peak has a 95% upper confidence bound of 21.9 Mi and
+the regression's 95% prediction bound is 29.1 Mi at 200 open connections,
+twice the pile-up any trial reached and twenty times what Kratos can hash at
+once. The limit that matters is the heap cap Envoy Gateway derives from it;
+at 64Mi the proxy stops accepting at 50.2 Mi, which is 520 connections by the
+fit, and it is never killed. Lowering to 48Mi would save 16Mi and cut
+$C_{\text{stop}}$ to 330 for no reason the budget needs; raising it buys
+nothing the proxy will use. So:
+
+```yaml
+# deploy/kubernetes/envoy.yml (unchanged)
+requests: { cpu: 100m, memory: 64Mi }
+limits: { memory: 64Mi }
+```
+
+with the budget row corrected to 96Mi for the pod.
+
+### The control plane: 128Mi, from the repository's own reading
+
+The chart's 256Mi request reserves four times the 61 Mi the repository
+measured with this cluster's objects present, and it is the single largest
+reservation on the node that no measurement supports. The reading is a
+working set, not idle: 61 Mi is the controller holding and having translated
+the objects it will ever hold here. Twice that, 128Mi as request and limit,
+keeps the plan's rule 7 and leaves a 67 Mi margin over the reading for
+informer resyncs and a leader-election renewal. The controller is a Go
+process, so the same soft limit that held Kratos applies: `GOMEMLIMIT` at 85%
+of the limit, 110MiB, through the chart's `deployment.envoyGateway.extraEnv`
+list (`charts/gateway-helm/values.tmpl.yaml`, "Additional environment
+variables for the envoy-gateway container"):
+
+```yaml
+# deploy/kubernetes/helmfile.yaml, envoy-gateway release values
+deployment:
+  envoyGateway:
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 128Mi }
+    extraEnv:
+      - name: GOMEMLIMIT
+        value: 110MiB
+```
+
+This is the one recommendation in the study that rests on a reading rather
+than on trials, and it is checkable in the place the reading came from:
+`mise run k8s:measure --namespace envoy-gateway-system` after the e2e suite
+has driven cert-manager's challenge route through the controller. If the
+peak there is over 100 Mi, the number is wrong and 256Mi stands.
+
+### The budget as it adds up
+
+Requests are what the scheduler reserves, so requests are what has to fit.
+Rows are the templates' current values, not the plan's table, which still
+says 512Mi for Postgres and 64Mi for the control plane.
+
+| Pod | today | proposed | source |
+| --- | --- | --- | --- |
+| kanae | 512Mi | 512Mi | `templates/kanae.yml` |
+| postgres | 1024Mi | 1024Mi | `templates/postgres.yml` |
+| kratos | 1024Mi | 1024Mi | table J, hasher halved, `GOMEMLIMIT=870MiB` |
+| keto | 256Mi | 256Mi | `templates/keto.yml` |
+| valkey | 256Mi | 256Mi | `templates/valkey.yml` |
+| envoy proxy pod | 64Mi + 32Mi | 64Mi + 32Mi | `envoy.yml` plus the shutdown-manager sidecar |
+| envoy gateway control plane | 256Mi | 128Mi | chart default; the reading above |
+| cert-manager, three pods | 224Mi | 224Mi | `helmfile.yaml` |
+| **steady state** | **3648Mi (3.56Gi)** | **3520Mi (3.44Gi)** | |
+| + one migration Job at deploy | 3904Mi (3.81Gi) | 3776Mi (3.69Gi) | `templates/jobs-migrate.yml` |
+
+The "3.6Gi" in circulation is the top row of the first column: Kratos at 1Gi,
+Postgres at 1Gi, the control plane at the chart's 256Mi, and the sidecar
+missing. A 4 GB node is 3815Mi before the kubelet and system reservations,
+and `kube-system` is not in the table at all: `DECISIONS.md` puts Cilium at
+about 200 Mi of use there. With the control plane at 128Mi, Kratos at 1.5Gi
+and today's hasher would total 4032Mi, which does not fit; with Postgres back
+at the plan's 512Mi it would total 3520Mi, which does. Those are the two
+levers the node has, and neither is the proxy.
+
+### What halving the hasher costs in security
+
+The question is whether `memory: 64MB`, `iterations: 6`, `parallelism: 3`
+leaves an attacker with an easier job than `128MB`, `3`, `16`. There are
+three standard ways to count an attacker's cost, and the halved hasher is
+equal or better on each.
+
+**Time per guess on hardware like ours.** The raw hash, timed on the same
+three idle CPUs the swarm used (median of 5 warm calls, `argonbench`):
+
+| setting | median | cold first call |
+| --- | --- | --- |
+| 128MB, 3 it, p=16 (today) | 187 ms | 574 ms |
+| 128MB, 3 it, p=3 | 187 ms | 560 ms |
+| 64MB, 6 it, p=3 (proposed) | 178 ms | 372 ms |
+| 64MB, 6 it, p=16 | 176 ms | 358 ms |
+
+An attacker with CPUs like ours makes guesses at the same rate against either
+hash, because $m \cdot t = 128 \times 3 = 64 \times 6 = 384$ MB-passes and the
+work is the same. The cold call is faster because the block being faulted in
+is half the size, which is the same reason the swarm's latencies fell.
+
+**Throughput on a bandwidth-bound cracker (GPU).** A GPU's rate is limited by
+memory bandwidth (the Argon2 specification's §2.1 puts it at about 400 GB/s), and each
+guess moves $m \cdot t$ bytes through it. Unchanged. A cracker with a fixed
+amount of memory can hold twice as many 64 MiB guesses in flight as 128 MiB
+ones, but each needs twice the passes, so guesses per second are unchanged
+there too. What is halved is the memory per guess as an absolute; that only
+helps an attacker whose platform is memory-capacity-bound rather than
+bandwidth-bound, which is the reading of "the point of argon2 is the memory"
+in `DECISIONS.md` that has substance.
+
+**Time-area product (ASIC).** The Argon2 specification's own cost measure
+(§2.1, [PHC Argon2 specification](https://github.com/P-H-C/phc-winner-argon2/blob/master/argon2-specs.pdf))
+is $A \cdot T$: the chip area $A$ scales with the memory $m$ and the running
+time $T$ with the longest sequential chain, which is $t$ passes over the
+$m/p$ blocks of one lane, since the $p$ lanes run side by side. So
+
+$$A \cdot T \propto m \times \frac{t\,m}{p}, \qquad
+\text{today: } 128 \times \frac{3 \times 128}{16} = 3072, \qquad
+\text{proposed: } 64 \times \frac{6 \times 64}{3} = 8192 .$$
+
+The proposed setting costs an ASIC attacker 2.7 times more per guess than
+today's, because `parallelism: 16` on a 3 vCPU node gave the defender nothing
+(table D: no difference in memory or throughput between 3 and 16) while
+handing an attacker 16 lanes to fill in parallel.
+
+**Against the floor.** OWASP's minimum for Argon2id is 19 MiB, 2 iterations,
+1 lane
+([OWASP Password Storage Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Password_Storage_Cheat_Sheet.md), "Argon2id").
+The proposal has 3.4 times the memory and, at $m \cdot t = 384$ against 38,
+ten times the work per guess.
+
+**In the context of this load.** The hash parameters govern offline cracking
+of a stolen table. Online guessing against the live service is governed by
+the rate limit in front of Kratos, 4 attempts per second across everyone,
+which no hash parameter changes. The reason to halve is that the 128 MiB
+block is what put Kratos at 113.5 Mi per in-flight signup and made 1Gi
+unsafe; halving it is what lets the node hold 10 in flight at 1Gi. The
+security trade is a smaller block per guess in exchange for twice the passes,
+and every cost model above says the attacker pays the same or more.
 
 ## Calibrating the hasher
 
@@ -679,6 +992,12 @@ $C_{\max}$; on this CPU that is under 6 per second, burst 8.
 - **Cgroup v1 versus v2.** `memory.max_usage_in_bytes` and `memory.peak`
   measure the same charged bytes, page cache included. The database is remote,
   so Kratos's own page cache is small.
+- **The Envoy configuration is a copy, not the controller's output.** Phase 8
+  wrote Envoy's static configuration by hand from Envoy Gateway's templates
+  and translator constants. The listener, routes, buffer limit and overload
+  manager match; the controller also adds access logging to stdout, a stats
+  sink and an xDS connection, none of which hold per-connection memory. The
+  control plane was not run at all.
 - **The webhook stub.** kanae's real webhook does a database insert and a
   Keto write. A slower webhook holds the flow open longer but the hash block
   is already freed by then, so its effect on peak memory is second order.
@@ -687,6 +1006,10 @@ $C_{\max}$; on this CPU that is under 6 per second, burst 8.
 
 Against the k3d cluster, port-forward `svc/kratos` and run
 `tests/load/locustfile.py` as its README shows, then `mise run k8s:measure`.
-The sandbox harness (cgroup wrapper, webhook and SMTP stubs, trial
-randomisation) is not committed because it assumes cgroup v1 and a local
-Postgres; the CSV beside this file has every trial's inputs and outputs.
+Through the Gateway, point `-H` at the Gateway's `/auth` and set
+`LOAD_CA_BUNDLE` to the local issuer's certificate; then
+`mise run k8s:measure --namespace envoy-gateway-system` for the proxy. The
+sandbox harness (cgroup wrapper, webhook and SMTP stubs, trial
+randomisation, the Envoy static configuration) is not committed because it
+assumes cgroup v1 and a local Postgres; the two CSVs beside this file have
+every trial's inputs and outputs.
