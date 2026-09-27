@@ -61,11 +61,11 @@ spec:
             - host=database
           resources:
             requests:
-              memory: 256Mi
+              memory: 128Mi
               cpu: 250m
               ephemeral-storage: 64Mi
             limits:
-              memory: 256Mi
+              memory: 128Mi
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false

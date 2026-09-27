@@ -10,6 +10,8 @@ kanae:
 
 gateway:
   hostname: kanae
+  authRateLimit:
+    requestsPerSecond: 50
   tls:
     provider: selfSigned
 

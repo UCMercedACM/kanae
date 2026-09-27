@@ -73,11 +73,11 @@ spec:
             - host={{ .Values.serviceNames.database }}
           resources:
             requests:
-              memory: 256Mi
+              memory: 128Mi
               cpu: 250m
               ephemeral-storage: 64Mi
             limits:
-              memory: 256Mi
+              memory: 128Mi
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
@@ -167,11 +167,11 @@ spec:
             - --yes
           resources:
             requests:
-              memory: 256Mi
+              memory: 64Mi
               cpu: 100m
               ephemeral-storage: 64Mi
             limits:
-              memory: 256Mi
+              memory: 64Mi
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
@@ -261,11 +261,11 @@ spec:
             - --yes
           resources:
             requests:
-              memory: 256Mi
+              memory: 64Mi
               cpu: 100m
               ephemeral-storage: 64Mi
             limits:
-              memory: 256Mi
+              memory: 64Mi
               ephemeral-storage: 128Mi
           securityContext:
             allowPrivilegeEscalation: false

@@ -1,0 +1,35 @@
+# Source: kanae/templates/routing.yml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: kratos-auth-limiter
+  namespace: kanae
+  annotations:
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/services"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: kanae
+  rateLimit:
+    type: Local
+    local:
+      rules:
+        - clientSelectors:
+            - methods:
+                - value: POST
+              path:
+                type: PathPrefix
+                value: /auth/self-service/registration
+          limit:
+            requests: 2
+            unit: Second
+        - clientSelectors:
+            - methods:
+                - value: POST
+              path:
+                type: PathPrefix
+                value: /auth/self-service/login
+          limit:
+            requests: 2
+            unit: Second

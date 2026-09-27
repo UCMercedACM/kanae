@@ -264,7 +264,7 @@ jobs:
 
       - name: Run tests
         run: |
-          hurl --test --insecure \
+          hurl --test --insecure --jobs 4 \
             --resolve kanae:443:127.0.0.1 --resolve kanae:80:127.0.0.1 \
             --variables-file deploy/kubernetes/tests/vars.env \
             --secrets-file deploy/kubernetes/tests/secrets.env \

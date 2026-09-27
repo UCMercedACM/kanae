@@ -41,6 +41,12 @@ releases:
             resources:
               requests:
                 cpu: 50m
+                memory: 128Mi
+              limits:
+                memory: 128Mi
+            extraEnv:
+              - name: GOMEMLIMIT
+                value: 110MiB
 
   - name: cert-manager
     namespace: cert-manager

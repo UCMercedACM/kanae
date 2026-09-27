@@ -22,6 +22,10 @@ kanae:
 gateway:
   className: kanae
   hostname: api.ucmacm.dev
+  authRateLimit:
+    # Derived from the worst case the load study measured, not picked by hand.
+    # See deploy/kubernetes/docs/kratos-load-study/KRATOS_MEMORY_LOAD_STUDY.md
+    requestsPerSecond: 2
   tls:
     provider: acme
     issuers:

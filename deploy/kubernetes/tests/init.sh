@@ -203,5 +203,5 @@ SCRATCH_ID=${IDS[scratch]}
 EOF
 
 log "cluster is now fully ready."
-log "hurl: hurl --test --insecure --resolve kanae:443:127.0.0.1 --resolve kanae:80:127.0.0.1 --variables-file $HURL_VARS --secrets-file $HURL_SECRETS_FILE deploy/kubernetes/tests/scenarios/*.hurl"
+log "hurl: hurl --test --insecure --jobs 4 --resolve kanae:443:127.0.0.1 --resolve kanae:80:127.0.0.1 --variables-file $HURL_VARS --secrets-file $HURL_SECRETS_FILE deploy/kubernetes/tests/scenarios/*.hurl"
 log "bats: bats --verbose-run deploy/kubernetes/tests"
