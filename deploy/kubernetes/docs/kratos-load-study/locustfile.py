@@ -42,7 +42,8 @@ SEED = int(os.environ.get("LOAD_SEED", "1"))
 DOMAIN = os.environ.get("LOAD_EMAIL_DOMAIN", "ucmerced.edu")
 CA_BUNDLE = os.environ.get("LOAD_CA_BUNDLE", "")
 
-_rng = random.Random(SEED)  # noqa: S311 - load pacing, not security
+# load pacing, not security
+_rng = random.Random(SEED)  # noqa: S311
 
 
 def exp_wait(user: HttpUser) -> float:

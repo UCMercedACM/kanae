@@ -727,7 +727,7 @@ limit unless stated.
 | kanae | 640Mi | `templates/kanae.yml`; measured peak 385 Mi |
 | postgres | 1024Mi (the plan's table says 512Mi) | `templates/postgres.yml` |
 | kratos | 1024Mi, `GOMEMLIMIT=750MiB`, hasher 64MB/6/p3 | `templates/kratos.yml`; Tables 11 and 13 |
-| keto | 128Mi | `templates/keto.yml`; measured peak 24 Mi |
+| keto | 128Mi | `templates/keto.yml`; measured peak 32 Mi |
 | valkey | 256Mi | `templates/valkey.yml` |
 | envoy proxy, `envoy` | 64Mi | `envoy.yml`; Table 14 |
 | envoy proxy, `shutdown-manager` | 32Mi request, no limit | not settable through `EnvoyProxy` |
@@ -739,15 +739,16 @@ limit unless stated.
 | Cilium agent and operator | no request, about 200Mi in use | `helmfile.yaml`; `DECISIONS.md` |
 | **everything the scheduler counts** | **3660Mi (3.57Gi)** | |
 
-Deploy time adds one 256Mi migration Job at a time, 3916Mi, because the
-apply order finishes each Job before app pods schedule and kanae uses
-`strategy: Recreate`. Kratos at 1.5Gi would total 4172Mi. What the node
+Deploy time adds the three migration Jobs, which run together: 128Mi for
+Atlas and 64Mi each for Kratos and Keto, measured at 66, 48 and 21 Mi
+against empty databases. That is 3916Mi, because the apply order finishes
+the Jobs before app pods schedule and kanae uses `strategy: Recreate`. Kratos at 1.5Gi would total 4172Mi. What the node
 offers is the `Allocatable` the plan says to copy from
 `kubectl describe node`, which has not been written down. Two bounds, using
 the kubelet's default eviction threshold of `memory.available<100Mi` (The
 Kubernetes Authors, 2026b) and no other reservation:
 
-| node | allocatable | headroom at steady state | during a migration Job | Kratos at 1.5Gi |
+| node | allocatable | headroom at steady state | during migrations | Kratos at 1.5Gi |
 | --- | --- | --- | --- | --- |
 | 4 GiB (4096Mi) | 3996Mi | 336Mi | 80Mi | 176Mi short, Pending |
 | 4 GB decimal (3815Mi) | 3715Mi | 55Mi | 201Mi short, Pending at deploy | 457Mi short |
