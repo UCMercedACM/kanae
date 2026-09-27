@@ -270,11 +270,11 @@ than scattered across five phases.
 
 | Pod | Request = limit | Basis |
 | --- | --- | --- |
-| kanae | 512Mi | Phase 7 estimate |
-| postgres | 1Gi | Phase 4 estimate |
+| kanae | 640Mi | Measured peak 385Mi under e2e and signup load |
+| postgres | 1Gi | Measured peak 274Mi on test data |
 | kratos | 1Gi, `GOMEMLIMIT=750MiB` | Measured: `deploy/kubernetes/docs/kratos-load-study/` |
-| keto | 256Mi | Phase 6 estimate |
-| valkey | 256Mi | Phase 4 estimate |
+| keto | 128Mi | Measured peak 24Mi |
+| valkey | 256Mi | `maxmemory 128mb` plus overhead; 7Mi measured on an empty cache |
 | envoy proxy pod: `envoy` 64Mi, `shutdown-manager` 32Mi request | 96Mi | Measured; the controller fixes the sidecar |
 | envoy gateway control plane | 128Mi, `GOMEMLIMIT=110MiB` | 61Mi reading with this cluster's objects |
 | cert-manager controller | 64Mi | Phase 8 estimate |
@@ -286,7 +286,7 @@ than scattered across five phases.
 
 A pod's effective request is the larger of its biggest init container and the
 sum of its app containers. kanae's 64Mi init container therefore adds nothing on
-top of its 512Mi app container. Init containers are free unless they are the
+top of its 640Mi app container. Init containers are free unless they are the
 biggest thing in the pod.
 
 ### Deploy-time peak
@@ -313,9 +313,8 @@ first deploy. Kratos at 1.5Gi fits on neither.
   section below.
 - The borgmatic CronJob is not in the table. A backup firing mid-deploy competes
   for the same headroom, so schedule it away from deploy windows.
-- Measure kanae, postgres, keto and valkey with `k8s:measure` under load and
-  replace their rows. Do not change the kratos row without re-running the
-  load study.
+- Re-measure Postgres once production data exists. Its row rests on test
+  data. Do not change the kratos row without re-running the load study.
 - Keep `gateway.authRateLimit.requestsPerSecond` at or under the value the
   load study derives. It is what holds Kratos under the 8 hashes in flight
   its limit was sized for.
@@ -1721,10 +1720,8 @@ are six real messages that will happen again.
       failure and very little else.
 - [x] Replace the Kratos and Envoy estimates with the numbers the load study
       measured, keep request and limit equal, and re-total the node budget.
-- [ ] Measure kanae, postgres, keto and valkey with `k8s:measure` under load
-      and replace their rows. Set both request and limit above the observed
-      peak rather than the steady state, because the limit is what the pod is
-      killed for exceeding.
+- [x] Measure kanae, Postgres, Keto and Valkey under the e2e suite and the
+      signup load, and set request and limit above the observed peak.
 - [x] Re-total the CPU budget from the templates as they stand, and leave CPU
       limits unset. The table above is the reservation; the reason the limits
       are absent is written beside it.

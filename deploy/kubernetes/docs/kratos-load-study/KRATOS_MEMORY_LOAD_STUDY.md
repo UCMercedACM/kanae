@@ -724,10 +724,10 @@ limit unless stated.
 
 | pod, container | this branch | source |
 | --- | --- | --- |
-| kanae | 512Mi | `templates/kanae.yml` |
+| kanae | 640Mi | `templates/kanae.yml`; measured peak 385 Mi |
 | postgres | 1024Mi (the plan's table says 512Mi) | `templates/postgres.yml` |
 | kratos | 1024Mi, `GOMEMLIMIT=750MiB`, hasher 64MB/6/p3 | `templates/kratos.yml`; Tables 11 and 13 |
-| keto | 256Mi | `templates/keto.yml` |
+| keto | 128Mi | `templates/keto.yml`; measured peak 24 Mi |
 | valkey | 256Mi | `templates/valkey.yml` |
 | envoy proxy, `envoy` | 64Mi | `envoy.yml`; Table 14 |
 | envoy proxy, `shutdown-manager` | 32Mi request, no limit | not settable through `EnvoyProxy` |
