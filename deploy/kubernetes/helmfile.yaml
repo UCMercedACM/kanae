@@ -30,7 +30,7 @@ releases:
   - name: envoy-gateway
     namespace: envoy-gateway-system
     chart: envoyproxy/gateway-helm
-    version: v1.9.1
+    version: 1.9.2
     labels:
       tier: controllers
     needs:
