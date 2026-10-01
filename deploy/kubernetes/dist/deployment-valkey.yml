@@ -49,7 +49,7 @@ spec:
           type: container_t
       containers:
         - name: valkey
-          image: "valkey/valkey:9-alpine@sha256:ccfa19b0d743e48927e1c8c14e39e0acb97b5cea347fef0bfe340247fea920cd"
+          image: "valkey/valkey:9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"
           imagePullPolicy: IfNotPresent
           args: ["valkey-server", "--aclfile", "/run/secrets/users.acl", "--protected-mode", "no", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-ttl"]
           ports:
