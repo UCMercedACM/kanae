@@ -108,7 +108,7 @@ services:
   mailpit:
     <<: *hard
     container_name: kanae_mailpit
-    image: axllent/mailpit:latest@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24
+    image: axllent/mailpit:latest@sha256:ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d
     ports:
       - "127.0.0.1:8025:8025"
       - "127.0.0.1:1025:1025"

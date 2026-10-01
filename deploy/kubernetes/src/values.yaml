@@ -39,14 +39,14 @@ gateway:
 postgres:
   image:
     repository: postgres
-    tag: "18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+    tag: "18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722"
   storageClass: scw-bssd-retain
   storage: 10Gi
 
 valkey:
   image:
     repository: valkey/valkey
-    tag: "9-alpine@sha256:ccfa19b0d743e48927e1c8c14e39e0acb97b5cea347fef0bfe340247fea920cd"
+    tag: "9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"
   maxmemory: 128mb
 
 ory:
