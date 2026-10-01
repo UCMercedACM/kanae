@@ -80,7 +80,7 @@ services:
 
   valkey:
     container_name: kanae_valkey
-    image: valkey/valkey:9-alpine@sha256:ccfa19b0d743e48927e1c8c14e39e0acb97b5cea347fef0bfe340247fea920cd
+    image: valkey/valkey:9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
     command: >
       valkey-server --aclfile /run/secrets/users.acl --protected-mode no
       --maxmemory 256mb --maxmemory-policy volatile-ttl
@@ -97,7 +97,7 @@ services:
 
   migrate:
     container_name: kanae_migrate
-    image: arigaio/atlas:latest@sha256:d08183f70aa37ae1668ded9e3d88a028c867824168cd2262e69874d59bcff0a0
+    image: arigaio/atlas:latest@sha256:c8b27816551079f8d673cef6d15b1930eb70571d269b45a3fca186417b16bda3
     command: >
       schema apply
       --auto-approve
