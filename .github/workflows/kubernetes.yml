@@ -15,7 +15,7 @@ on:
 jobs:
   Changes:
     name: Determine Changes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     permissions:
       contents: read
@@ -54,7 +54,7 @@ jobs:
 
   Check:
     name: Check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     needs: Changes
     if: ${{ needs.Changes.outputs.kubernetes == 'true' }}
@@ -176,7 +176,7 @@ jobs:
 
   Test:
     name: Test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     needs: Changes
     if: ${{ needs.Changes.outputs.kubernetes == 'true' || github.event_name == 'schedule' }}
@@ -197,7 +197,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "latest"
           enable-cache: true
@@ -282,7 +282,7 @@ jobs:
 
   Render:
     name: Render
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     needs: Changes
 
