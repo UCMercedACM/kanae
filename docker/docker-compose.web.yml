@@ -7,7 +7,7 @@ include:
 services:
   chapter-website:
     container_name: chapter_website
-    image: ghcr.io/ucmercedacm/chapter-website:edge@sha256:09d62d78aa8dee7d586c7fe0f74a459d086919c30eb366750e1d31d07b42f000
+    image: ghcr.io/ucmercedacm/chapter-website:edge@sha256:93c149c132bc99483de23b549805465d77a61ccc04567ceaa207480a8bd88611
     ports:
       - 5173:8080
     depends_on:
