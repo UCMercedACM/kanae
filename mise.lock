@@ -335,7 +335,17 @@ checksum = "sha256:bc4732df4754748e9bf296aa3832ec019f798afb399f1279b72ed37b6e045
 url = "https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-aarch64-unknown-linux-gnu.tar.gz"
 url_api = "https://api.github.com/repos/Orange-OpenSource/hurl/releases/assets/407509616"
 
+[tools.hurl."platforms.linux-arm64-musl"]
+checksum = "sha256:bc4732df4754748e9bf296aa3832ec019f798afb399f1279b72ed37b6e04525c"
+url = "https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/Orange-OpenSource/hurl/releases/assets/407509616"
+
 [tools.hurl."platforms.linux-x64"]
+checksum = "sha256:cac7c4670d69444db120edb21fe06c97ba8c80dcc52279957c8dd18f05fb0c06"
+url = "https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/Orange-OpenSource/hurl/releases/assets/407509607"
+
+[tools.hurl."platforms.linux-x64-musl"]
 checksum = "sha256:cac7c4670d69444db120edb21fe06c97ba8c80dcc52279957c8dd18f05fb0c06"
 url = "https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz"
 url_api = "https://api.github.com/repos/Orange-OpenSource/hurl/releases/assets/407509607"
