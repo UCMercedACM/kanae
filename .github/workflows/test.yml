@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ["3.13", "3.14", "3.15-rc.3"]
+        version: ["3.13", "3.14", "3.15.0-rc.3"]
 
     env:
       TESTCONTAINER_DOCKER_NETWORK: kanae-testcontainers
