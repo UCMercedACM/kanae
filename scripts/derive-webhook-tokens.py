@@ -65,7 +65,7 @@ def main(config_path: Path, *, stdin: bool) -> None:
         msg = f"Config could not be found: {config_path}"
         raise RuntimeError(msg)
 
-    config: dict[str, Any] = yaml.safe_load(config_path.read_bytes())
+    config: dict[str, Any] = yaml.load(config_path.read_bytes(), yaml.CSafeLoader)
 
     _hex = config["ory"]["kratos_webhook_master_key"]
 
