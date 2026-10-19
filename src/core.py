@@ -287,7 +287,7 @@ class KanaeConfig(BaseModel):
             raise FileNotFoundError(msg)
 
         with path.open() as f:
-            decoded = yaml.safe_load(f.read())
+            decoded = yaml.load(f.read(), yaml.CSafeLoader)
             return cls(**decoded)
 
 
