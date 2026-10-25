@@ -18,7 +18,7 @@ dependencies = [
   "orjson~=3.13.0",
   "prometheus-fastapi-instrumentator~=8.1.0",
   "pybase62~=1.0.0",
-  "python-dateutil~=3.0.0",
+  "python-dateutil==2.9.0.post0",
   "pyvips[binary]~=3.2.0",
   "pyyaml~=6.0.3",
   "uvloop~=0.23.0; sys_platform != 'win32'",
