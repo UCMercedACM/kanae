@@ -19,7 +19,7 @@ releases:
   - name: cilium
     namespace: kube-system
     chart: cilium/cilium
-    version: 1.20.2
+    version: 1.20.4
     values:
       - operator:
           replicas: 1
@@ -30,7 +30,7 @@ releases:
   - name: envoy-gateway
     namespace: envoy-gateway-system
     chart: envoyproxy/gateway-helm
-    version: 1.9.2
+    version: 1.9.3
     labels:
       tier: controllers
     needs:
@@ -51,7 +51,7 @@ releases:
   - name: cert-manager
     namespace: cert-manager
     chart: jetstack/cert-manager
-    version: v1.21.2
+    version: v1.21.3
     labels:
       tier: controllers
     needs:
