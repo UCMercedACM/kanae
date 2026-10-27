@@ -27,6 +27,9 @@ options:
       - arg: --disable=traefik
         nodeFilters:
           - server:*
+      - arg: --disable=gateway-api-crd
+        nodeFilters:
+          - server:*
       - arg: --flannel-backend=none
         nodeFilters:
           - server:*
