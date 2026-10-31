@@ -41,6 +41,7 @@ jobs:
               - '.kube-linter.yml'
               - '.kubescape/**'
               - 'deploy/kubernetes/**'
+              - 'docker/borgmatic/**'
               - 'docker/ory/**'
               - 'docker/postgres/**'
               - 'docker/valkey/**'

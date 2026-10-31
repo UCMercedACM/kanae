@@ -165,6 +165,8 @@ spec:
               value: /run/secrets/KETO_PASSWORD
             - name: POSTGRES_MONITOR_PASSWORD_FILE
               value: /run/secrets/POSTGRES_MONITOR_PASSWORD
+            - name: POSTGRES_BACKUP_PASSWORD_FILE
+              value: /run/secrets/POSTGRES_BACKUP_PASSWORD
             - name: KANAE_MIGRATE_PASSWORD_FILE
               value: /run/secrets/KANAE_MIGRATE_PASSWORD
             - name: KRATOS_MIGRATE_PASSWORD_FILE
@@ -252,6 +254,11 @@ spec:
                   items:
                     - key: POSTGRES_MONITOR_PASSWORD
                       path: POSTGRES_MONITOR_PASSWORD
+              - secret:
+                  name: postgres-backup-db
+                  items:
+                    - key: POSTGRES_BACKUP_PASSWORD
+                      path: POSTGRES_BACKUP_PASSWORD
               - secret:
                   name: kanae-migrate-db
                   items:

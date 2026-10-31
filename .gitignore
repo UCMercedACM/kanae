@@ -140,6 +140,9 @@ venv.bak/
 config.yml
 config.yaml
 
+# Include Borgmatic's config
+!docker/borgmatic/config.yml
+
 # Spyder project settings
 .spyderproject
 .spyproject

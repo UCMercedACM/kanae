@@ -69,6 +69,13 @@ migrate:
       repository: arigaio/atlas
       tag: "1.3.3-distroless@sha256:07f3f92fa46e684ed789d5ef344a25494a4fa6844ef1ea1fa4e138522c2c37ac"
 
+backup:
+  borgmatic:
+    schedule: "47 10 * * *"
+    image:
+      repository: ghcr.io/borgmatic-collective/borgmatic
+      tag: "2.1.10@sha256:25a97d84a2371c385c0031a02b64f7167de85631a85b84ef46dc01a80010d19e"
+
 # We do not render any secrets as we would be commiting secrets
 # Rendering the secrets is the last step, and we pipe in our decrypted
 # secrets in order to produce a final build that can be applied correctly
@@ -81,6 +88,7 @@ secrets:
   kratosPassword: ""
   ketoPassword: ""
   postgresMonitorPassword: ""
+  postgresBackupPassword: ""
   kanaeMigratePassword: ""
   kratosMigratePassword: ""
   ketoMigratePassword: ""
@@ -93,5 +101,6 @@ secrets:
   storageKeyId: ""
   storageSecretKey: ""
   borgPassphrase: ""
-  borgS3AccessKey: ""
-  borgS3SecretKey: ""
+  borgRepo: ""
+  borgSshKey: ""
+  borgKnownHosts: ""

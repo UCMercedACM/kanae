@@ -302,6 +302,23 @@ The three Jobs run together, so a deploy peaks at 3916Mi. `strategy: Recreate`
 on kanae removes the rolling surge, and the apply order finishes the Jobs
 before app pods schedule.
 
+### Backup-time
+
+| Pod | Request = limit | Set in |
+| --- | --- | --- |
+| kanae-backup CronJob, `borgmatic` | 256Mi | `templates/backup-borgmatic.yml` |
+| kanae-snapshot Job, `borgmatic` | 256Mi | `templates/backup-borgmatic.yml` |
+
+Every backup pod reserves 256Mi, which leaves 80Mi free at steady state and
+would leave nothing at deploy time. The snapshot Job does not stack with the migration wave:
+its change-group orders it before `kanae/schemas`, and kapp waits for it to
+finish, so a deploy still peaks at 3916Mi. The CronJob fires at 10:47 UTC, well
+clear of any deploy.
+
+These two figures are estimates, not measurements: no backup pod has run yet.
+Re-measure them with `mise run k8s:measure` on the first nights a backup runs,
+and change this table and the template together.
+
 ### Headroom
 
 | Node | Allocatable | Steady state | Deploy |
@@ -320,8 +337,9 @@ before the first deploy.
 - Exceeding a memory limit kills the container, so an unset limit lets one
   leaking pod take the node down. CPU is the opposite case and has its own
   section below.
-- The borgmatic CronJob is not in the table. A backup firing mid-deploy competes
-  for the same headroom, so schedule it away from deploy windows.
+- The backup CronJob is in the backup-time table. A backup firing mid-deploy
+  competes for the same headroom, so keep its schedule away from deploy
+  windows.
 - Re-measure Postgres once production data exists.
 - Do not change the kratos row or `gateway.authRateLimit.requestsPerSecond`
   without re-running `deploy/kubernetes/docs/kratos-load-study/`.
@@ -367,7 +385,7 @@ local-path-provisioner, which reserve roughly 200m, so about 2800m is usable.
 | keto-migrate Job | 100m | `templates/jobs-migrate.yml` |
 | postgres `check-version` init container | 50m | `templates/postgres.yml` |
 | postgres-checksum CronJob | 50m | `templates/postgres.yml` |
-| borgmatic, CronJob and pre-upgrade | 250m | Phase 10 |
+| database CronJob and snapshot Job (`borgmatic`) | 250m each | `templates/backup-borgmatic.yml` |
 
 The migration wave adds 450m, so a deploy peaks at 2360m. A backup landing on
 top of one reaches 2610m, which fits under 2800m.
@@ -1686,34 +1704,34 @@ are six real messages that will happen again.
 
 ### Tasks
 
-- [ ] Check which Borg version the backup image ships, then set
+- [x] Check which Borg version the backup image ships, then set
       `backup.repository` in
       `deploy/kubernetes/src/templates/backup-borgmatic.yml` to match what it
       can actually write to.
-- [ ] Write the borgmatic config ConfigMap. The chart expects a ConfigMap named
+- [x] Write the borgmatic config ConfigMap. The chart expects a ConfigMap named
       by `backup.configMap` and the config itself does not exist yet.
-- [ ] Rescue the `kanae-backup-preupgrade` Job in the same file. It is a
+- [x] Rescue the `kanae-backup-preupgrade` Job in the same file. It is a
       `pre-upgrade` Helm hook that archives the database moments before Atlas
       applies its `--auto-approve` diff, and hooks are inert once Helm stops
       installing. Strip its hook annotations, mark it
       `kapp.k14s.io/versioned`, and give it a change-group before
       `kanae/schemas`.
-- [ ] Treat that Job as part of the migration safety story, not the backup
+- [x] Treat that Job as part of the migration safety story, not the backup
       story. Phase 5 dropped its pre-merge DDL review, so this is the only
       thing between an `--auto-approve` diff and a column that is already
       gone.
-- [ ] Set 250m CPU on both borgmatic pods. See the CPU budget.
-- [ ] Confirm the backup credential environment variable names against the
+- [x] Set 250m CPU on both borgmatic pods. See the CPU budget.
+- [ ] ~~Confirm the backup credential environment variable names against the
       image. HANDOFF.md records that `AWS_ACCESS_KEY_ID` and
       `AWS_SECRET_ACCESS_KEY` are a guess, based on what rclone, borgstore, and
-      boto read.
-- [ ] Restore from a backup by hand once, then write it as a script so it can be
+      boto read.~~ Dropped because the backups go to BorgBase over SSH, not S3.
+- [x] Restore from a backup by hand once, then write it as a script so it can be
       done again under pressure.
-- [ ] Record the backup layout against 3-2-1 in
+- [x] Record the backup layout against 3-2-1 in
       `deploy/kubernetes/DECISIONS.md`: which copy is which, and which leg this
       setup does not meet. A policy nobody has written down is a policy nobody
       can audit.
-- [ ] Put the offsite copy somewhere that is not the cluster's provider. A
+- [x] Put the offsite copy somewhere that is not the cluster's provider. A
       backup held on the same account as the thing it protects survives a disk
       failure and very little else.
 - [x] Measure every pod and migration Job under the e2e suite and the signup
@@ -1746,7 +1764,7 @@ are six real messages that will happen again.
 - [ ] Keep one break-glass age key, passphrase-wrapped and held outside any
       officer's laptop. It is what survives four officers graduating in the same
       year.
-- [ ] Decide what protects uploaded media. The 3-2-1 layout covers Postgres
+- [x] Decide what protects uploaded media. The 3-2-1 layout covers Postgres
       only, and nothing here backs up the R2 buckets. R2 has its own durability,
       so the question is deletion rather than disk failure.
 

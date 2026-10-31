@@ -16,5 +16,8 @@ secrets=$(sops --decrypt deploy/kubernetes/secrets.sops.yml \
 	| helm template kanae deploy/kubernetes/src --namespace kanae \
 		--set renderSecrets=true --values - --show-only templates/secrets.yml)
 
+kubectl -n kanae delete jobs -l app.kubernetes.io/component=snapshot \
+	--field-selector status.successful=0 --ignore-not-found
+
 log "handing them to kapp beside deploy/kubernetes/dist"
 kapp deploy --yes -a kanae -n kanae -c -f deploy/kubernetes/dist -f <(printf '%s\n' "$secrets")

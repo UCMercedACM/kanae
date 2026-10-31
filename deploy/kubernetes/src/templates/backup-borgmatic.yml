@@ -1,0 +1,266 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kanae-borgmatic
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kapp.k14s.io/change-group: "kanae/config"
+data:
+  config.yml: |
+    {{- include "kanae.file" (list . "borgmatic/config.yml") | nindent 4 }}
+  ssh_config: |
+    {{- include "kanae.file" (list . "borgmatic/ssh/config") | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kanae-backup
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kanae-backup
+    app.kubernetes.io/name: kanae-backup
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: backup
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+    ignore-check.kube-linter.io/run-as-non-root: "the borgmatic image runs only as root"
+spec:
+  schedule: {{ .Values.backup.borgmatic.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app: kanae-backup
+            app.kubernetes.io/name: kanae-backup
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/version: {{ .Chart.Version | quote }}
+            app.kubernetes.io/component: backup
+            app.kubernetes.io/part-of: kanae
+            app.kubernetes.io/managed-by: {{ .Release.Service }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          hostUsers: false
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              type: container_t
+          containers:
+            - name: borgmatic
+              image: "{{ .Values.backup.borgmatic.image.repository }}:{{ .Values.backup.borgmatic.image.tag }}"
+              imagePullPolicy: IfNotPresent
+              command: ["borgmatic"]
+              args:
+                - create
+                - --stats
+                - prune
+                - compact
+              env:
+                - name: PGCONNECT_TIMEOUT
+                  value: "10"
+              resources:
+                requests:
+                  memory: 256Mi
+                  cpu: 250m
+                  ephemeral-storage: 64Mi
+                limits:
+                  memory: 256Mi
+                  ephemeral-storage: 512Mi
+              securityContext:
+                runAsNonRoot: false
+                runAsUser: 0
+                runAsGroup: 0
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/borgmatic
+                  readOnly: true
+                - name: secrets
+                  mountPath: /run/secrets
+                  readOnly: true
+                - name: run
+                  mountPath: /run/borgmatic
+                - name: state
+                  mountPath: /var/lib/borgmatic
+                - name: borg
+                  mountPath: /var/lib/borg
+                - name: cache
+                  mountPath: /var/cache/borg
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: config
+              configMap:
+                name: kanae-borgmatic
+                items:
+                  - key: config.yml
+                    path: config.yaml
+                  - key: ssh_config
+                    path: ssh/config
+            - name: secrets
+              projected:
+                defaultMode: 0400
+                sources:
+                  - secret:
+                      name: kanae-borg
+                  - secret:
+                      name: postgres-backup-db
+                      items:
+                        - key: POSTGRES_BACKUP_PASSWORD
+                          path: POSTGRES_BACKUP_PASSWORD
+            - name: run
+              emptyDir:
+                sizeLimit: 16Mi
+            - name: state
+              emptyDir:
+                sizeLimit: 16Mi
+            - name: borg
+              emptyDir:
+                sizeLimit: 16Mi
+            - name: cache
+              emptyDir:
+                sizeLimit: 384Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kanae-snapshot
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: kanae-backup
+    app.kubernetes.io/name: kanae-backup
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | quote }}
+    app.kubernetes.io/component: snapshot
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    kapp.k14s.io/versioned: ""
+    kapp.k14s.io/num-versions: "2"
+    kapp.k14s.io/change-group: "kanae/snapshot"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+    ignore-check.kube-linter.io/run-as-non-root: "the borgmatic image runs only as root; see DECISIONS.md, \"borgmatic runs as root in a user namespace\""
+    kapp.k14s.io/change-rule.schemas: "upsert before upserting kanae/schemas"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 840
+  template:
+    metadata:
+      labels:
+        app: kanae-backup
+        app.kubernetes.io/name: kanae-backup
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/version: {{ .Chart.Version | quote }}
+        app.kubernetes.io/component: snapshot
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+      annotations:
+        checksum/migrations: {{ include (print .Template.BasePath "/jobs-migrate.yml") . | sha256sum }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      hostUsers: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
+      containers:
+        - name: borgmatic
+          image: "{{ .Values.backup.borgmatic.image.repository }}:{{ .Values.backup.borgmatic.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command: ["borgmatic"]
+          args:
+            - create
+            - --stats
+            - --archive-name-format
+            - kanae-db-snapshot-{now:%Y-%m-%dT%H:%M:%S}
+          env:
+            - name: PGCONNECT_TIMEOUT
+              value: "10"
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 512Mi
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/borgmatic
+              readOnly: true
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: run
+              mountPath: /run/borgmatic
+            - name: state
+              mountPath: /var/lib/borgmatic
+            - name: borg
+              mountPath: /var/lib/borg
+            - name: cache
+              mountPath: /var/cache/borg
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: kanae-borgmatic
+            items:
+              - key: config.yml
+                path: config.yaml
+              - key: ssh_config
+                path: ssh/config
+        - name: secrets
+          projected:
+            defaultMode: 0400
+            sources:
+              - secret:
+                  name: kanae-borg
+              - secret:
+                  name: postgres-backup-db
+                  items:
+                    - key: POSTGRES_BACKUP_PASSWORD
+                      path: POSTGRES_BACKUP_PASSWORD
+        - name: run
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: state
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: borg
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: cache
+          emptyDir:
+            sizeLimit: 384Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

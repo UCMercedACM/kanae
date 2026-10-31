@@ -1,0 +1,33 @@
+repositories: !include /run/secrets/BORG_REPOSITORIES
+
+encryption_passphrase: "{credential file /run/secrets/BORG_PASSPHRASE}"
+ssh_command: ssh -F /etc/borgmatic/ssh/config
+
+archive_name_format: kanae-db-{now:%Y-%m-%dT%H:%M:%S}
+
+user_runtime_directory: /run/borgmatic
+user_state_directory: /var/lib/borgmatic
+borg_config_directory: /var/lib/borg
+borg_cache_directory: /var/cache/borg
+
+lock_wait: 600
+verbosity: 1
+keep_daily: 7
+keep_weekly: 4
+
+postgresql_databases:
+  - name: kanae
+    hostname: database
+    username: kanae_backup
+    password: "{credential file /run/secrets/POSTGRES_BACKUP_PASSWORD}"
+    format: custom
+  - name: kratos
+    hostname: database
+    username: kanae_backup
+    password: "{credential file /run/secrets/POSTGRES_BACKUP_PASSWORD}"
+    format: custom
+  - name: keto
+    hostname: database
+    username: kanae_backup
+    password: "{credential file /run/secrets/POSTGRES_BACKUP_PASSWORD}"
+    format: custom

@@ -134,5 +134,30 @@
         "controlID": "C-0299"
       }
     ]
+  },
+  {
+    "name": "borgmatic-is-root-in-a-user-namespace",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "disable"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "namespace": "kanae",
+          "kind": "(Job|CronJob)",
+          "name": "^kanae-(backup|snapshot)$"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0013"
+      },
+      {
+        "controlID": "C-0211"
+      }
+    ]
   }
 ]

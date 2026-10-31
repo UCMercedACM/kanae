@@ -12,6 +12,7 @@
     "valkey",
     "ory",
     "migrate",
+    "backup",
     "renderSecrets",
     "secrets"
   ],
@@ -26,6 +27,26 @@
       }
     },
     "secret": { "type": "string" },
+    "sshPrivateKey": {
+      "description": "A PKCS#8 or OpenSSH private key: lines of base64 between its BEGIN and END lines. Empty when the value is supplied at render time. init.sh generates it as PKCS#8; the public half is registered at BorgBase.",
+      "type": "string",
+      "pattern": "^(-----BEGIN (OPENSSH )?PRIVATE KEY-----\\n([A-Za-z0-9+/=]+\\n)+-----END (OPENSSH )?PRIVATE KEY-----\\n?)?$"
+    },
+    "cron": {
+      "description": "Five fields of digits, *, /, comma and dash. Names and macros are refused so the schedule reads the same everywhere.",
+      "type": "string",
+      "pattern": "^[0-9*/,-]+( [0-9*/,-]+){4}$"
+    },
+    "borgRepositoryUrl": {
+      "description": "The Borg repository's full URL, as BorgBase shows it, or empty when the value is supplied at render time.",
+      "type": "string",
+      "pattern": "^(ssh://[a-z0-9]+@[a-z0-9.-]+(:[1-9][0-9]{0,4})?/\\S+)?$"
+    },
+    "knownHostsLine": {
+      "description": "The repository host's line of ssh-keyscan output, or empty when the value is supplied at render time.",
+      "type": "string",
+      "pattern": "^(\\S+ ssh-(ed25519|rsa) [A-Za-z0-9+/=]+)?$"
+    },
     "serviceName": {
       "description": "RFC 1035 label. A dnsLabel that must begin with a letter, which Service names require.",
       "type": "string",
@@ -249,6 +270,22 @@
         }
       }
     },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["borgmatic"],
+      "properties": {
+        "borgmatic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schedule", "image"],
+          "properties": {
+            "schedule": { "$ref": "#/$defs/cron" },
+            "image": { "$ref": "#/$defs/image" }
+          }
+        }
+      }
+    },
     "renderSecrets": { "type": "boolean" },
     "secrets": {
       "type": "object",
@@ -275,9 +312,11 @@
         },
         "storageKeyId": { "$ref": "#/$defs/secret" },
         "storageSecretKey": { "$ref": "#/$defs/secret" },
+        "postgresBackupPassword": { "$ref": "#/$defs/secret" },
         "borgPassphrase": { "$ref": "#/$defs/secret" },
-        "borgS3AccessKey": { "$ref": "#/$defs/secret" },
-        "borgS3SecretKey": { "$ref": "#/$defs/secret" }
+        "borgRepo": { "$ref": "#/$defs/borgRepositoryUrl" },
+        "borgSshKey": { "$ref": "#/$defs/sshPrivateKey" },
+        "borgKnownHosts": { "$ref": "#/$defs/knownHostsLine" }
       }
     }
   }
