@@ -84,7 +84,7 @@ setup_file() {
 	kubectl -n "$NAMESPACE" wait --for=condition=Ready pod/borg-server --timeout=180s >/dev/null
 	server_borg init --encryption repokey-blake2 /home/borg/repo
 
-	REPO="ssh://borg@$SERVER/./repo" KNOWN="$SERVER $(cut -d' ' -f1,2 "$BATS_FILE_TMPDIR/host_key.pub")" \
+	REPO="ssh://borg@$SERVER:10022/./repo" KNOWN="[$SERVER]:10022 $(cut -d' ' -f1,2 "$BATS_FILE_TMPDIR/host_key.pub")" \
 		yq -i '.secrets.borgRepo = strenv(REPO) | .secrets.borgKnownHosts = strenv(KNOWN)' "$BATS_FILE_TMPDIR/secrets.yml"
 
 	# The first deploy with the backups in creates kanae-snapshot, so the

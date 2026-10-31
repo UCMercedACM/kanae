@@ -75,8 +75,14 @@ kube() { kubectl -n "$NAMESPACE" "$@"; }
 pg() { kube exec statefulset/database -c postgres -- env PGOPTIONS='-c client_min_messages=warning' psql -U postgres -v ON_ERROR_STOP=1 -tAq "$@"; }
 pg_restore() { kube exec -i statefulset/database -c postgres -- pg_restore -U postgres --exit-on-error "$@"; }
 borg() { kube exec -i "$POD" -c borgmatic -- borgmatic --verbosity -1 borg "$@"; }
-dump() { borg extract --stdout "::$ARCHIVE" "${DUMP[$1]}"; }
-suspend_backups() { kube patch cronjob kanae-backup -p "{\"spec\":{\"suspend\":$1}}" >/dev/null; }
+dump() {
+	local db=$1
+	borg extract --stdout "::$ARCHIVE" "${DUMP[$db]}"
+}
+suspend_backups() {
+	local suspend=$1
+	kube patch cronjob kanae-backup -p "{\"spec\":{\"suspend\":$suspend}}" >/dev/null
+}
 
 REPLICAS=()
 finish() {
@@ -165,7 +171,10 @@ read -ra REPLICAS <<<"$(kube get deployment "${SERVICES[@]}" -o jsonpath='{.item
 log "suspending the backup CronJob and scaling ${SERVICES[*]} to zero"
 suspend_backups true
 kube scale deployment "${SERVICES[@]}" --replicas=0 >/dev/null
-kube wait --for=delete pod -l "app in ($(IFS=,; echo "${SERVICES[*]}"))" --timeout=180s >/dev/null
+kube wait --for=delete pod -l "app in ($(
+	IFS=,
+	echo "${SERVICES[*]}"
+))" --timeout=180s >/dev/null
 
 log "archiving the current databases as kanae-db-pre-restore-*"
 kube exec "$POD" -c borgmatic -- \

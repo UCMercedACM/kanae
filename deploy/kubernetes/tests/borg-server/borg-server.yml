@@ -6,13 +6,22 @@ metadata:
   labels:
     app: borg-server
 spec:
+  automountServiceAccountToken: false
   containers:
     - name: sshd
       image: kanae-borg-server:test
       imagePullPolicy: Never
       ports:
         - name: ssh
-          containerPort: 22
+          containerPort: 10022
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 250m
+          ephemeral-storage: 64Mi
+        limits:
+          memory: 256Mi
+          ephemeral-storage: 512Mi
       volumeMounts:
         - name: keys
           mountPath: /etc/ssh/ssh_host_ed25519_key
@@ -48,7 +57,7 @@ spec:
     app: borg-server
   ports:
     - name: ssh
-      port: 22
+      port: 10022
       targetPort: ssh
 ---
 apiVersion: networking.k8s.io/v1
@@ -69,7 +78,7 @@ spec:
               app: kanae-backup
       ports:
         - protocol: TCP
-          port: 22
+          port: 10022
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -89,4 +98,4 @@ spec:
               app: borg-server
       ports:
         - protocol: TCP
-          port: 22
+          port: 10022
