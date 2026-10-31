@@ -43,7 +43,7 @@ Do these steps once, before the first `mise run k8s:apply`. The first deploy tak
 2. Print the public SSH key:
 
    ```sh
-   sops decrypt --extract '["secrets"]["borgSshKey"]' deploy/kubernetes/secrets.sops.yml | ssh-keygen -y -f /dev/stdin
+   ssh-keygen -y -f <(sops decrypt --extract '["secrets"]["borgSshKey"]' deploy/kubernetes/secrets.sops.yml; echo)
    ```
 
    In BorgBase, add the `ssh-ed25519 AAAA...` line under **Account > SSH Keys**.

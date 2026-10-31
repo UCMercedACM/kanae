@@ -74,7 +74,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-REQUIRED=(openssl uv yq)
+REQUIRED=(openssl ssh-keygen uv yq)
 [[ -n $LOCAL ]] || REQUIRED+=(gum sops)
 [[ -z $ASK_ALL ]] || REQUIRED+=(gum)
 
@@ -147,7 +147,12 @@ ask storageSecretKey 'S3 Secret Key ID' "$(openssl rand -hex 32)"
 
 generate borgPassphrase 32
 
-put borgSshKey "${EXISTING[borgSshKey]:-$(openssl genpkey -algorithm ed25519)}"
+put borgSshKey "${EXISTING[borgSshKey]:-$(
+	dir=$(mktemp -d)
+	ssh-keygen -q -t ed25519 -N '' -C kanae-backup -f "$dir/key"
+	cat "$dir/key"
+	rm -r "$dir"
+)}"
 
 ask borgRepo 'BorgBase Repository URL' ssh://local@local.invalid/./repo
 ask borgKnownHosts 'BorgBase Host Key' 'local.invalid ssh-ed25519 unused'
