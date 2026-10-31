@@ -16,6 +16,11 @@ declare -A HOOKS=(
 	[KRATOS_WEBHOOK_TOKEN_SETTINGS]=kratosWebhookTokenSettings
 )
 
+declare -A OPTIONAL_KEYS=(
+	[borgRepo]="Press enter on the first run. deploy/kubernetes/scripts/borg.sh fills this in"
+	[borgKnownHosts]="Press enter on the first run. deploy/kubernetes/scripts/borg.sh fills this in"
+)
+
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 KUBERNETES_DIR=${SCRIPT_PATH%/*}
 ROOT_DIR=${KUBERNETES_DIR%/deploy/kubernetes}
@@ -37,18 +42,25 @@ abort() {
 }
 
 usage() {
-	printf 'usage: %s [--local] [--help]\n\n' "${0##*/}"
-	printf '  --local  take the default for every asked value instead of prompting,\n'
-	printf '           and print the values to stdout instead of encrypting them.\n'
-	printf '           For k3d, where the Secrets go with the cluster\n'
-	printf '  --help   show this help\n'
+	printf 'usage: %s [--local] [--ask-all] [--help]\n\n' "${0##*/}"
+	printf '  --local    take the default for every asked value instead of prompting,\n'
+	printf '             and print the values to stdout instead of encrypting them.\n'
+	printf '             For k3d, where the Secrets go with the cluster\n'
+	printf '  --ask-all  ask for every asked value again. Press enter to keep the\n'
+	printf '             current one\n'
+	printf '  --help     show this help\n'
 }
 
 LOCAL=
+ASK_ALL=
 while [[ $# -gt 0 ]]; do
 	case $1 in
 		--local)
 			LOCAL=1
+			shift
+			;;
+		--ask-all)
+			ASK_ALL=1
 			shift
 			;;
 		--help)
@@ -62,8 +74,9 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-REQUIRED=(openssl ssh-keygen uv yq)
+REQUIRED=(openssl uv yq)
 [[ -n $LOCAL ]] || REQUIRED+=(gum sops)
+[[ -z $ASK_ALL ]] || REQUIRED+=(gum)
 
 for cmd in "${REQUIRED[@]}"; do
 	command -v "$cmd" >/dev/null || abort "$cmd is required"
@@ -81,13 +94,14 @@ if [[ -v KEPT ]]; then
 	while IFS= read -r -d '' key && IFS= read -r -d '' value; do
 		EXISTING[$key]=$value
 	done < <("${KEPT[@]}" | yq -0 '.secrets | to_entries | map([.key, .value]) | flatten | .[]')
+	((${#EXISTING[@]})) || abort "could not read the values already in ${KEPT[-1]}"
 fi
 
 KEYS=()
 declare -A SECRETS=()
 put() {
 	local key=$1 value=$2
-	[[ -n $value ]] || abort "$key cannot be empty"
+	[[ -n $value || -v OPTIONAL_KEYS[$key] ]] || abort "$key cannot be empty"
 	KEYS+=("$key")
 	SECRETS[$key]=$value
 }
@@ -98,11 +112,12 @@ generate() {
 }
 
 ask() {
-	local key=$1 prompt=$2 default=${3:-} placeholder=${4:-}
-	local value=${EXISTING[$key]:-${LOCAL:+$default}}
-	[[ -n $value ]] || value=$(gum input --password --no-show-help \
+	local key=$1 prompt=$2 default=${LOCAL:+$3} placeholder=${4:-} input=
+	local value=${EXISTING[$key]:-$default}
+	[[ -n $value && -z $ASK_ALL ]] || input=$(gum input --password --no-show-help \
+		--header "${OPTIONAL_KEYS[$key]:-}" \
 		--prompt "$prompt: " --placeholder "$placeholder" --placeholder.foreground 245 </dev/tty)
-	put "$key" "$value"
+	put "$key" "${input:-$value}"
 }
 
 generate dbPassword 32
@@ -131,15 +146,11 @@ ask storageKeyId 'S3 Access Key ID' "GK$(openssl rand -hex 12)"
 ask storageSecretKey 'S3 Secret Key ID' "$(openssl rand -hex 32)"
 
 generate borgPassphrase 32
+
+put borgSshKey "${EXISTING[borgSshKey]:-$(openssl genpkey -algorithm ed25519)}"
+
 ask borgRepo 'BorgBase Repository URL' ssh://local@local.invalid/./repo
 ask borgKnownHosts 'BorgBase Host Key' 'local.invalid ssh-ed25519 unused'
-
-put borgSshKey "${EXISTING[borgSshKey]:-$(
-	dir=$(mktemp -d)
-	ssh-keygen -q -t ed25519 -N '' -C kanae-backup -f "$dir/key"
-	cat "$dir/key"
-	rm -r "$dir"
-)}"
 
 if [[ -n $LOCAL ]]; then
 	values=$(

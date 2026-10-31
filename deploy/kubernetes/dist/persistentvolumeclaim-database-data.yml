@@ -11,7 +11,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: scw-bssd-retain
+  storageClassName: kanae-retain
   resources:
     requests:
       storage: 10Gi
