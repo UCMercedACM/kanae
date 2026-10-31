@@ -226,6 +226,7 @@ jobs:
             *) echo "unsupported architecture: $ARCH" >&2; exit 1 ;;
           esac
 
+          HTTPS_ONLY="=https"
           HELMFILE_ASSET="helmfile_${HELMFILE_VERSION}_linux_${ARCH}.tar.gz"
           HELMFILE_RELEASE="https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}"
           KAPP_ASSET="kapp-linux-${ARCH}"
@@ -233,19 +234,19 @@ jobs:
           GUM_ASSET="gum_${GUM_VERSION}_Linux_${ARCH/amd64/x86_64}"
           GUM_RELEASE="https://github.com/charmbracelet/gum/releases/download/v${GUM_VERSION}"
 
-          curl --proto "=https" -fsSL "${HELMFILE_RELEASE}/${HELMFILE_ASSET}" -o "/tmp/${HELMFILE_ASSET}"
-          curl --proto "=https" -fsSL "${HELMFILE_RELEASE}/helmfile_${HELMFILE_VERSION}_checksums.txt" \
+          curl --proto "$HTTPS_ONLY" -fsSL "${HELMFILE_RELEASE}/${HELMFILE_ASSET}" -o "/tmp/${HELMFILE_ASSET}"
+          curl --proto "$HTTPS_ONLY" -fsSL "${HELMFILE_RELEASE}/helmfile_${HELMFILE_VERSION}_checksums.txt" \
             | awk -v asset="$HELMFILE_ASSET" '$2 == asset { print $1 "  /tmp/" asset }' \
             | sha256sum --check --strict -
           tar -xzf "/tmp/${HELMFILE_ASSET}" -C /tmp helmfile
 
-          curl --proto "=https" -fsSL "${KAPP_RELEASE}/${KAPP_ASSET}" -o /tmp/kapp
-          curl --proto "=https" -fsSL "${KAPP_RELEASE}/checksums.txt" \
+          curl --proto "$HTTPS_ONLY" -fsSL "${KAPP_RELEASE}/${KAPP_ASSET}" -o /tmp/kapp
+          curl --proto "$HTTPS_ONLY" -fsSL "${KAPP_RELEASE}/checksums.txt" \
             | awk -v asset="$KAPP_ASSET" '$2 == asset { print $1 "  /tmp/kapp" }' \
             | sha256sum --check --strict -
 
-          curl --proto "=https" -fsSL "${GUM_RELEASE}/${GUM_ASSET}.tar.gz" -o "/tmp/${GUM_ASSET}.tar.gz"
-          curl --proto "=https" -fsSL "${GUM_RELEASE}/checksums.txt" \
+          curl --proto "$HTTPS_ONLY" -fsSL "${GUM_RELEASE}/${GUM_ASSET}.tar.gz" -o "/tmp/${GUM_ASSET}.tar.gz"
+          curl --proto "$HTTPS_ONLY" -fsSL "${GUM_RELEASE}/checksums.txt" \
             | awk -v asset="${GUM_ASSET}.tar.gz" '$2 == asset { print $1 "  /tmp/" asset }' \
             | sha256sum --check --strict -
           tar -xzf "/tmp/${GUM_ASSET}.tar.gz" -C /tmp --strip-components=1 "${GUM_ASSET}/gum"
