@@ -142,6 +142,7 @@ config.yaml
 
 # Include Borgmatic's config
 !docker/borgmatic/config.yml
+!deploy/kubernetes/src/files/borgmatic/config.yml
 
 # Spyder project settings
 .spyderproject
