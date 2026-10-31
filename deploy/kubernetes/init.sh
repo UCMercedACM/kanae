@@ -62,7 +62,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-REQUIRED=(openssl uv yq)
+REQUIRED=(openssl ssh-keygen uv yq)
 [[ -n $LOCAL ]] || REQUIRED+=(gum sops)
 
 for cmd in "${REQUIRED[@]}"; do
@@ -134,7 +134,12 @@ generate borgPassphrase 32
 ask borgRepo 'BorgBase Repository URL' ssh://local@local.invalid/./repo
 ask borgKnownHosts 'BorgBase Host Key' 'local.invalid ssh-ed25519 unused'
 
-put borgSshKey "${EXISTING[borgSshKey]:-$(openssl genpkey -algorithm ed25519)}"
+put borgSshKey "${EXISTING[borgSshKey]:-$(
+	dir=$(mktemp -d)
+	ssh-keygen -q -t ed25519 -N '' -C kanae-backup -f "$dir/key"
+	cat "$dir/key"
+	rm -r "$dir"
+)}"
 
 if [[ -n $LOCAL ]]; then
 	values=$(
