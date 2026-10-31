@@ -16,6 +16,7 @@ spec:
           - "kratos-migrate"
           - "keto-migrate"
           - postgres-checksum
+          - kanae-backup
   policyTypes:
     - Ingress
     - Egress

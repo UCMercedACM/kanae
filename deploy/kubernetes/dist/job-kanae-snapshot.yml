@@ -1,0 +1,126 @@
+# Source: kanae/templates/backup-borgmatic.yml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kanae-snapshot
+  namespace: kanae
+  labels:
+    app: kanae-backup
+    app.kubernetes.io/name: kanae-backup
+    app.kubernetes.io/instance: kanae
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: snapshot
+    app.kubernetes.io/part-of: kanae
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    kapp.k14s.io/versioned: ""
+    kapp.k14s.io/num-versions: "2"
+    kapp.k14s.io/change-group: "kanae/snapshot"
+    kapp.k14s.io/change-rule: "upsert after upserting kanae/databases"
+    ignore-check.kube-linter.io/run-as-non-root: "the borgmatic image runs only as root; see DECISIONS.md, \"borgmatic runs as root in a user namespace\""
+    kapp.k14s.io/change-rule.schemas: "upsert before upserting kanae/schemas"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 840
+  template:
+    metadata:
+      labels:
+        app: kanae-backup
+        app.kubernetes.io/name: kanae-backup
+        app.kubernetes.io/instance: kanae
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/component: snapshot
+        app.kubernetes.io/part-of: kanae
+        app.kubernetes.io/managed-by: Helm
+      annotations:
+        checksum/migrations: 78d57531f5259598cfa4d395079cc3c34833ce1d025206732e1b2dbb000c3fec
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      hostUsers: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        seLinuxOptions:
+          type: container_t
+      containers:
+        - name: borgmatic
+          image: "ghcr.io/borgmatic-collective/borgmatic:2.1.10@sha256:25a97d84a2371c385c0031a02b64f7167de85631a85b84ef46dc01a80010d19e"
+          imagePullPolicy: IfNotPresent
+          command: ["borgmatic"]
+          args:
+            - create
+            - --stats
+            - --archive-name-format
+            - kanae-db-snapshot-{now:%Y-%m-%dT%H:%M:%S}
+          env:
+            - name: PGCONNECT_TIMEOUT
+              value: "10"
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 512Mi
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/borgmatic
+              readOnly: true
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: run
+              mountPath: /run/borgmatic
+            - name: state
+              mountPath: /var/lib/borgmatic
+            - name: borg
+              mountPath: /var/lib/borg
+            - name: cache
+              mountPath: /var/cache/borg
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: kanae-borgmatic
+            items:
+              - key: config.yml
+                path: config.yaml
+              - key: ssh_config
+                path: ssh/config
+        - name: secrets
+          projected:
+            defaultMode: 0400
+            sources:
+              - secret:
+                  name: kanae-borg
+              - secret:
+                  name: postgres-backup-db
+                  items:
+                    - key: POSTGRES_BACKUP_PASSWORD
+                      path: POSTGRES_BACKUP_PASSWORD
+        - name: run
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: state
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: borg
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: cache
+          emptyDir:
+            sizeLimit: 384Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

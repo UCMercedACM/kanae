@@ -1084,9 +1084,10 @@ path back inward. And Kratos's admin API on 4434 is reachable only from kanae,
 never from the Gateway, which is what keeps identity administration inside the
 cluster.
 
-The cost is that a new workload needs a rule. `job-seed` and the borgmatic
-backup, both later phases, will each need database egress added to
-`database-clients`, and borgmatic will need egress to object storage.
+The cost is that a new workload needs a rule. `job-seed`, a later phase, will
+need database egress added to `database-clients`, as the backup Jobs have. Their
+own `kanae-backup` policy adds only SSH to BorgBase (see "Backups write to one
+BorgBase repository over SSH").
 
 Decided 2026-09-16.
 
@@ -1156,3 +1157,229 @@ charge, because kube-router ran inside the k3s server process and never showed
 up as a pod. It was not free either, only hidden.
 
 Decided 2026-09-17.
+
+## Backups write to one BorgBase repository over SSH, and the cluster holds no repository
+
+Borg 1.4.5 is what the borgmatic image ships, and Borg 1.x cannot write to S3
+at all; only 2.x can, through borgstore. So the backups go to one Borg
+repository at BorgBase, over SSH. The plan's "Borg repository on a separate
+volume" is dropped: that volume would be block storage from the cluster's own
+provider and would fail together with the Postgres volume it protects.
+
+Against 3-2-1, the copies are:
+
+| Copy | Where | Kind of storage |
+| --- | --- | --- |
+| Live | the Postgres PVC on the cluster's block storage | block volume |
+| 1 | BorgBase | remote file storage, another provider |
+
+Offsite is met. Three copies and two media are not: there is one backup, so a
+BorgBase outage, a closed account, a Borg bug, a lost passphrase or a lost
+repokey leaves only the live database. A second repository at another provider
+(rsync.net, or a Hetzner Storage Box) was designed and dropped as overkill for
+this project's size; adding it back is a second URL, key and host key in
+`secrets.sops.yml` and a second entry under `repositories`. Nor is there an
+offline or immutable copy. The Borg passphrase and a `borg key export` go in
+the break-glass bundle next to the age key, and nowhere else.
+
+The nightly CronJob prunes and compacts in the same run, as n8n-workflows'
+borgmatic does, so retention needs nobody to remember it. That means the
+cluster's key has full access at BorgBase, not append-only: a compromised
+backup pod, or anyone with the cluster's cloud account and the SOPS age key,
+can delete every archive. An append-only key would prevent that, but then
+something outside the cluster has to prune, and in a student org a monthly
+manual chore stops happening. The pod that holds the key has no inbound
+network, no service account token, and lives for minutes a night.
+
+Everything about reaching the repository is a secret in `secrets.sops.yml`, as
+in n8n-workflows: its full `ssh://` URL (`borgRepo`), its `ssh-keyscan` line
+(`borgKnownHosts`) and its key (`borgSshKey`). Nothing in `values.yaml` names
+a host. `StrictHostKeyChecking` is on, so the host cannot be reached without its
+`known_hosts` line. borgmatic sets no remote path, so BorgBase runs its default
+`borg`.
+
+Cost: BorgBase's Small plan is $24 a year, and its free tier is 10 GB across 2
+repositories.
+
+The three databases are dumped as three `pg_dump` snapshots in one archive, not
+one transaction, so a row written between the kanae and kratos dumps may appear
+in one and not the other. The schedule is 10:47 UTC, about 3:47 in California,
+to make that unlikely, not impossible. Valkey is a cache and a rate limiter on
+an `emptyDir`, manifests and config are in git, certificates are reissued by
+cert-manager, and the secrets are in git through SOPS. Borg holds data only.
+
+Decided 2026-10-28.
+
+## The backup role is `kanae_backup`, with SELECT on what `pg_dump` reads and nothing else
+
+`pg_hba.conf` rejects the `postgres` superuser over the network and its password
+is NULL, so a backup pod cannot use it. `pg_read_all_data` is what usually
+fills that gap, and it was removed from this design once already because it
+also reads `pg_authid`, which holds every role's password hash. So
+`docker/postgres/init.sh` creates `kanae_backup` with `CONNECT` on `kanae`,
+`kratos` and `keto`, `USAGE` on `public`, and `SELECT` on their tables and
+sequences. `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` extends the `SELECT` to
+every table a later migration creates, since the `*_migrate` roles own them and
+Atlas will keep adding tables. The role has no `CONNECT` on `postgres`, no write
+privilege anywhere and a connection limit of 3.
+
+`tests/backup.bats` runs the containment probes against it: it dumps all three
+databases, it is refused `pg_authid` and `INSERT`, and it cannot connect to
+`postgres`.
+
+The role is created only when `POSTGRES_BACKUP_PASSWORD` is set. The chart sets
+it and Compose does not, so the Compose stack keeps working without a role it
+has no use for. That is a conditional in a file two stacks share, which is the
+price of not editing Compose.
+
+`init.sh` runs only on an empty volume. There is no production cluster yet, and
+k3d is recreated, so first-init covers both; a volume older than this change
+takes the same statements by hand (RUNBOOK.md, `role "kanae_backup" does not
+exist`). That runbook copy is the one place the grants are written twice.
+
+Decided 2026-10-28.
+
+## Uploaded media is not backed up
+
+R2 has its own durability, so the only risk to uploaded media is deletion: one
+object deleted by mistake, a bug or a leaked app key deleting many, or the
+Cloudflare account lost. Nobody is going to restore a single deleted picture,
+and in the other cases the database still holds every project, description and
+member, so what is lost is images that people can upload again. For a student
+org's project showcase that is an accepted risk, not one worth a job, a second
+provider's bucket, two more secrets and a NetworkPolicy to look after. Borg
+holds the databases only.
+
+Two designs were built and dropped. Syncing the bucket into an `emptyDir` and
+archiving it with Borg downloaded the whole bucket onto the node every night,
+against ephemeral storage the node shares with Postgres. A nightly `rclone sync`
+to a Scaleway bucket, with deletions moved aside for 30 days, needed no disk but
+was still the upkeep above for little benefit. If losing images ever matters,
+the cheaper answer is in the app: soft-delete media and purge it after some
+days, which covers a bug without any new infrastructure.
+
+Decided 2026-10-30.
+
+## The snapshot is a versioned Job that re-runs exactly when a migration would
+
+Atlas applies with `--auto-approve` and Phase 5 dropped the pre-merge DDL
+review, so the archive taken before it is the only thing between a bad diff and
+a column that is already gone. The POC's `pre-upgrade` Helm hook is inert now
+that Helm never installs, so `kanae-snapshot` is a `kapp.k14s.io/versioned`
+Job in the same group order as the migrations instead.
+
+Two rules on one Job place it: `change-rule` runs it after `kanae/databases`
+(there is nothing to dump before then), and `change-rule.schemas` runs it before
+`kanae/schemas`. kapp waits for a Job to complete, so the migration Jobs do not
+start until the archive exists, and a failed archive stops the deploy with
+`backoffLimit: 1`. The Job is part of the migration story, not the backup story.
+
+What re-runs it: its pod template carries `checksum/migrations`, the sha256 of
+`jobs-migrate.yml` as rendered, which is the three migration Jobs and the
+`kanae-schema` ConfigMap. Any change that makes kapp create a new
+`*-migrate-ver-N` also changes this hash, because it hashes the same
+inputs, including image tags and the Chart version label. An unchanged apply is a
+no-op for both. It will sometimes archive before a migration that changes
+nothing, which costs an archive; missing one would cost a table.
+
+Like the migration Jobs it is not retried by an unchanged apply once it has
+failed, and that would fail open: the next apply would create the pending
+migration Jobs with no archive. `scripts/apply.sh` (and `apply.ps1`) deletes any
+snapshot Job that has not succeeded before calling kapp, so kapp takes the
+archive again first. A hand-run `kapp deploy` skips that guard; RUNBOOK.md says
+not to. Its deadline, 840 seconds, sits under kapp's 15 minute wait, so a stuck
+archive fails as a Job rather than as a kapp timeout.
+
+Because it is a Job, it does not pass through the rest of the deploy's memory
+arithmetic: it finishes before the migration wave starts, so a deploy still peaks
+at 3916Mi.
+
+Decided 2026-10-28.
+
+## borgmatic's config is one file shared with Docker, and where it goes is a secret
+
+The config is `docker/borgmatic/config.yml`, a plain borgmatic file that the
+chart links in under `src/files/` and mounts from the `kanae-borgmatic`
+ConfigMap, the way it does `docker/postgres` and `docker/valkey`. Docker will
+mount the same file when it runs backups, so the config is not assembled in a
+template. The nightly CronJob and the snapshot Job share it; the snapshot passes
+`--archive-name-format kanae-db-snapshot-...` so its archives can be told apart.
+Values hold only the schedule and the image, under `backup.borgmatic`.
+
+The chart renders both workloads everywhere, with no switch, like every other
+template. k3d has no Borg repository, and the snapshot Job failing there would
+stop every local deploy before its migrations, so `k8s:render:local` drops the
+`kanae-backup` CronJob and the `kanae-snapshot` Job from `.k8s-local/` with the
+same `yq select` that drops the Secrets. The ConfigMap and NetworkPolicy still
+render locally, so `helm lint` and the network tests still cover them.
+
+Where the backups go is not in the file: the repository URL, its host key and
+the SSH key are in `secrets.sops.yml`, so nothing committed names a host.
+`values.schema.json` checks their shape: an `ssh://user@host/path` URL, an
+`ssh-keyscan` line, a PKCS#8 or OpenSSH private key. The pod mounts the `kanae-borg` Secret and
+the backup password as one flat `/run/secrets`, as Docker mounts secrets, so
+the file names the same paths in both: `BORG_PASSPHRASE`, `BORG_SSH_KEY`,
+`BORG_KNOWN_HOSTS`, `BORG_REPOSITORIES` and `POSTGRES_BACKUP_PASSWORD`. The
+passwords are `{credential file ...}` placeholders, but borgmatic 2.1.10 refuses
+a credential placeholder in a repository path, `file` or `container` alike, so
+the repository list is `!include /run/secrets/BORG_REPOSITORIES`, which the
+Secret renders around the `borgRepo` URL. That keeps the URL a file and the pod's
+command plain `borgmatic`, with no shell and no `env` entry from a Secret, which
+kubescape fails ("Prefer using secrets as files"). On an officer's machine, plain
+`borg` reads the same URL as `BORG_REPO`.
+
+The NetworkPolicy cannot read the port from the URL either. It allows SSH on 22,
+BorgBase's port, to public addresses only.
+
+Retention is in the file: every archive of the last seven days
+(`keep_daily: 7`), so a bad day can be rolled back, and then the last archive of
+each of the four weeks before (`keep_weekly: 4`). Everything older goes at the
+next nightly prune, snapshots included, so a snapshot outlives its migration by
+at least a week.
+
+Local k3d cannot exercise the Borg half: there is no SSH Borg host. It
+exercises the role, the dump and restore round trip over the unix socket, and
+the NetworkPolicy edges. The exit gate against the real repository is by hand.
+
+Decided 2026-10-28, and the shared file and secrets on 2026-10-30.
+
+## borgmatic runs as root in a user namespace
+
+The pinned borgmatic image builds with `COPY --chmod=744 root/ /`, which leaves
+`/usr`, `/usr/local/bin` and `/etc` closed to every uid but root. As 65534,
+borg, borgmatic, pg_dump and ssh all fail with `Permission denied`. The
+alternatives were an own image with those modes fixed, which means a registry
+and a CI job to keep in step with every upstream release, or waiting for
+upstream. Neither is worth it for a pod that runs a few minutes a day.
+
+So the borgmatic container runs as uid 0, and everything else about the pod is
+built so that uid 0 holds as little as possible:
+
+- `hostUsers: false` puts the pod in a user namespace. Its uid 0 is an
+  unprivileged uid on the node, so a container escape lands as nobody rather
+  than as the node's root. This is the setting the decision rests on. Kubernetes
+  1.36 made it GA; it needs containerd 2.0 or later, runc 1.2 or later, and
+  idmapped tmpfs (Linux 6.3) for the Secret and ConfigMap volumes. containerd
+  1.6 and older ignore it silently, which is why RUNBOOK.md checks the uid map on
+  every new node.
+- No capabilities. Without `CAP_DAC_OVERRIDE` root reads only files it owns or
+  that are world-readable, and cannot chown or bind a low port.
+- No privilege escalation, RuntimeDefault seccomp, SELinux `container_t`, a
+  read-only root, no service account token, and egress only to Postgres and to
+  public hosts on the Borg hosts' SSH ports.
+- The Secrets are 0400, and only borgmatic mounts the Borg keys. ssh refuses a
+  private key it owns if the group can read it, so 0440 would fail anyway.
+
+None of this changes what a compromised borgmatic can read. It holds the Borg
+passphrase, the BorgBase key and `SELECT` on all three databases whatever
+its uid. Root only decides how far an escape gets, and the user namespace is the
+answer to that.
+
+The scanners do not know about `hostUsers`. kube-linter's `run-as-non-root` is
+ignored by annotation on the three backup objects, and kubescape C-0013 and
+C-0211 by an exception in `.kubescape/exceptions.json` whose name pattern is
+anchored to `kanae-backup` and `kanae-snapshot`.
+When upstream ships the overlay at 755, drop to 65534, remove
+`hostUsers: false` only if it costs something, and delete both exceptions.
+
+Decided 2026-10-29.

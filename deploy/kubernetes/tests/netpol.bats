@@ -60,6 +60,13 @@ setup_file() {
 		--command -- bash -c "$PROBE" probe \
 		kube-dns.kube-system:53 kanae:8000 kratos:4433 keto:4466 database:5432 \
 		>"$BATS_FILE_TMPDIR/from-unlabelled"
+
+	kubectl -n "$NAMESPACE" run "netpol-probe-$RANDOM" \
+		--rm --attach --quiet --restart=Never --labels=app=kanae-backup \
+		--image="$image" --image-pull-policy=IfNotPresent \
+		--command -- bash -c "$PROBE" probe \
+		database:5432 kanae:8000 kratos:4433 keto:4466 valkey:6379 1.1.1.1:80 \
+		>"$BATS_FILE_TMPDIR/from-backup"
 }
 
 @test "the Gateway's namespace reaches kanae and Kratos's public port" {
@@ -126,4 +133,33 @@ setup_file() {
 	[[ $probe == *"kratos:4433 closed"* ]]
 	[[ $probe == *"keto:4466 closed"* ]]
 	[[ $probe == *"database:5432 closed"* ]]
+}
+
+@test "a backup pod reaches Postgres" {
+	local probe
+	probe=$(<"$BATS_FILE_TMPDIR/from-backup")
+	echo "$probe"
+
+	[[ $probe == *"database:5432 open"* ]]
+}
+
+@test "a backup pod cannot reach kanae, Kratos, Keto or Valkey" {
+	local probe
+	probe=$(<"$BATS_FILE_TMPDIR/from-backup")
+	echo "$probe"
+
+	[[ $probe == *"database:5432 open"* ]]
+	[[ $probe == *"kanae:8000 closed"* ]]
+	[[ $probe == *"kratos:4433 closed"* ]]
+	[[ $probe == *"keto:4466 closed"* ]]
+	[[ $probe == *"valkey:6379 closed"* ]]
+}
+
+@test "a backup pod cannot dial a public host on a port the repository does not use" {
+	local probe
+	probe=$(<"$BATS_FILE_TMPDIR/from-backup")
+	echo "$probe"
+
+	[[ $probe == *"database:5432 open"* ]]
+	[[ $probe == *"1.1.1.1:80 closed"* ]]
 }

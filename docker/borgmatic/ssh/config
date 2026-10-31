@@ -1,0 +1,7 @@
+Host *
+    IdentityFile /run/secrets/BORG_SSH_KEY
+    IdentitiesOnly yes
+    BatchMode yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile /run/secrets/BORG_KNOWN_HOSTS
+    GlobalKnownHostsFile /dev/null

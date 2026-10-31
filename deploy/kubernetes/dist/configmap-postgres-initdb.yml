@@ -37,6 +37,7 @@ data:
     resolve_secret KANAE_MIGRATE_PASSWORD
     resolve_secret KRATOS_MIGRATE_PASSWORD
     resolve_secret KETO_MIGRATE_PASSWORD
+    resolve_secret POSTGRES_BACKUP_PASSWORD
 
     ### Roles and databases
 
@@ -99,6 +100,34 @@ data:
     harden keto keto_migrate keto
 
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname kanae -c 'CREATE EXTENSION pg_trgm'
+
+    ### Backup role
+
+    grant_backup() {
+    	local db=$1 owner=$2
+
+    	psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db" <<-EOSQL
+    		GRANT USAGE ON SCHEMA public TO kanae_backup;
+    		GRANT SELECT ON ALL TABLES IN SCHEMA public TO kanae_backup;
+    		GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO kanae_backup;
+
+    		ALTER DEFAULT PRIVILEGES FOR ROLE $owner IN SCHEMA public
+    		GRANT SELECT ON TABLES TO kanae_backup;
+    		ALTER DEFAULT PRIVILEGES FOR ROLE $owner IN SCHEMA public
+    		GRANT SELECT ON SEQUENCES TO kanae_backup;
+    	EOSQL
+    }
+
+    if [[ -n ${POSTGRES_BACKUP_PASSWORD:-} ]]; then
+    	psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
+    		CREATE ROLE kanae_backup LOGIN PASSWORD '${POSTGRES_BACKUP_PASSWORD}' CONNECTION LIMIT 3;
+    		GRANT CONNECT ON DATABASE kanae, kratos, keto TO kanae_backup;
+    	EOSQL
+
+    	grant_backup kanae kanae_migrate
+    	grant_backup kratos kratos_migrate
+    	grant_backup keto keto_migrate
+    fi
 
     ### Banning of superusers
 

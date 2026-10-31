@@ -299,7 +299,7 @@ description = "Renders the local values into .k8s-local/, a build artifact that 
 dir = "{{ config_root }}"
 run = '''
 rm -f .k8s-local/*.yml
-helm template kanae deploy/kubernetes/src --namespace kanae --values deploy/kubernetes/values.local.yml | yq --no-doc 'select(.kind != null and .kind != "Secret")' -s '".k8s-local/\(.kind | downcase)-\(.metadata.name).yml"'
+helm template kanae deploy/kubernetes/src --namespace kanae --values deploy/kubernetes/values.local.yml | yq --no-doc 'select(.kind != null and .kind != "Secret" and .metadata.name != "kanae-snapshot" and (.kind != "CronJob" or .metadata.name != "kanae-backup"))' -s '".k8s-local/\(.kind | downcase)-\(.metadata.name).yml"'
 '''
 
 [tasks."k8s:render:check"]
