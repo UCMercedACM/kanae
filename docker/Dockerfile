@@ -3,7 +3,7 @@ FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim AS build
 # Compile bytecode and enable caching
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#caching
-ENV UV_COMPILE_BYTECODE=1 
+ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 # Disable Python downloads as the system Python interpreter instead
@@ -13,7 +13,7 @@ ENV UV_PYTHON_DOWNLOADS=0
 ENV UV_NO_DEV=1
 
 # "kanae" is used here because we are copying venvs
-# So we need both stages to be consistent to prevent broken-shebangs 
+# So we need both stages to be consistent to prevent broken-shebangs
 WORKDIR /kanae/
 
 COPY pyproject.toml uv.lock logging.conf.json /kanae/
@@ -31,7 +31,7 @@ COPY ./src /kanae
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen
 
-FROM python:3.15-slim-trixie
+FROM python:3.14-slim-trixie
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/kanae
