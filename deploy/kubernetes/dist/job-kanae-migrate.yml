@@ -30,7 +30,7 @@ spec:
         app.kubernetes.io/part-of: kanae
         app.kubernetes.io/managed-by: Helm
       annotations:
-        checksum/schema: 6e12ba6ad4890f12916aec57bfedd96f072e675a7995a3bf559dc3f0016dd331
+        checksum/schema: b9a3e575177448932d603b88d5140f855e93bf13489d1b0a2a5d13b413a938f9
         checksum/atlas: 6b3f9ecc69c7feb7953612f632ac18997e9cdf89fe1bd14884a093e61e229a6c
     spec:
       restartPolicy: Never
