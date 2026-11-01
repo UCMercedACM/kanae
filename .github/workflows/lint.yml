@@ -161,7 +161,7 @@ jobs:
       - name: Check scripts
         run: |
           shopt -s globstar nullglob dotglob
-          shellcheck **/*.sh
+          shellcheck ${{ github.workspace }}/**/*.sh
 
       - name: Check for formatting
         uses: dprint/check@7dc032d8874778fc024f6f9b4a7e6d896782c330 # v2.5
