@@ -27,12 +27,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python ${{ matrix.version }}
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: ${{ matrix.version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "latest"
           enable-cache: true
@@ -65,19 +65,19 @@ jobs:
       UV_NO_DEV: true
       UV_NO_DEFAULT_GROUPS: true
 
-      DPRINT_VERSION: 0.57.0
+      DPRINT_VERSION: 0.64.3
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.x"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "latest"
           enable-cache: true
@@ -105,7 +105,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
     env:
-      DPRINT_VERSION: 0.57.0
+      DPRINT_VERSION: 0.64.3
 
     steps:
       - name: Checkout Repository
@@ -116,3 +116,55 @@ jobs:
         with:
           dprint-version: ${{ env.DPRINT_VERSION }}
           args: "**/*.{json,toml}"
+
+  Scripts:
+    name: Check Scripts
+    runs-on: ubuntu-26.04
+
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+
+    env:
+      DPRINT_VERSION: 0.64.3
+
+      SHELLCHECK_VERSION: 0.11.0
+      SHFMT_VERSION: 3.14.1
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install tools
+        run: |
+          OS=$(uname | tr '[:upper:]' '[:lower:]')
+
+          ARCH=$(uname -m)
+          case $ARCH in
+            aarch64) ARCH="arm64";;
+            x86_64) ARCH="amd64";;
+            *) echo "no prebuilt binaries are available" >&2; exit 1 ;;
+          esac
+
+          case "$OS-$ARCH" in
+            darwin-amd64 | darwin-arm64 | linux-amd64 | linux-arm64) ;;
+            *) echo "no pre-built binaries for $OS-$ARCH" >&2; exit 1 ;;
+          esac
+
+          curl --proto "=https" -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.$(uname -m).tar.gz" \
+            | tar -xz -C /tmp --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          curl --proto "=https" -fsSL "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_${ARCH}" \
+            -o /tmp/shfmt
+
+          sudo install -m 0755 /tmp/shellcheck /tmp/shfmt /usr/local/bin/
+
+      - name: Check scripts
+        run: |
+          shopt -s globstar nullglob dotglob
+          shellcheck ${{ github.workspace }}/**/*.sh
+
+      - name: Check for formatting
+        uses: dprint/check@7dc032d8874778fc024f6f9b4a7e6d896782c330 # v2.5
+        with:
+          dprint-version: ${{ env.DPRINT_VERSION }}
+          args: "**/*.{sh,bats}"

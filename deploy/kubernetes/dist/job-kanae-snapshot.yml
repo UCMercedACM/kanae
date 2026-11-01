@@ -33,7 +33,7 @@ spec:
         app.kubernetes.io/part-of: kanae
         app.kubernetes.io/managed-by: Helm
       annotations:
-        checksum/migrations: 78d57531f5259598cfa4d395079cc3c34833ce1d025206732e1b2dbb000c3fec
+        checksum/migrations: 2e809236dd759be2ce26d8dbc321740b416909db7d27e66e4e4f7af959168e41
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false

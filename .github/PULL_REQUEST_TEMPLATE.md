@@ -5,7 +5,7 @@
 ## Types of changes
 
 What types of changes does your code introduce to Kanae?
-_Put an `x` in the boxes that apply_
+*Put an `x` in the boxes that apply*
 
 - [ ] Bugfix (non-breaking change which fixes an issue)
 - [ ] New feature (non-breaking change which adds functionality)
@@ -17,7 +17,7 @@ _Put an `x` in the boxes that apply_
 
 <!-- Put an x inside [ ] to check it, like so: [x] -->
 
-_Put an `x` in the boxes that apply_
+*Put an `x` in the boxes that apply*
 
 - [ ] If code changes were made then they have been tested.
   - [ ] I have updated the documentation to reflect the changes. (if appropriate)

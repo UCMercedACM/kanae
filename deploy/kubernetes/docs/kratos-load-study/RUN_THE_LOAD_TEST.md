@@ -66,13 +66,13 @@ section shows.
 
 ## Variables
 
-| variable | default | meaning |
-| --- | --- | --- |
-| `LOAD_MODE` | `closed` | `closed`: `-u` users sign up back-to-back, so `-u` is the concurrency. `open`: Poisson arrivals at `LOAD_RATE` per second. |
-| `LOAD_RATE` | `1` | Aggregate signups per second in `open` mode. |
-| `LOAD_SEED` | `1` | Seed for the arrival gaps, so a run can be repeated. |
-| `LOAD_EMAIL_DOMAIN` | `ucmerced.edu` | Domain of the generated addresses. |
-| `LOAD_CA_BUNDLE` | unset | Path of a CA certificate to trust for an HTTPS host, such as the self-signed one the local Gateway serves. Locust ignores `REQUESTS_CA_BUNDLE`. |
+| variable            | default        | meaning                                                                                                                                         |
+| ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOAD_MODE`         | `closed`       | `closed`: `-u` users sign up back-to-back, so `-u` is the concurrency. `open`: Poisson arrivals at `LOAD_RATE` per second.                      |
+| `LOAD_RATE`         | `1`            | Aggregate signups per second in `open` mode.                                                                                                    |
+| `LOAD_SEED`         | `1`            | Seed for the arrival gaps, so a run can be repeated.                                                                                            |
+| `LOAD_EMAIL_DOMAIN` | `ucmerced.edu` | Domain of the generated addresses.                                                                                                              |
+| `LOAD_CA_BUNDLE`    | unset          | Path of a CA certificate to trust for an HTTPS host, such as the self-signed one the local Gateway serves. Locust ignores `REQUESTS_CA_BUNDLE`. |
 
 ## Read the result
 

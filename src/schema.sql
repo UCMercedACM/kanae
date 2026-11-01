@@ -57,7 +57,6 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
-
 -- This would allow for faster lookups for events
 -- Separate table for attendance verification to enforce 3NF
 -- (attendance_hash is derived from attendance_code, creating a transitive dependency)
@@ -118,7 +117,10 @@ CREATE TABLE IF NOT EXISTS project_invites (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS project_invites_pending ON project_invites (project_id, member_id) WHERE status = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS project_invites_pending ON project_invites (
+    project_id,
+    member_id
+) WHERE status = 'pending';
 
 -- Inbox (member's handshakes) and project-side (lead's pending list) lookups
 CREATE INDEX IF NOT EXISTS project_invites_member_idx ON project_invites (member_id, status);

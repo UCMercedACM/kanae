@@ -171,20 +171,20 @@ Do this once a month, and after any change to the backups.
 
 ## When something breaks
 
-| Symptom | Fix |
-| --- | --- |
-| sops can't decrypt `secrets.sops.yml` | Have an officer add your age key to `.sops.yaml` and run `sops updatekeys deploy/kubernetes/secrets.sops.yml`. |
-| `error: <tool> is required` | Run `mise install` and activate mise in your shell. Install Docker for `borg.sh`. |
-| `kanae-snapshot` fails and the deploy stops | Read `kubectl -n kanae logs -l app.kubernetes.io/component=snapshot`, then find the error below. After the fix, run `mise run k8s:apply` again. |
-| A backup Job shows `Failed` | Read `kubectl -n kanae logs job/<name>`, then find the error below. |
-| `Repository ... does not exist.` | Do step 4 of [Set up the backup repository](#set-up-the-backup-repository). |
-| `Host key verification failed.` | Replace `borgKnownHosts`. See [Change a backup secret](#change-a-backup-secret). |
-| `Permission denied (publickey)` | In BorgBase, check that the key from step 2 of [Set up the backup repository](#set-up-the-backup-repository) is under **Account > SSH Keys** and has **Full Access** on the repository. |
-| `error: ... is not a BorgBase repository URL` | Copy the URL from the **Name** column in BorgBase and run `borg.sh` again. |
-| `error: ... did not return an ed25519 host key` | Check the URL, then run `borg.sh` again. |
-| `error: the host key does not match, nothing was saved` | Stop. Check the URL. If it's correct, don't run `borg.sh` again until BorgBase confirms its fingerprint. |
-| `Failed to create/acquire the lock` | If `kubectl -n kanae get pods -l app=kanae-backup` shows no `Running` pod, run `deploy/kubernetes/scripts/borg.sh break-lock`. |
-| `error: a backup or snapshot is running ...` | Wait until `kubectl -n kanae get pods -l app=kanae-backup` shows no `Running` pod, then run `restore.sh` again. |
-| `error: ... is not in the repository` | Copy the archive name from `deploy/kubernetes/scripts/borg.sh list --short`. |
-| `error: ... holds no dump of <database>` | Pick another archive from `deploy/kubernetes/scripts/borg.sh list --short`. |
-| `error: <database> did not restore, so every database was put back as it was` | Read the `pg_restore` error above it. The services are running again on the old data. |
+| Symptom                                                                       | Fix                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| sops can't decrypt `secrets.sops.yml`                                         | Have an officer add your age key to `.sops.yaml` and run `sops updatekeys deploy/kubernetes/secrets.sops.yml`.                                                                          |
+| `error: <tool> is required`                                                   | Run `mise install` and activate mise in your shell. Install Docker for `borg.sh`.                                                                                                       |
+| `kanae-snapshot` fails and the deploy stops                                   | Read `kubectl -n kanae logs -l app.kubernetes.io/component=snapshot`, then find the error below. After the fix, run `mise run k8s:apply` again.                                         |
+| A backup Job shows `Failed`                                                   | Read `kubectl -n kanae logs job/<name>`, then find the error below.                                                                                                                     |
+| `Repository ... does not exist.`                                              | Do step 4 of [Set up the backup repository](#set-up-the-backup-repository).                                                                                                             |
+| `Host key verification failed.`                                               | Replace `borgKnownHosts`. See [Change a backup secret](#change-a-backup-secret).                                                                                                        |
+| `Permission denied (publickey)`                                               | In BorgBase, check that the key from step 2 of [Set up the backup repository](#set-up-the-backup-repository) is under **Account > SSH Keys** and has **Full Access** on the repository. |
+| `error: ... is not a BorgBase repository URL`                                 | Copy the URL from the **Name** column in BorgBase and run `borg.sh` again.                                                                                                              |
+| `error: ... did not return an ed25519 host key`                               | Check the URL, then run `borg.sh` again.                                                                                                                                                |
+| `error: the host key does not match, nothing was saved`                       | Stop. Check the URL. If it's correct, don't run `borg.sh` again until BorgBase confirms its fingerprint.                                                                                |
+| `Failed to create/acquire the lock`                                           | If `kubectl -n kanae get pods -l app=kanae-backup` shows no `Running` pod, run `deploy/kubernetes/scripts/borg.sh break-lock`.                                                          |
+| `error: a backup or snapshot is running ...`                                  | Wait until `kubectl -n kanae get pods -l app=kanae-backup` shows no `Running` pod, then run `restore.sh` again.                                                                         |
+| `error: ... is not in the repository`                                         | Copy the archive name from `deploy/kubernetes/scripts/borg.sh list --short`.                                                                                                            |
+| `error: ... holds no dump of <database>`                                      | Pick another archive from `deploy/kubernetes/scripts/borg.sh list --short`.                                                                                                             |
+| `error: <database> did not restore, so every database was put back as it was` | Read the `pg_restore` error above it. The services are running again on the old data.                                                                                                   |

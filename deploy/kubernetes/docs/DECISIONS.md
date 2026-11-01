@@ -535,10 +535,10 @@ HANDOFF.md recorded this as worked out from the config schema and never seen.
 Both directions have now been watched on k3d, from a pod inside the cluster
 against `http://kratos:4433`, the same request each time:
 
-| `Secure` enabled | `Set-Cookie` on `/self-service/login/browser` | the POST that follows |
-| --- | --- | --- |
-| no | `Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax` | reaches the password check |
-| yes | the same, plus `Secure` | `security_csrf_violation`, 403 |
+| `Secure` enabled | `Set-Cookie` on `/self-service/login/browser`      | the POST that follows          |
+| ---------------- | -------------------------------------------------- | ------------------------------ |
+| no               | `Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax` | reaches the password check     |
+| yes              | the same, plus `Secure`                            | `security_csrf_violation`, 403 |
 
 The second row is the whole problem in one line. The client received the cookie
 and threw it away, because a `Secure` cookie does not survive a plain `http://`
@@ -659,11 +659,11 @@ allocates another full block.
 That made the original 256Mi limit a one-request ceiling. Measured on k3d from
 the container's own cgroup:
 
-| what | `memory.peak` | against a 256Mi limit |
-| --- | --- | --- |
-| idle | 51.9Mi | 20% |
-| one password hash | 179.8Mi | 70% |
-| two concurrent | — | `OOMKilled`, both requests returned nothing |
+| what              | `memory.peak` | against a 256Mi limit                       |
+| ----------------- | ------------- | ------------------------------------------- |
+| idle              | 51.9Mi        | 20%                                         |
+| one password hash | 179.8Mi       | 70%                                         |
+| two concurrent    | —             | `OOMKilled`, both requests returned nothing |
 
 Every password path hashes: registration, login, and a settings password change.
 Two people logging in at the same moment was enough.
@@ -1110,10 +1110,10 @@ error reads as though the database were down.
 Measured on this cluster, from inside a freshly created pod, timing DNS and TCP
 separately so neither could be blamed for the other:
 
-| | DNS first OK | TCP to database first OK |
-| --- | --- | --- |
-| flannel with kube-router | ~320ms, first attempt | 628ms, 1288ms, 1524ms |
-| Cilium | ~55-94ms, first attempt | 31ms, 54ms, 59ms, always first attempt |
+|                          | DNS first OK            | TCP to database first OK               |
+| ------------------------ | ----------------------- | -------------------------------------- |
+| flannel with kube-router | ~320ms, first attempt   | 628ms, 1288ms, 1524ms                  |
+| Cilium                   | ~55-94ms, first attempt | 31ms, 54ms, 59ms, always first attempt |
 
 DNS was never the problem. The database was up and serving for forty-five
 minutes in every run. With kube-router, three migration Jobs with no gate failed
@@ -1168,10 +1168,10 @@ provider and would fail together with the Postgres volume it protects.
 
 Against 3-2-1, the copies are:
 
-| Copy | Where | Kind of storage |
-| --- | --- | --- |
-| Live | the Postgres PVC on the cluster's block storage | block volume |
-| 1 | BorgBase | remote file storage, another provider |
+| Copy | Where                                           | Kind of storage                       |
+| ---- | ----------------------------------------------- | ------------------------------------- |
+| Live | the Postgres PVC on the cluster's block storage | block volume                          |
+| 1    | BorgBase                                        | remote file storage, another provider |
 
 Offsite is met. Three copies and two media are not: there is one backup, so a
 BorgBase outage, a closed account, a Borg bug, a lost passphrase or a lost
