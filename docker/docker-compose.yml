@@ -7,7 +7,7 @@ include:
 services:
   kanae:
     container_name: kanae
-    image: ghcr.io/ucmercedacm/kanae:edge@sha256:a8e5ae2ad946b303b72eb7a5c16e262fad35eb17559bffbfcf18388394157b03
+    image: ghcr.io/ucmercedacm/kanae:edge@sha256:c159876d35e333bfeaa6ca6a633c96aef2a00d44fa7fb17e1b77694a4ecc9db1
     environment:
       GRANIAN_WORKERS: ${KANAE_WORKERS:-1}
     volumes:
@@ -87,7 +87,7 @@ services:
 
   valkey:
     container_name: kanae_valkey
-    image: valkey/valkey:9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    image: valkey/valkey:9-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
     command: >
       valkey-server --maxmemory 256mb --maxmemory-policy volatile-ttl
     ports:
@@ -103,7 +103,7 @@ services:
 
   garage:
     container_name: kanae_garage
-    image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
+    image: dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5
     ports:
       - "3900:3900" # S3 API
       - "3902:3902" # S3 web
@@ -149,7 +149,7 @@ services:
 
   migrate:
     container_name: kanae_migrate
-    image: arigaio/atlas:latest@sha256:89284e6705be3a390634221c9bb976d05a457b5503527a5a52d92f77b8788df5
+    image: arigaio/atlas:latest@sha256:bafdd9c5921bd717626b5411fd0895e723702e638186e3f71bfb8299c043fa3a
     command: >
       schema apply
       --auto-approve
