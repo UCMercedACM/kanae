@@ -118,14 +118,14 @@ use `latest`.
 
 ### The waves
 
-| # | Group | What's in it | kapp waits for |
-| --- | --- | --- | --- |
-| 1 | `kanae/config` | ConfigMaps, all five Services, ServiceAccount, image pull Secret | Nothing — ready the moment they exist |
-| 2 | `kanae/databases` | Postgres StatefulSet, Valkey Deployment, Postgres PVC | Pods `Ready`, which is `pg_isready` passing |
-| 3 | `kanae/database-init` | The Job creating the `kratos` and `keto` databases and `pg_trgm` | Job `Complete` |
-| 4 | `kanae/schemas` | Jobs: atlas, `kratos migrate sql`, `keto migrate up` | All three `Complete` |
-| 5 | `kanae/services` | kanae, Kratos, Keto Deployments | Deployments `Available` |
-| 6 | *(no group)* | Gateway, HTTPRoute, seed Job | Gateway `Programmed` |
+| # | Group                 | What's in it                                                     | kapp waits for                              |
+| - | --------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
+| 1 | `kanae/config`        | ConfigMaps, all five Services, ServiceAccount, image pull Secret | Nothing — ready the moment they exist       |
+| 2 | `kanae/databases`     | Postgres StatefulSet, Valkey Deployment, Postgres PVC            | Pods `Ready`, which is `pg_isready` passing |
+| 3 | `kanae/database-init` | The Job creating the `kratos` and `keto` databases and `pg_trgm` | Job `Complete`                              |
+| 4 | `kanae/schemas`       | Jobs: atlas, `kratos migrate sql`, `keto migrate up`             | All three `Complete`                        |
+| 5 | `kanae/services`      | kanae, Kratos, Keto Deployments                                  | Deployments `Available`                     |
+| 6 | *(no group)*          | Gateway, HTTPRoute, seed Job                                     | Gateway `Programmed`                        |
 
 Inside a wave everything runs concurrently. All three migration Jobs fire
 together; all three Deployments start together. Only the waves are sequential.
@@ -234,11 +234,11 @@ Deletion ordering only matters in three situations:
 
 Three layers, dying at different times:
 
-| Layer | What it is | Cost of deleting it |
-| --- | --- | --- |
-| Pod | The running Postgres process | Nothing, it comes back |
-| PVC | The claim — "I need a 20GB disk" | The binding between pod and disk |
-| PV / block volume | The actual bytes | Everything |
+| Layer             | What it is                       | Cost of deleting it              |
+| ----------------- | -------------------------------- | -------------------------------- |
+| Pod               | The running Postgres process     | Nothing, it comes back           |
+| PVC               | The claim — "I need a 20GB disk" | The binding between pod and disk |
+| PV / block volume | The actual bytes                 | Everything                       |
 
 `kapp delete -a kanae` removes the StatefulSet **and** the PVC, because both are
 in the manifests and kapp owns both. Whether the data survives is decided one
@@ -383,19 +383,19 @@ free unless they are the biggest thing in the pod.
 
 **Steady state, from the numbers the plan currently sets:**
 
-| Pod | Request = limit |
-| --- | --- |
-| kanae | 512Mi |
-| postgres | 512Mi |
-| kratos | 256Mi |
-| keto | 256Mi |
-| valkey | 256Mi |
-| envoy proxy (one per Gateway) | 64Mi |
-| envoy gateway control plane | 64Mi |
-| cert-manager controller | 64Mi |
-| cert-manager cainjector | 128Mi |
-| cert-manager webhook | 32Mi |
-| **Total** | **~2.1Gi** |
+| Pod                           | Request = limit |
+| ----------------------------- | --------------- |
+| kanae                         | 512Mi           |
+| postgres                      | 512Mi           |
+| kratos                        | 256Mi           |
+| keto                          | 256Mi           |
+| valkey                        | 256Mi           |
+| envoy proxy (one per Gateway) | 64Mi            |
+| envoy gateway control plane   | 64Mi            |
+| cert-manager controller       | 64Mi            |
+| cert-manager cainjector       | 128Mi           |
+| cert-manager webhook          | 32Mi            |
+| **Total**                     | **~2.1Gi**      |
 
 **Deploy-time additions**, all transient but all reserved while they exist:
 atlas 256Mi, kratos migrate 256Mi, keto migrate 256Mi, and — under
@@ -444,13 +444,13 @@ almost nothing: create cluster, import images, render local, apply, wait, run
 hurl, tear down. Then each phase converts its exit gate into a hurl file instead
 of leaving it as a command somebody typed once.
 
-| Phase | Assertion it contributes |
-| --- | --- |
-| 4 | Postgres reachable, Valkey answers `PING` |
-| 5 | The three databases have their tables |
-| 6 | Both Ory health endpoints return `{"status":"ok"}` |
-| 7 | `GET /` returns 200, and the request appears in `kubectl logs` |
-| 8 | Both HTTPRoute rules work from outside the cluster |
+| Phase | Assertion it contributes                                       |
+| ----- | -------------------------------------------------------------- |
+| 4     | Postgres reachable, Valkey answers `PING`                      |
+| 5     | The three databases have their tables                          |
+| 6     | Both Ory health endpoints return `{"status":"ok"}`             |
+| 7     | `GET /` returns 200, and the request appears in `kubectl logs` |
+| 8     | Both HTTPRoute rules work from outside the cluster             |
 
 Same total work. The difference is that after Phase 6 lands, nothing can break
 Phase 4 without CI saying so.
@@ -531,7 +531,7 @@ to remember to run a task.
 
 ```yaml
 # on the workloads that read kanae-env through secretKeyRef
-checksum/env-secret: {{ include "kanae.envSecret" . | sha256sum }}
+checksum/env-secret: { { include "kanae.envSecret" . | sha256sum } }
 ```
 
 One combined hash would roll Kratos every time the Borg S3 key changed. The
@@ -632,10 +632,10 @@ to preserve it, and rotating requires an explicit `-r` flag with a warning.
 
 The three Kratos secrets behave differently:
 
-| Secret | Rotating it |
-| --- | --- |
-| `KRATOS_SECRETS_COOKIE` | Signs session cookies. Everyone is logged out. Reversible. |
-| `KRATOS_SECRETS_CIPHER` | xchacha20-poly1305 encryption at rest. Existing rows become undecryptable. **Irreversible.** |
+| Secret                      | Rotating it                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `KRATOS_SECRETS_COOKIE`     | Signs session cookies. Everyone is logged out. Reversible.                                                    |
+| `KRATOS_SECRETS_CIPHER`     | xchacha20-poly1305 encryption at rest. Existing rows become undecryptable. **Irreversible.**                  |
 | `KRATOS_WEBHOOK_MASTER_KEY` | Derives both webhook tokens via blake3. Kratos and kanae read the same secret, so they rotate together. Safe. |
 
 **Phase 11 is simpler than the original review assumed.** There is no Kratos
@@ -868,16 +868,16 @@ wrapper. The only legitimate one left is inside the `kanae.file` define itself.
 
 ### What each layer catches
 
-| Failure | Chart | `helm:files` | `k8s:policy` |
-| --- | --- | --- | --- |
-| Whole checkout has no symlinks (Windows) | render fails | fails with instructions | yes |
-| Link replaced by a copy, content is a path | yes | yes | yes |
-| Link replaced by a copy of the real content | no | yes | yes |
-| Dangling link (source renamed) | empty read | names the source | yes |
-| Link points at the wrong existing file | no | yes | no |
-| Link is absolute | no | yes | no |
-| Helm stops following escaping links | empty read | no | no |
-| An unguarded `.Files.Get` added later | no | no | yes |
+| Failure                                     | Chart        | `helm:files`            | `k8s:policy` |
+| ------------------------------------------- | ------------ | ----------------------- | ------------ |
+| Whole checkout has no symlinks (Windows)    | render fails | fails with instructions | yes          |
+| Link replaced by a copy, content is a path  | yes          | yes                     | yes          |
+| Link replaced by a copy of the real content | no           | yes                     | yes          |
+| Dangling link (source renamed)              | empty read   | names the source        | yes          |
+| Link points at the wrong existing file      | no           | yes                     | no           |
+| Link is absolute                            | no           | yes                     | no           |
+| Helm stops following escaping links         | empty read   | no                      | no           |
+| An unguarded `.Files.Get` added later       | no           | no                      | yes          |
 
 Three checks, eight failures, no redundancy.
 

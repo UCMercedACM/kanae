@@ -207,13 +207,13 @@ Reproduced in `scripts/repro-cache-decode.py`, which builds a real `ValkeyCache`
 `@cached_method` and reads one poisoned value per case. Five cases, with the fake confined to what
 the client hands back:
 
-| stored value | serializer | outcome |
-| --- | --- | --- |
-| `b'true'` | ORJSON | returns `True`, method not called |
-| `GlideError` | ORJSON | caught, degrades to a miss |
-| `b'{not json'` | Pydantic | `ValidationError`, caught, degrades to a miss |
-| `b'{not json'` | ORJSON | `orjson.JSONDecodeError` escapes from `cache.py:282` |
-| `b'\xff\xfe'` | JsonSerializer | `UnicodeDecodeError` escapes from `cache.py:337` |
+| stored value   | serializer     | outcome                                              |
+| -------------- | -------------- | ---------------------------------------------------- |
+| `b'true'`      | ORJSON         | returns `True`, method not called                    |
+| `GlideError`   | ORJSON         | caught, degrades to a miss                           |
+| `b'{not json'` | Pydantic       | `ValidationError`, caught, degrades to a miss        |
+| `b'{not json'` | ORJSON         | `orjson.JSONDecodeError` escapes from `cache.py:282` |
+| `b'\xff\xfe'`  | JsonSerializer | `UnicodeDecodeError` escapes from `cache.py:337`     |
 
 The Pydantic caches are safe because `model_validate_json` raises a `ValidationError`, which is in
 the except clause. The two ORJSON caches are the media URL cache (`core.py:592-595`) and the Ory

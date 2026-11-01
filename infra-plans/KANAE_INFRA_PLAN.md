@@ -75,51 +75,51 @@ when it renders. It is done when it runs.
 POC_FINDINGS.md covers Kubernetes itself. These are the other names you will
 meet, in the order you meet them.
 
-| Name | What it is |
-| --- | --- |
-| **dprint** | A code formatter written in Rust that loads per-language plugins. Here it formats YAML through its `pretty_yaml` plugin. Formatting only, no opinions about meaning. |
-| **yamllint** | A linter for YAML files. Used here only for the rules a formatter cannot cover, mainly duplicate keys. See the discussion in Phase 1. |
-| **kubeconform** | Checks that a Kubernetes YAML file has the fields Kubernetes expects. It checks shape, never meaning. |
-| **kube-linter** | Checks rendered Kubernetes YAML against policy rules, such as "this container runs as root" or "this container has no memory limit". |
-| **JSON Schema** | A file that describes what a config file is allowed to contain: which keys exist, what type each one is, which are required. `values.schema.json` is Helm's version. |
-| **rendered manifests pattern** | Running the templating tool as a build step, committing its plain-YAML output, and deploying that output rather than re-templating at install time. What is in git is exactly what is in the cluster. |
-| **drift check** | A CI step that regenerates committed output and fails if the committed copy is stale, so nobody can change a template without also committing the manifest it produces. |
-| **kapp** | A single-binary deploy tool from Carvel. Takes a directory of Kubernetes YAML, shows what will change, applies it, and deletes anything that has left the directory since last time. |
-| **pruning** | Deleting cluster resources that have been removed from your manifests. `kubectl apply` does not do it; kapp does. |
-| **Gateway API** | The Kubernetes routing API that replaces Ingress. A `Gateway` owns the listeners and the certificate, an `HTTPRoute` owns the rules. |
-| **HTTPRoute filter** | A step applied to a matched request before it reaches the backend. This plan uses `URLRewrite` to strip `/auth` on one rule and leave every other rule alone. |
-| **Envoy Gateway** | The Gateway API controller this plan runs. A control plane pod watches Gateways and HTTPRoutes, and provisions an Envoy proxy pod per Gateway to carry the traffic. |
-| **dorny/paths-filter** | A GitHub Action that reports which of a named set of path patterns a pull request touched, so a workflow can decide per job whether to run. |
-| **SOPS** | Encrypts the values in a YAML file and leaves the keys readable. That gives you a secrets file you can commit to git and still review, because the diff shows which key changed. |
-| **age** | The encryption tool SOPS uses here. Each person has a key pair. You list the public halves in `.sops.yaml` and everybody listed can decrypt. |
-| **Atlas** | The database migration tool this repo already uses, pinned in `mise.toml`. You give it the schema you want in `src/schema.sql` and it works out the SQL to get there. |
-| **declarative diff** | How Atlas decides what to run. It compares your target schema against the live database and generates the difference. That difference can include `DROP COLUMN`, which is why this plan asks you to read it before it runs. |
-| **DDL** | Data Definition Language. The SQL statements that change structure rather than rows: `CREATE TABLE`, `ALTER TABLE`, `DROP COLUMN`. |
-| **blake3** | A hash function. Used here to turn one master key into the two webhook tokens Kratos sends to kanae. |
-| **backoffLimit** | How many times Kubernetes retries a failed Job before it gives up and reports failure. |
-| **cert-manager** | A program that runs inside the cluster, gets TLS certificates from Let's Encrypt, and renews them without anybody doing anything. |
-| **CSRF, double-submit** | A defence against another website submitting a form on your behalf. Double-submit means the server sends a token twice, once in the page and once in a cookie, and rejects the request unless both arrive and match. Kratos uses it, so a dropped cookie shows up as a rejected login. |
-| **Borg, borgmatic** | Borg is a backup tool. borgmatic is a wrapper that runs it on a schedule from a config file. |
-| **3-2-1** | A backup rule of thumb: three copies of the data, on two kinds of storage, one of them offsite. |
-| **change-group, change-rule** | kapp annotations that declare deploy order. A change-group names a set of resources; a change-rule says which group a resource waits for. Kubernetes has no `depends_on`, so without them everything is applied at once. |
-| **versioned resource** | A kapp annotation that creates a uniquely named copy of a resource instead of updating it in place, rewriting whatever references it. Used here so a changed migration Job is a new Job. |
-| **orphan** | A kapp delete-strategy that makes kapp forget a resource rather than delete it. What protects the Postgres claim. `helm.sh/resource-policy` does nothing in this design, because Helm never installs. |
+| Name                           | What it is                                                                                                                                                                                                                                                                             |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **dprint**                     | A code formatter written in Rust that loads per-language plugins. Here it formats YAML through its `pretty_yaml` plugin. Formatting only, no opinions about meaning.                                                                                                                   |
+| **yamllint**                   | A linter for YAML files. Used here only for the rules a formatter cannot cover, mainly duplicate keys. See the discussion in Phase 1.                                                                                                                                                  |
+| **kubeconform**                | Checks that a Kubernetes YAML file has the fields Kubernetes expects. It checks shape, never meaning.                                                                                                                                                                                  |
+| **kube-linter**                | Checks rendered Kubernetes YAML against policy rules, such as "this container runs as root" or "this container has no memory limit".                                                                                                                                                   |
+| **JSON Schema**                | A file that describes what a config file is allowed to contain: which keys exist, what type each one is, which are required. `values.schema.json` is Helm's version.                                                                                                                   |
+| **rendered manifests pattern** | Running the templating tool as a build step, committing its plain-YAML output, and deploying that output rather than re-templating at install time. What is in git is exactly what is in the cluster.                                                                                  |
+| **drift check**                | A CI step that regenerates committed output and fails if the committed copy is stale, so nobody can change a template without also committing the manifest it produces.                                                                                                                |
+| **kapp**                       | A single-binary deploy tool from Carvel. Takes a directory of Kubernetes YAML, shows what will change, applies it, and deletes anything that has left the directory since last time.                                                                                                   |
+| **pruning**                    | Deleting cluster resources that have been removed from your manifests. `kubectl apply` does not do it; kapp does.                                                                                                                                                                      |
+| **Gateway API**                | The Kubernetes routing API that replaces Ingress. A `Gateway` owns the listeners and the certificate, an `HTTPRoute` owns the rules.                                                                                                                                                   |
+| **HTTPRoute filter**           | A step applied to a matched request before it reaches the backend. This plan uses `URLRewrite` to strip `/auth` on one rule and leave every other rule alone.                                                                                                                          |
+| **Envoy Gateway**              | The Gateway API controller this plan runs. A control plane pod watches Gateways and HTTPRoutes, and provisions an Envoy proxy pod per Gateway to carry the traffic.                                                                                                                    |
+| **dorny/paths-filter**         | A GitHub Action that reports which of a named set of path patterns a pull request touched, so a workflow can decide per job whether to run.                                                                                                                                            |
+| **SOPS**                       | Encrypts the values in a YAML file and leaves the keys readable. That gives you a secrets file you can commit to git and still review, because the diff shows which key changed.                                                                                                       |
+| **age**                        | The encryption tool SOPS uses here. Each person has a key pair. You list the public halves in `.sops.yaml` and everybody listed can decrypt.                                                                                                                                           |
+| **Atlas**                      | The database migration tool this repo already uses, pinned in `mise.toml`. You give it the schema you want in `src/schema.sql` and it works out the SQL to get there.                                                                                                                  |
+| **declarative diff**           | How Atlas decides what to run. It compares your target schema against the live database and generates the difference. That difference can include `DROP COLUMN`, which is why this plan asks you to read it before it runs.                                                            |
+| **DDL**                        | Data Definition Language. The SQL statements that change structure rather than rows: `CREATE TABLE`, `ALTER TABLE`, `DROP COLUMN`.                                                                                                                                                     |
+| **blake3**                     | A hash function. Used here to turn one master key into the two webhook tokens Kratos sends to kanae.                                                                                                                                                                                   |
+| **backoffLimit**               | How many times Kubernetes retries a failed Job before it gives up and reports failure.                                                                                                                                                                                                 |
+| **cert-manager**               | A program that runs inside the cluster, gets TLS certificates from Let's Encrypt, and renews them without anybody doing anything.                                                                                                                                                      |
+| **CSRF, double-submit**        | A defence against another website submitting a form on your behalf. Double-submit means the server sends a token twice, once in the page and once in a cookie, and rejects the request unless both arrive and match. Kratos uses it, so a dropped cookie shows up as a rejected login. |
+| **Borg, borgmatic**            | Borg is a backup tool. borgmatic is a wrapper that runs it on a schedule from a config file.                                                                                                                                                                                           |
+| **3-2-1**                      | A backup rule of thumb: three copies of the data, on two kinds of storage, one of them offsite.                                                                                                                                                                                        |
+| **change-group, change-rule**  | kapp annotations that declare deploy order. A change-group names a set of resources; a change-rule says which group a resource waits for. Kubernetes has no `depends_on`, so without them everything is applied at once.                                                               |
+| **versioned resource**         | A kapp annotation that creates a uniquely named copy of a resource instead of updating it in place, rewriting whatever references it. Used here so a changed migration Job is a new Job.                                                                                               |
+| **orphan**                     | A kapp delete-strategy that makes kapp forget a resource rather than delete it. What protects the Postgres claim. `helm.sh/resource-policy` does nothing in this design, because Helm never installs.                                                                                  |
 
 ## The layers and phases
 
-| Layer | Phase | What you build |
-| --- | --- | --- |
-| A. Foundation | 1 | Pinned tools, formatters, linters, a local cluster you create with one command |
-| A. Foundation | 2 | Values schema, committed rendered manifests, CI that gates on them |
-| B. Platform | 3 | One source of truth per config file, one renderer per generated file, real SOPS keys |
-| B. Platform | 4 | Postgres and Valkey, with probes that can pass and storage that survives |
-| B. Platform | 5 | The three databases, their tables, and migrations you can review before they run |
-| C. Services | 6 | Ory Kratos and Ory Keto |
-| C. Services | 7 | The kanae API |
-| C. Services | 8 | Gateway API routing, path rewriting, and TLS (finishes after Phase 7) |
-| D. Proof | 9 | An automated test that boots the whole stack and signs a user up |
-| D. Proof | 10 | Backups you have restored from, memory limits from measurements, runbooks |
-| D. Proof | 11 | The production cluster and the first real deploy |
+| Layer         | Phase | What you build                                                                       |
+| ------------- | ----- | ------------------------------------------------------------------------------------ |
+| A. Foundation | 1     | Pinned tools, formatters, linters, a local cluster you create with one command       |
+| A. Foundation | 2     | Values schema, committed rendered manifests, CI that gates on them                   |
+| B. Platform   | 3     | One source of truth per config file, one renderer per generated file, real SOPS keys |
+| B. Platform   | 4     | Postgres and Valkey, with probes that can pass and storage that survives             |
+| B. Platform   | 5     | The three databases, their tables, and migrations you can review before they run     |
+| C. Services   | 6     | Ory Kratos and Ory Keto                                                              |
+| C. Services   | 7     | The kanae API                                                                        |
+| C. Services   | 8     | Gateway API routing, path rewriting, and TLS (finishes after Phase 7)                |
+| D. Proof      | 9     | An automated test that boots the whole stack and signs a user up                     |
+| D. Proof      | 10    | Backups you have restored from, memory limits from measurements, runbooks            |
+| D. Proof      | 11    | The production cluster and the first real deploy                                     |
 
 Layers run in order, and inside a layer phases run in order, with one exception
 noted at the top of Layer C.
@@ -268,22 +268,22 @@ than scattered across five phases.
 
 ### Steady state
 
-| Pod | Request = limit | Set in |
-| --- | --- | --- |
-| kratos | 1Gi, `GOMEMLIMIT=750MiB` | `templates/kratos.yml` |
-| postgres | 1Gi | `templates/postgres.yml` |
-| kanae | 640Mi | `templates/kanae.yml` |
-| valkey | 256Mi, `maxmemory 128mb` | `templates/valkey.yml` |
-| keto | 128Mi | `templates/keto.yml` |
-| envoy gateway control plane | 128Mi, `GOMEMLIMIT=110MiB` | `helmfile.yaml` |
-| envoy proxy, `envoy` container | 64Mi | `envoy.yml` |
-| envoy proxy, `shutdown-manager` sidecar | 32Mi request, no limit | fixed by the controller |
-| cert-manager controller | 64Mi | `helmfile.yaml` |
-| cert-manager cainjector | 128Mi | `helmfile.yaml` |
-| cert-manager webhook | 32Mi | `helmfile.yaml` |
-| **Reserved, kanae and controllers** | **3520Mi** | |
-| CoreDNS and metrics-server in `kube-system` | 140Mi | k3s packaged manifests |
-| **Reserved, everything the scheduler counts** | **3660Mi** | |
+| Pod                                           | Request = limit            | Set in                   |
+| --------------------------------------------- | -------------------------- | ------------------------ |
+| kratos                                        | 1Gi, `GOMEMLIMIT=750MiB`   | `templates/kratos.yml`   |
+| postgres                                      | 1Gi                        | `templates/postgres.yml` |
+| kanae                                         | 640Mi                      | `templates/kanae.yml`    |
+| valkey                                        | 256Mi, `maxmemory 128mb`   | `templates/valkey.yml`   |
+| keto                                          | 128Mi                      | `templates/keto.yml`     |
+| envoy gateway control plane                   | 128Mi, `GOMEMLIMIT=110MiB` | `helmfile.yaml`          |
+| envoy proxy, `envoy` container                | 64Mi                       | `envoy.yml`              |
+| envoy proxy, `shutdown-manager` sidecar       | 32Mi request, no limit     | fixed by the controller  |
+| cert-manager controller                       | 64Mi                       | `helmfile.yaml`          |
+| cert-manager cainjector                       | 128Mi                      | `helmfile.yaml`          |
+| cert-manager webhook                          | 32Mi                       | `helmfile.yaml`          |
+| **Reserved, kanae and controllers**           | **3520Mi**                 |                          |
+| CoreDNS and metrics-server in `kube-system`   | 140Mi                      | k3s packaged manifests   |
+| **Reserved, everything the scheduler counts** | **3660Mi**                 |                          |
 
 A pod's effective request is the larger of its biggest init container and the
 sum of its app containers. kanae's 64Mi init container therefore adds nothing on
@@ -292,11 +292,11 @@ biggest thing in the pod.
 
 ### Deploy-time peak
 
-| Job | Request = limit | Set in |
-| --- | --- | --- |
-| kanae-migrate | 128Mi | `templates/jobs-migrate.yml` |
-| kratos-migrate | 64Mi | `templates/jobs-migrate.yml` |
-| keto-migrate | 64Mi | `templates/jobs-migrate.yml` |
+| Job            | Request = limit | Set in                       |
+| -------------- | --------------- | ---------------------------- |
+| kanae-migrate  | 128Mi           | `templates/jobs-migrate.yml` |
+| kratos-migrate | 64Mi            | `templates/jobs-migrate.yml` |
+| keto-migrate   | 64Mi            | `templates/jobs-migrate.yml` |
 
 The three Jobs run together, so a deploy peaks at 3916Mi. `strategy: Recreate`
 on kanae removes the rolling surge, and the apply order finishes the Jobs
@@ -304,10 +304,10 @@ before app pods schedule.
 
 ### Headroom
 
-| Node | Allocatable | Steady state | Deploy |
-| --- | --- | --- | --- |
-| 4 GiB | 3996Mi | 336Mi free | 80Mi free |
-| 4 GB decimal | 3715Mi | 55Mi free | 201Mi short |
+| Node         | Allocatable | Steady state | Deploy      |
+| ------------ | ----------- | ------------ | ----------- |
+| 4 GiB        | 3996Mi      | 336Mi free   | 80Mi free   |
+| 4 GB decimal | 3715Mi      | 55Mi free    | 201Mi short |
 
 Allocatable assumes the kubelet's 100Mi eviction threshold and no other
 reservation. If allocatable comes in under 3916Mi, set Postgres to 512Mi
@@ -343,31 +343,31 @@ local-path-provisioner, which reserve roughly 200m, so about 2800m is usable.
 
 ### Steady state
 
-| Pod | CPU request | Set in |
-| --- | --- | --- |
-| kratos | 1000m | `templates/kratos.yml` |
-| kanae | 250m | `templates/kanae.yml` |
-| postgres | 250m | `templates/postgres.yml` |
-| envoy proxy, `envoy` container | 100m | `envoy.yml` |
-| envoy proxy, `shutdown-manager` sidecar | 10m | fixed by the controller |
-| keto | 100m | `templates/keto.yml` |
-| valkey | 50m | `templates/valkey.yml` |
-| envoy gateway control plane | 50m | `helmfile.yaml` |
-| cert-manager controller | 50m | `helmfile.yaml` |
-| cert-manager cainjector | 25m | `helmfile.yaml` |
-| cert-manager webhook | 25m | `helmfile.yaml` |
-| **Reserved** | **1910m** | |
+| Pod                                     | CPU request | Set in                   |
+| --------------------------------------- | ----------- | ------------------------ |
+| kratos                                  | 1000m       | `templates/kratos.yml`   |
+| kanae                                   | 250m        | `templates/kanae.yml`    |
+| postgres                                | 250m        | `templates/postgres.yml` |
+| envoy proxy, `envoy` container          | 100m        | `envoy.yml`              |
+| envoy proxy, `shutdown-manager` sidecar | 10m         | fixed by the controller  |
+| keto                                    | 100m        | `templates/keto.yml`     |
+| valkey                                  | 50m         | `templates/valkey.yml`   |
+| envoy gateway control plane             | 50m         | `helmfile.yaml`          |
+| cert-manager controller                 | 50m         | `helmfile.yaml`          |
+| cert-manager cainjector                 | 25m         | `helmfile.yaml`          |
+| cert-manager webhook                    | 25m         | `helmfile.yaml`          |
+| **Reserved**                            | **1910m**   |                          |
 
 ### Deploy-time
 
-| Pod | CPU request | Set in |
-| --- | --- | --- |
-| kanae-migrate Job | 250m | `templates/jobs-migrate.yml` |
-| kratos-migrate Job | 100m | `templates/jobs-migrate.yml` |
-| keto-migrate Job | 100m | `templates/jobs-migrate.yml` |
-| postgres `check-version` init container | 50m | `templates/postgres.yml` |
-| postgres-checksum CronJob | 50m | `templates/postgres.yml` |
-| borgmatic, CronJob and pre-upgrade | 250m | Phase 10 |
+| Pod                                     | CPU request | Set in                       |
+| --------------------------------------- | ----------- | ---------------------------- |
+| kanae-migrate Job                       | 250m        | `templates/jobs-migrate.yml` |
+| kratos-migrate Job                      | 100m        | `templates/jobs-migrate.yml` |
+| keto-migrate Job                        | 100m        | `templates/jobs-migrate.yml` |
+| postgres `check-version` init container | 50m         | `templates/postgres.yml`     |
+| postgres-checksum CronJob               | 50m         | `templates/postgres.yml`     |
+| borgmatic, CronJob and pre-upgrade      | 250m        | Phase 10                     |
 
 The migration wave adds 450m, so a deploy peaks at 2360m. A backup landing on
 top of one reaches 2610m, which fits under 2800m.
@@ -410,12 +410,12 @@ false rather than the string.
 plan otherwise avoids in the infra checks, so the alternatives are recorded
 here rather than left to be re-argued:
 
-| Tool | Language | Stars | Status |
-| --- | --- | --- | --- |
-| yamllint | Python | 3,447 | ten years old, what the ecosystem uses |
-| ryl | Rust | 65 | active, drop-in config, one maintainer, one year old |
-| yaml-lint-rs | Rust | 7 | stopped February 2026 |
-| yamllint-rs | Rust | 4 | two commits |
+| Tool         | Language | Stars | Status                                               |
+| ------------ | -------- | ----- | ---------------------------------------------------- |
+| yamllint     | Python   | 3,447 | ten years old, what the ecosystem uses               |
+| ryl          | Rust     | 65    | active, drop-in config, one maintainer, one year old |
+| yaml-lint-rs | Rust     | 7     | stopped February 2026                                |
+| yamllint-rs  | Rust     | 4     | two commits                                          |
 
 Speed was the objection and it does not survive measurement: 0.434 seconds over
 all 39 YAML files here. No Rust reimplementation clears the maturity bar this

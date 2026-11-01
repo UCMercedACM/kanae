@@ -141,20 +141,20 @@ overlapped a timing run were discarded and re-run.
 
 **Table 1.** The nine phases.
 
-| phase | factors | levels | reps | trials |
-| --- | --- | --- | --- | --- |
-| 1 | concurrency, Go defaults, 12Gi cgroup | C ∈ {1, 2, 3, 4, 6, 8, 12, 16, 24, 32} | 3 | 30 |
-| 1 | Poisson rate, 4Gi cgroup (the node) | 1, 2, 4, 6, 8, 10, 15, 20, 30, 50, 75 /s | 3 | 33 |
-| 1 | concurrency × `GOMEMLIMIT` | C ∈ {1, 2, 4, 8, 16, 32} × {768MiB, 1536MiB} | 3 | 36 |
-| 2 | plateau check, 60 s instead of 20 s | C ∈ {4, 6, 8} | 2 | 6 |
-| 2 | `parallelism` 3 against 16 | C ∈ {2, 4} | 3 | 6 |
-| 3 | verification: limit × `GOMEMLIMIT` × load | {1Gi, 1Gi+900MiB, 1.5Gi+1400MiB, 2Gi+1850MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 48 |
-| 4 | recalibrated hashers at 1Gi + 900MiB | {64MB/6, 64MB/3, 19MiB/2/p1} × {C=4, C=8, C=16, 2/s, 4/s} | 3 | 45 |
-| 5 | calibrate's proposal, 224MB/5 | {1.5Gi+1400MiB, 1Gi+900MiB} × {C=4, C=8, 2/s, 4/s} | 3 | 24 |
-| 6 | `GOMEMLIMIT` at 85% | 1.5Gi+1306MiB × {C=8, C=10, 4/s}; 1Gi+870MiB × {C=4, 2/s} | 3 | 15 |
-| 7 | paired hashers | {128MB/3/p16 at 1.5Gi, 64MB/6/p3 at 1Gi, 64MB/6/p3 at 1.5Gi} × {C=4, 8, 10, 16, 2/s, 4/s} | 3 | 54 |
-| 8 | Envoy proxy limit × load, through TLS | {no limit, 64Mi, 128Mi} × {C=4, 8, 16, 32, 64, 75/s, 75/s rate-limited} | 3 | 63 |
-| 9 | 64MB/6 at 1Gi, 60 s: parallelism paired, then `GOMEMLIMIT` | {p16, p3} × {C=4, 8, 10} at 870MiB; p3 × {C=6, 4/s} at 870MiB, C=8 at {800, 750}MiB, C=10 at 800MiB | 3 | 33 |
+| phase | factors                                                    | levels                                                                                              | reps | trials |
+| ----- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ---- | ------ |
+| 1     | concurrency, Go defaults, 12Gi cgroup                      | C ∈ {1, 2, 3, 4, 6, 8, 12, 16, 24, 32}                                                              | 3    | 30     |
+| 1     | Poisson rate, 4Gi cgroup (the node)                        | 1, 2, 4, 6, 8, 10, 15, 20, 30, 50, 75 /s                                                            | 3    | 33     |
+| 1     | concurrency × `GOMEMLIMIT`                                 | C ∈ {1, 2, 4, 8, 16, 32} × {768MiB, 1536MiB}                                                        | 3    | 36     |
+| 2     | plateau check, 60 s instead of 20 s                        | C ∈ {4, 6, 8}                                                                                       | 2    | 6      |
+| 2     | `parallelism` 3 against 16                                 | C ∈ {2, 4}                                                                                          | 3    | 6      |
+| 3     | verification: limit × `GOMEMLIMIT` × load                  | {1Gi, 1Gi+900MiB, 1.5Gi+1400MiB, 2Gi+1850MiB} × {C=4, C=8, 2/s, 4/s}                                | 3    | 48     |
+| 4     | recalibrated hashers at 1Gi + 900MiB                       | {64MB/6, 64MB/3, 19MiB/2/p1} × {C=4, C=8, C=16, 2/s, 4/s}                                           | 3    | 45     |
+| 5     | calibrate's proposal, 224MB/5                              | {1.5Gi+1400MiB, 1Gi+900MiB} × {C=4, C=8, 2/s, 4/s}                                                  | 3    | 24     |
+| 6     | `GOMEMLIMIT` at 85%                                        | 1.5Gi+1306MiB × {C=8, C=10, 4/s}; 1Gi+870MiB × {C=4, 2/s}                                           | 3    | 15     |
+| 7     | paired hashers                                             | {128MB/3/p16 at 1.5Gi, 64MB/6/p3 at 1Gi, 64MB/6/p3 at 1.5Gi} × {C=4, 8, 10, 16, 2/s, 4/s}           | 3    | 54     |
+| 8     | Envoy proxy limit × load, through TLS                      | {no limit, 64Mi, 128Mi} × {C=4, 8, 16, 32, 64, 75/s, 75/s rate-limited}                             | 3    | 63     |
+| 9     | 64MB/6 at 1Gi, 60 s: parallelism paired, then `GOMEMLIMIT` | {p16, p3} × {C=4, 8, 10} at 870MiB; p3 × {C=6, 4/s} at 870MiB, C=8 at {800, 750}MiB, C=10 at 800MiB | 3    | 33     |
 
 ### 2.5 Statistics
 
@@ -212,21 +212,21 @@ Kubernetes Authors, 2026b).
 
 **Table 2.** Closed loop, 12Gi cgroup, Go defaults, 128MB hasher.
 
-| in flight | n | peak Mi, mean [95% CI] | signups/s | p50 ms | p95 ms |
-| --- | --- | --- | --- | --- | --- |
-| 1 | 3 | 446 [442, 451] | 5.30 ± 0.03 | 170 | 193 |
-| 2 | 3 | 634 [297, 970] | 6.03 ± 0.39 | 283 | 737 |
-| 3 | 3 | 1090 [914, 1267] | 5.16 ± 0.40 | 397 | 1600 |
-| 4 | 3 | 1281 [1269, 1293] | 4.95 ± 0.22 | 560 | 2067 |
-| 4, 60 s | 2 | 1316 [1283, 1349] | 5.14 ± 0.04 | 570 | 1650 |
-| 6 | 3 | 1604 [1465, 1742] | 4.60 ± 0.24 | 823 | 3467 |
-| 6, 60 s | 2 | 1807 [1271, 2343] | 5.15 ± 0.17 | 900 | 2250 |
-| 8 | 3 | 1995 [1768, 2223] | 3.91 ± 0.38 | 1333 | 4767 |
-| 8, 60 s | 2 | 2206 [1899, 2512] | 4.98 ± 0.08 | 1200 | 3750 |
-| 12 | 3 | 2169 [2136, 2202] | 3.84 ± 0.30 | 1900 | 7867 |
-| 16 | 3 | 3320 [2463, 4177] | 1.82 ± 1.16 | 8733 | 13000 |
-| 24 | 3 | 4131 [3461, 4800] | 1.17 ± 0.16 | 15667 | 17333 |
-| 32 | 3 | 4227 [3896, 4558] | 0.08 ± 0.03 | 17500 | 17500 |
+| in flight | n | peak Mi, mean [95% CI] | signups/s   | p50 ms | p95 ms |
+| --------- | - | ---------------------- | ----------- | ------ | ------ |
+| 1         | 3 | 446 [442, 451]         | 5.30 ± 0.03 | 170    | 193    |
+| 2         | 3 | 634 [297, 970]         | 6.03 ± 0.39 | 283    | 737    |
+| 3         | 3 | 1090 [914, 1267]       | 5.16 ± 0.40 | 397    | 1600   |
+| 4         | 3 | 1281 [1269, 1293]      | 4.95 ± 0.22 | 560    | 2067   |
+| 4, 60 s   | 2 | 1316 [1283, 1349]      | 5.14 ± 0.04 | 570    | 1650   |
+| 6         | 3 | 1604 [1465, 1742]      | 4.60 ± 0.24 | 823    | 3467   |
+| 6, 60 s   | 2 | 1807 [1271, 2343]      | 5.15 ± 0.17 | 900    | 2250   |
+| 8         | 3 | 1995 [1768, 2223]      | 3.91 ± 0.38 | 1333   | 4767   |
+| 8, 60 s   | 2 | 2206 [1899, 2512]      | 4.98 ± 0.08 | 1200   | 3750   |
+| 12        | 3 | 2169 [2136, 2202]      | 3.84 ± 0.30 | 1900   | 7867   |
+| 16        | 3 | 3320 [2463, 4177]      | 1.82 ± 1.16 | 8733   | 13000  |
+| 24        | 3 | 4131 [3461, 4800]      | 1.17 ± 0.16 | 15667  | 17333  |
+| 32        | 3 | 4227 [3896, 4558]      | 0.08 ± 0.03 | 17500  | 17500  |
 
 Throughput peaks at 2 in flight and falls from there. At 16 and above the
 median signup takes longer than 8 s and the peak was still climbing when the
@@ -249,19 +249,19 @@ machine with 8 or more CPUs produces that concurrency.
 
 **Table 3.** Open loop, 4Gi limit enforced, 20 s trials.
 
-| signups/s offered | n | peak Mi | OOM-killed | completed /s | mean ms | p95 ms | in flight (Little) |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 3 | 871 [525, 1217] | 0/3 | 1.07 | 417 | 1100 | 0.4 |
-| 2 | 3 | 1278 [595, 1960] | 0/3 | 1.87 | 947 | 2200 | 1.9 |
-| 4 | 3 | 2382 [1224, 3540] | 0/3 | 2.84 | 3446 | 8967 | 13.8 |
-| 6 | 3 | 3397 [2227, 4567] | 0/3 | 1.26 | 9506 | 16000 | 57 |
-| 8 | 3 | 3931 [3763, 4099] | 0/3 | 0.48 | 12994 | 17000 | 104 |
-| 10 | 3 | 4052 [3865, 4240] | 2/3 | 0.23 | 11737 | 14433 | 117 |
-| 15 | 3 | 4096 | 3/3 | 1.38 | 12179 | 16333 | 183 |
-| 20 | 3 | 4096 | 3/3 | 3.31 | 9713 | 14300 | 194 |
-| 30 | 3 | 4096 | 3/3 | 7.46 | 11178 | 18333 | 335 |
-| 50 | 3 | 4096 | 3/3 | 10.66 | 10814 | 17667 | 541 |
-| 75 | 3 | 4096 | 3/3 | 13.19 | 10903 | 17667 | 818 |
+| signups/s offered | n | peak Mi           | OOM-killed | completed /s | mean ms | p95 ms | in flight (Little) |
+| ----------------- | - | ----------------- | ---------- | ------------ | ------- | ------ | ------------------ |
+| 1                 | 3 | 871 [525, 1217]   | 0/3        | 1.07         | 417     | 1100   | 0.4                |
+| 2                 | 3 | 1278 [595, 1960]  | 0/3        | 1.87         | 947     | 2200   | 1.9                |
+| 4                 | 3 | 2382 [1224, 3540] | 0/3        | 2.84         | 3446    | 8967   | 13.8               |
+| 6                 | 3 | 3397 [2227, 4567] | 0/3        | 1.26         | 9506    | 16000  | 57                 |
+| 8                 | 3 | 3931 [3763, 4099] | 0/3        | 0.48         | 12994   | 17000  | 104                |
+| 10                | 3 | 4052 [3865, 4240] | 2/3        | 0.23         | 11737   | 14433  | 117                |
+| 15                | 3 | 4096              | 3/3        | 1.38         | 12179   | 16333  | 183                |
+| 20                | 3 | 4096              | 3/3        | 3.31         | 9713    | 14300  | 194                |
+| 30                | 3 | 4096              | 3/3        | 7.46         | 11178   | 18333  | 335                |
+| 50                | 3 | 4096              | 3/3        | 10.66        | 10814   | 17667  | 541                |
+| 75                | 3 | 4096              | 3/3        | 13.19        | 10903   | 17667  | 818                |
 
 The knee is between 2 and 4 signups per second. At 4/s the mean latency is
 already 3.4 s and 14 hashes are in flight, and the wide intervals there are
@@ -275,13 +275,13 @@ the ramp had not reached it. Above capacity the cgroup grew at 221 MiB/s
 
 **Table 4.** Peak Mi by `GOMEMLIMIT`, closed loop, 128MB hasher.
 
-| in flight | defaults | `GOMEMLIMIT=1536MiB` | `GOMEMLIMIT=768MiB` |
-| --- | --- | --- | --- |
-| 1 | 446 [442, 451] | 446 [439, 453] | 447 [442, 452] |
-| 2 | 634 [297, 970] | 642 [279, 1005] | 724 [697, 752] |
-| 4 | 1281 [1269, 1293] | 1248 [1241, 1256] | 880 [846, 913] |
-| 8 | 1995 [1768, 2223] | 1616 [1496, 1736] | 1049 [1042, 1056] |
-| 16 | 3320 [2463, 4177] | 2075 [2057, 2093] | 2043 [1969, 2118] |
+| in flight | defaults          | `GOMEMLIMIT=1536MiB` | `GOMEMLIMIT=768MiB` |
+| --------- | ----------------- | -------------------- | ------------------- |
+| 1         | 446 [442, 451]    | 446 [439, 453]       | 447 [442, 452]      |
+| 2         | 634 [297, 970]    | 642 [279, 1005]      | 724 [697, 752]      |
+| 4         | 1281 [1269, 1293] | 1248 [1241, 1256]    | 880 [846, 913]      |
+| 8         | 1995 [1768, 2223] | 1616 [1496, 1736]    | 1049 [1042, 1056]   |
+| 16        | 3320 [2463, 4177] | 2075 [2057, 2093]    | 2043 [1969, 2118]   |
 
 Where the limit binds (`GOMEMLIMIT=768MiB`, peak above 845 Mi, $n = 12$):
 
@@ -305,12 +305,12 @@ nothing measurable.
 
 **Table 5.** Three trials per cell, 128MB hasher.
 
-| limit | `GOMEMLIMIT` | C = 4 | C = 8 | 2 signups/s | 4 signups/s |
-| --- | --- | --- | --- | --- | --- |
-| 1Gi | unset | killed 3/3 | killed 3/3 | killed 2/3 | killed 3/3 |
-| 1Gi | 900MiB | 0/3, peak 1011, 5.05 /s | killed 3/3 | 0/3, peak 932 | killed 2/3 |
-| 1.5Gi | 1400MiB | 0/3, peak 1261, 4.58 /s | 0/3, peak 1503, 4.38 /s | 0/3, peak 1172 | 0/3, peak 1461, 3.18 /s |
-| 2Gi | 1850MiB | 0/3, peak 1265, 4.65 /s | 0/3, peak 1789, 4.18 /s | 0/3, peak 1167 | 0/3, peak 1776, 2.42 /s |
+| limit | `GOMEMLIMIT` | C = 4                   | C = 8                   | 2 signups/s    | 4 signups/s             |
+| ----- | ------------ | ----------------------- | ----------------------- | -------------- | ----------------------- |
+| 1Gi   | unset        | killed 3/3              | killed 3/3              | killed 2/3     | killed 3/3              |
+| 1Gi   | 900MiB       | 0/3, peak 1011, 5.05 /s | killed 3/3              | 0/3, peak 932  | killed 2/3              |
+| 1.5Gi | 1400MiB      | 0/3, peak 1261, 4.58 /s | 0/3, peak 1503, 4.38 /s | 0/3, peak 1172 | 0/3, peak 1461, 3.18 /s |
+| 2Gi   | 1850MiB      | 0/3, peak 1265, 4.65 /s | 0/3, peak 1789, 4.18 /s | 0/3, peak 1167 | 0/3, peak 1776, 2.42 /s |
 
 Across all 24 trials at 1.5Gi and 2Gi there were no kills, which bounds the
 kill probability below 12%. The 1.5Gi row at $C = 8$ peaked at 1503 Mi
@@ -320,17 +320,17 @@ against a 1536 Mi limit.
 
 **Table 6.** 15 trials, 3 replicates, shuffled, 128MB hasher.
 
-| pod | load | `GOMEMLIMIT` | peak Mi | margin to limit | completed /s | killed |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1.5Gi | C = 8 | 1400MiB (91%) | 1503 [1473, 1533] | 33 | 4.38 ± 0.08 | 0/3 |
-| 1.5Gi | C = 8 | 1306MiB (85%) | 1385 [1349, 1421] | 135 | 4.32 ± 0.30 | 0/3 |
-| 1.5Gi | C = 10 | 1306MiB (85%) | 1393 [1383, 1404] | 139 | 4.03 ± 0.23 | 0/3 |
-| 1.5Gi | 4 /s | 1400MiB (91%) | 1461 [1333, 1590] | 75 | 3.18 ± 0.08 | 0/3 |
-| 1.5Gi | 4 /s | 1306MiB (85%) | 1350 [1327, 1372] | 176 | 3.37 ± 0.06 | 0/3 |
-| 1Gi | C = 4 | 900MiB (88%) | 1011 [982, 1040] | 13 | 5.05 ± 0.56 | 0/3 |
-| 1Gi | C = 4 | 870MiB (85%) | 1020 [1008, 1031] | 0 | 4.33 ± 1.11 | 0/3 |
-| 1Gi | 2 /s | 900MiB (88%) | 932 [859, 1006] | 92 | 1.62 ± 0.28 | 0/3 |
-| 1Gi | 2 /s | 870MiB (85%) | 851 [572, 1129] | 78 | 1.95 ± 0.20 | 0/3 |
+| pod   | load   | `GOMEMLIMIT`  | peak Mi           | margin to limit | completed /s | killed |
+| ----- | ------ | ------------- | ----------------- | --------------- | ------------ | ------ |
+| 1.5Gi | C = 8  | 1400MiB (91%) | 1503 [1473, 1533] | 33              | 4.38 ± 0.08  | 0/3    |
+| 1.5Gi | C = 8  | 1306MiB (85%) | 1385 [1349, 1421] | 135             | 4.32 ± 0.30  | 0/3    |
+| 1.5Gi | C = 10 | 1306MiB (85%) | 1393 [1383, 1404] | 139             | 4.03 ± 0.23  | 0/3    |
+| 1.5Gi | 4 /s   | 1400MiB (91%) | 1461 [1333, 1590] | 75              | 3.18 ± 0.08  | 0/3    |
+| 1.5Gi | 4 /s   | 1306MiB (85%) | 1350 [1327, 1372] | 176             | 3.37 ± 0.06  | 0/3    |
+| 1Gi   | C = 4  | 900MiB (88%)  | 1011 [982, 1040]  | 13              | 5.05 ± 0.56  | 0/3    |
+| 1Gi   | C = 4  | 870MiB (85%)  | 1020 [1008, 1031] | 0               | 4.33 ± 1.11  | 0/3    |
+| 1Gi   | 2 /s   | 900MiB (88%)  | 932 [859, 1006]   | 92              | 1.62 ± 0.28  | 0/3    |
+| 1Gi   | 2 /s   | 870MiB (85%)  | 851 [572, 1129]   | 78              | 1.95 ± 0.20  | 0/3    |
 
 At 1.5Gi the peak sits 80 to 100 Mi above $G$ either way, so lowering $G$ by
 94 Mi moved the peak down by the same amount at unchanged throughput. At
@@ -342,18 +342,18 @@ trial at $C = 4$ touched the limit without being killed.
 **Table 7.** Warm median of 7 calls and the cold first call, idle CPUs.
 The production setting at the time is in bold.
 
-| memory | iterations | parallelism | warm median | cold first call |
-| --- | --- | --- | --- | --- |
-| 19MiB | 2 | 1 | 30 ms | 49 ms |
-| 19MiB | 2 | 16 | 15 ms | 92 ms |
-| 46MiB | 1 | 1 | 42 ms | 94 ms |
-| 32MB | 4 | 16 | 47 ms | 149 ms |
-| 64MB | 3 | 16 | 72 ms | 268 ms |
-| 64MB | 6 | 16 | 140 ms | 333 ms |
-| 96MB | 3 | 16 | 108 ms | 419 ms |
-| **128MB** | **3** | **16** | **147 ms** | **575 ms** |
-| 128MB | 3 | 3 | 141 ms | 544 ms |
-| 128MB | 1 | 16 | 53 ms | 460 ms |
+| memory    | iterations | parallelism | warm median | cold first call |
+| --------- | ---------- | ----------- | ----------- | --------------- |
+| 19MiB     | 2          | 1           | 30 ms       | 49 ms           |
+| 19MiB     | 2          | 16          | 15 ms       | 92 ms           |
+| 46MiB     | 1          | 1           | 42 ms       | 94 ms           |
+| 32MB      | 4          | 16          | 47 ms       | 149 ms          |
+| 64MB      | 3          | 16          | 72 ms       | 268 ms          |
+| 64MB      | 6          | 16          | 140 ms      | 333 ms          |
+| 96MB      | 3          | 16          | 108 ms      | 419 ms          |
+| **128MB** | **3**      | **16**      | **147 ms**  | **575 ms**      |
+| 128MB     | 3          | 3           | 141 ms      | 544 ms          |
+| 128MB     | 1          | 16          | 53 ms       | 460 ms          |
 
 A second run on the same CPUs during phase 9, median of 5: 128MB/3/p16
 187 ms, 128MB/3/p3 187 ms, 64MB/6/p3 178 ms, 64MB/6/p16 176 ms. Cost scales
@@ -365,12 +365,12 @@ Corp, 2026c) on this CPU, the production row included.
 **Table 8.** 45 trials at 1Gi with `GOMEMLIMIT=900MiB`. Peaks are means in
 Mi; capacity is completed signups per second at the best closed-loop point.
 
-| hasher | hash here | C = 4 | C = 8 | C = 16 | 2 /s | 4 /s | capacity |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 128MB, 3 it, p16 (Table 5) | 147 ms | ok, 1011 | killed 3/3 | not run | ok, 932 | killed 2/3 | 5.7 /s |
-| 64MB, 6 it, p16 | 140 ms | ok, 696 | ok, 953 | killed 3/3 | ok, 481 | ok, 751 | 5.8 /s |
-| 64MB, 3 it, p16 | 72 ms | ok, 707 | ok, 974 | ok, 1010 | ok, 374 | ok, 673 | 10.1 /s |
-| 19MiB, 2 it, p1 (OWASP floor) | 30 ms | ok, 385 | ok, 460 | ok, 659 | ok, 126 | ok, 162 | 35.6 /s |
+| hasher                        | hash here | C = 4    | C = 8      | C = 16     | 2 /s    | 4 /s       | capacity |
+| ----------------------------- | --------- | -------- | ---------- | ---------- | ------- | ---------- | -------- |
+| 128MB, 3 it, p16 (Table 5)    | 147 ms    | ok, 1011 | killed 3/3 | not run    | ok, 932 | killed 2/3 | 5.7 /s   |
+| 64MB, 6 it, p16               | 140 ms    | ok, 696  | ok, 953    | killed 3/3 | ok, 481 | ok, 751    | 5.8 /s   |
+| 64MB, 3 it, p16               | 72 ms     | ok, 707  | ok, 974    | ok, 1010   | ok, 374 | ok, 673    | 10.1 /s  |
+| 19MiB, 2 it, p1 (OWASP floor) | 30 ms     | ok, 385  | ok, 460    | ok, 659    | ok, 126 | ok, 162    | 35.6 /s  |
 
 Per-signup slopes over the unkilled closed trials: $b = 64.2\,(\pm 6.0)$ Mi
 for 64MB at 6 iterations ($R^2 = 0.97$), one 64MB block; $b = 23.1\,(\pm 1.4)$
@@ -385,11 +385,11 @@ whatever the parameters (Table 9).
 
 **Table 9.** What `calibrate` and `load-test` timed against the raw hash.
 
-| what the command timed | it reported | raw `argon2.IDKey` at the same parameters |
-| --- | --- | --- |
-| probe, 8MB, 1 iteration | 623 ms | 4 ms |
-| probes while it halved memory down to 64 bytes | 870 to 1006 ms each | under 1 ms |
-| load-test 60/min at 8MB, 1 iteration, 20 s | median 762 ms, min 425 ms, max 1281 ms | 4 ms |
+| what the command timed                         | it reported                            | raw `argon2.IDKey` at the same parameters |
+| ---------------------------------------------- | -------------------------------------- | ----------------------------------------- |
+| probe, 8MB, 1 iteration                        | 623 ms                                 | 4 ms                                      |
+| probes while it halved memory down to 64 bytes | 870 to 1006 ms each                    | under 1 ms                                |
+| load-test 60/min at 8MB, 1 iteration, 20 s     | median 762 ms, min 425 ms, max 1281 ms | 4 ms                                      |
 
 The cause is in `cmd/hashers/argon2/root.go` (Ory Corp, 2026a): the CLI
 wraps the hasher in an `argon2Config` whose `Config()` method writes all
@@ -415,12 +415,12 @@ times today's, so capacity near 2 signups per second.
 
 **Table 10.** Calibrate's proposal under the swarm, 24 trials.
 
-| hasher | pod | C = 4 | C = 8 | 2 /s | 4 /s |
-| --- | --- | --- | --- | --- | --- |
-| 128MB, 3 it | 1.5Gi + 1400MiB | ok, 1261, 4.6 /s | ok, 1503, 4.4 /s | ok, 1172 | ok, 1461, 3.2 /s |
-| 224MB, 5 it (calibrate) | 1.5Gi + 1400MiB | ok, 1438, 1.6 /s | killed 3/3 | killed 3/3 | killed 3/3 |
-| 128MB, 3 it | 1Gi + 900MiB | ok, 1011, 5.1 /s | killed 3/3 | ok, 932 | killed 2/3 |
-| 224MB, 5 it (calibrate) | 1Gi + 900MiB | ok, 991, 1.7 /s | killed 3/3 | killed 3/3 | killed 3/3 |
+| hasher                  | pod             | C = 4            | C = 8            | 2 /s       | 4 /s             |
+| ----------------------- | --------------- | ---------------- | ---------------- | ---------- | ---------------- |
+| 128MB, 3 it             | 1.5Gi + 1400MiB | ok, 1261, 4.6 /s | ok, 1503, 4.4 /s | ok, 1172   | ok, 1461, 3.2 /s |
+| 224MB, 5 it (calibrate) | 1.5Gi + 1400MiB | ok, 1438, 1.6 /s | killed 3/3       | killed 3/3 | killed 3/3       |
+| 128MB, 3 it             | 1Gi + 900MiB    | ok, 1011, 5.1 /s | killed 3/3       | ok, 932    | killed 2/3       |
+| 224MB, 5 it (calibrate) | 1Gi + 900MiB    | ok, 991, 1.7 /s  | killed 3/3       | killed 3/3 | killed 3/3       |
 
 Every prediction held. The one surviving cell at 1Gi peaked at 991 Mi
 against a 1024 Mi limit, the borderline the arithmetic gave for
@@ -430,14 +430,14 @@ $C_{\max} = 3$.
 
 **Table 11.** 54 trials, 3 replicates, shuffled with seed 23, 20 s.
 
-| load | 128MB/3/p16 at 1.5Gi + 1300MiB | 64MB/6/p3 at 1Gi + 870MiB | 64MB/6/p3 at 1.5Gi + 1300MiB |
-| --- | --- | --- | --- |
-| C = 4 | 1306 Mi, margin 174, 4.00 /s | 698 Mi, margin 291, 5.37 /s | 677 Mi, margin 843, 5.47 /s |
-| C = 8 | 1384 Mi, margin 142, 4.13 /s | 944 Mi, margin 67, 4.93 /s | 1090 Mi, margin 388, 4.80 /s |
-| C = 10 | 1409 Mi, margin 117, 3.67 /s | 968 Mi, margin 46, 4.82 /s | 1300 Mi, margin 156, 4.90 /s |
-| C = 16 | killed 3/3 | killed 3/3 | 1348 Mi, margin 157, 4.53 /s |
-| 2 /s | 1099 Mi, 1.80 /s, p50 560 ms | 477 Mi, 1.93 /s, p50 310 ms | 607 Mi, 1.88 /s, p50 343 ms |
-| 4 /s | 1341 Mi, 3.02 /s, p50 980 ms | 765 Mi, 3.13 /s, p50 697 ms | 799 Mi, 3.42 /s, p50 543 ms |
+| load   | 128MB/3/p16 at 1.5Gi + 1300MiB | 64MB/6/p3 at 1Gi + 870MiB   | 64MB/6/p3 at 1.5Gi + 1300MiB |
+| ------ | ------------------------------ | --------------------------- | ---------------------------- |
+| C = 4  | 1306 Mi, margin 174, 4.00 /s   | 698 Mi, margin 291, 5.37 /s | 677 Mi, margin 843, 5.47 /s  |
+| C = 8  | 1384 Mi, margin 142, 4.13 /s   | 944 Mi, margin 67, 4.93 /s  | 1090 Mi, margin 388, 4.80 /s |
+| C = 10 | 1409 Mi, margin 117, 3.67 /s   | 968 Mi, margin 46, 4.82 /s  | 1300 Mi, margin 156, 4.90 /s |
+| C = 16 | killed 3/3                     | killed 3/3                  | 1348 Mi, margin 157, 4.53 /s |
+| 2 /s   | 1099 Mi, 1.80 /s, p50 560 ms   | 477 Mi, 1.93 /s, p50 310 ms | 607 Mi, 1.88 /s, p50 343 ms  |
+| 4 /s   | 1341 Mi, 3.02 /s, p50 980 ms   | 765 Mi, 3.13 /s, p50 697 ms | 799 Mi, 3.42 /s, p50 543 ms  |
 
 At an equal pod the 64MB hasher takes 294 Mi less at 8 in flight and 109 Mi
 less at 10, and survives 16 where the 128MB hasher is killed. Its slope is
@@ -451,17 +451,17 @@ hold the same 10 in flight and die at the same 16.
 **Table 12.** 18 trials at 1Gi with `GOMEMLIMIT=870MiB`, 60 s, both lane
 counts interleaved (seed 31). Differences are paired by replicate.
 
-| C | metric | p=16 | p=3 | paired difference, p16 minus p3 | Welch $t$ |
-| --- | --- | --- | --- | --- | --- |
-| 4 | peak Mi | 767 ± 47 | 777 ± 121 | −11 [−174, +153] | −0.35 |
-| 4 | signups/s | 7.62 ± 0.27 | 7.90 ± 0.18 | −0.28 [−0.71, +0.16] | −3.77 |
-| 4 | p50 ms | 450 ± 25 | 427 ± 14 | +23 [−15, +61] | 3.50 |
-| 8 | peak Mi | 1001 ± 39 | 1015 ± 22 | −14 [−63, +36] | −1.32 |
-| 8 | signups/s | 7.36 ± 0.50 | 7.56 ± 0.30 | −0.20 [−0.43, +0.03] | −1.57 |
-| 8 | p50 ms | 953 ± 52 | 893 ± 29 | +60 [+35, +85] | 4.37 |
-| 10 | peak Mi | 1013 ± 24 | 1012 ± 27 | +1 [−5, +6] | 0.07 |
-| 10 | signups/s | 7.16 ± 1.13 | 6.62 ± 3.90 | +0.5 [−2.3, +3.4] | 0.57 |
-| 10 | p50 ms | 1233 ± 143 | 1133 ± 143 | +100 [+100, +100] | 2.12 |
+| C  | metric    | p=16        | p=3         | paired difference, p16 minus p3 | Welch $t$ |
+| -- | --------- | ----------- | ----------- | ------------------------------- | --------- |
+| 4  | peak Mi   | 767 ± 47    | 777 ± 121   | −11 [−174, +153]                | −0.35     |
+| 4  | signups/s | 7.62 ± 0.27 | 7.90 ± 0.18 | −0.28 [−0.71, +0.16]            | −3.77     |
+| 4  | p50 ms    | 450 ± 25    | 427 ± 14    | +23 [−15, +61]                  | 3.50      |
+| 8  | peak Mi   | 1001 ± 39   | 1015 ± 22   | −14 [−63, +36]                  | −1.32     |
+| 8  | signups/s | 7.36 ± 0.50 | 7.56 ± 0.30 | −0.20 [−0.43, +0.03]            | −1.57     |
+| 8  | p50 ms    | 953 ± 52    | 893 ± 29    | +60 [+35, +85]                  | 4.37      |
+| 10 | peak Mi   | 1013 ± 24   | 1012 ± 27   | +1 [−5, +6]                     | 0.07      |
+| 10 | signups/s | 7.16 ± 1.13 | 6.62 ± 3.90 | +0.5 [−2.3, +3.4]               | 0.57      |
+| 10 | p50 ms    | 1233 ± 143  | 1133 ± 143  | +100 [+100, +100]               | 2.12      |
 
 Every paired interval for peak and for throughput includes zero. Median
 latency is lower with 3 lanes at every load, by 60 ms [35, 85] at $C = 8$.
@@ -472,16 +472,16 @@ per second in phase 9 against 5.1 in phase 7.
 "Time above $G$" is the share of 0.1 s samples with the cgroup over the
 soft limit.
 
-| load, `GOMEMLIMIT` | peak Mi [95% CI] | max | margin to 1024 | kills | signups/s | p50 ms | time above $G$ |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| C = 4, 870MiB | 777 [656, 898] | 827 | 197 | 0/3 | 7.90 | 427 | 0% |
-| C = 6, 870MiB | 954 [841, 1068] | 985 | 39 | 0/3 | 7.71 | 673 | 9% |
-| C = 8, 870MiB | 1015 [993, 1037] | 1022 | 2 | 0/3 | 7.56 | 893 | 41% |
-| C = 8, 800MiB | 929 [891, 967] | 945 | 79 | 0/3 | 7.92 | 837 | 57% |
-| C = 8, 750MiB | 896 [870, 922] | 903 | 121 | 0/3 | 7.66 | 893 | 72% |
-| C = 10, 870MiB | 1012 [985, 1040] | 1024 | 0 | 1/3 | 6.62 | 1133 | 56% |
-| C = 10, 800MiB | 962 [947, 976] | 968 | 56 | 0/3 | 7.40 | 1100 | 78% |
-| 4 /s, 870MiB | 812 [525, 1099] | 887 | 137 | 0/3 | 3.64 | 267 | 1% |
+| load, `GOMEMLIMIT` | peak Mi [95% CI] | max  | margin to 1024 | kills | signups/s | p50 ms | time above $G$ |
+| ------------------ | ---------------- | ---- | -------------- | ----- | --------- | ------ | -------------- |
+| C = 4, 870MiB      | 777 [656, 898]   | 827  | 197            | 0/3   | 7.90      | 427    | 0%             |
+| C = 6, 870MiB      | 954 [841, 1068]  | 985  | 39             | 0/3   | 7.71      | 673    | 9%             |
+| C = 8, 870MiB      | 1015 [993, 1037] | 1022 | 2              | 0/3   | 7.56      | 893    | 41%            |
+| C = 8, 800MiB      | 929 [891, 967]   | 945  | 79             | 0/3   | 7.92      | 837    | 57%            |
+| C = 8, 750MiB      | 896 [870, 922]   | 903  | 121            | 0/3   | 7.66      | 893    | 72%            |
+| C = 10, 870MiB     | 1012 [985, 1040] | 1024 | 0              | 1/3   | 6.62      | 1133   | 56%            |
+| C = 10, 800MiB     | 962 [947, 976]   | 968  | 56             | 0/3   | 7.40      | 1100   | 78%            |
+| 4 /s, 870MiB       | 812 [525, 1099]  | 887  | 137            | 0/3   | 3.64      | 267    | 1%             |
 
 Lowering $G$ from 870MiB to 800MiB and 750MiB moved the $C = 8$ peak down by
 86 and 119 Mi at unchanged throughput (7.56, 7.92, 7.66 per second). At
@@ -495,29 +495,29 @@ largest `server.memory_heap_size` reported, which tcmalloc grows in 4 Mi
 steps; "overload" counts trials in which `stop_accepting_requests` became
 active; signups/s is what Kratos completed behind the proxy.
 
-| limit | load | n | peak Mi | 95% CI | max | heap Mi | connections | overload | 5xx | 429 | OOM | signups/s |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| none | C=4 | 3 | 15.2 | [14.9, 15.6] | 15.4 | 10 | 4 | 0 | 0 | 0 | 0 | 5.52 |
-| none | C=8 | 3 | 15.6 | [15.2, 15.9] | 15.6 | 12 | 8 | 0 | 0 | 0 | 0 | 5.29 |
-| none | C=16 | 3 | 16.1 | [15.7, 16.4] | 16.1 | 12 | 16 | 0 | 0 | 0 | 0 | 5.30 |
-| none | C=32 | 3 | 17.1 | [17.1, 17.1] | 17.1 | 12 | 32 | 0 | 0 | 0 | 0 | 2.12 |
-| none | C=64 | 3 | 19.3 | [19.0, 19.7] | 19.4 | 16 | 64 | 0 | 0 | 0 | 0 | 1.75 |
-| none | 75/s | 3 | 21.1 | [20.7, 21.4] | 21.1 | 16 | 100 | 0 | 0 | 0 | 0 | 1.68 |
-| none | 75/s, rate limit | 3 | 21.4 | [21.4, 21.4] | 21.4 | 16 | 100 | 0 | 0 | 976 | 0 | 6.89 |
-| 64Mi | C=4 | 3 | 15.2 | [14.9, 15.6] | 15.4 | 12 | 4 | 0 | 0 | 0 | 0 | 5.55 |
-| 64Mi | C=8 | 3 | 15.6 | [15.6, 15.6] | 15.6 | 12 | 8 | 0 | 0 | 0 | 0 | 5.46 |
-| 64Mi | C=16 | 3 | 16.3 | [16.0, 16.7] | 16.4 | 12 | 16 | 0 | 0 | 0 | 0 | 5.45 |
-| 64Mi | C=32 | 3 | 17.2 | [16.9, 17.6] | 17.4 | 12 | 32 | 0 | 0 | 0 | 0 | 2.17 |
-| 64Mi | C=64 | 3 | 19.1 | [18.7, 19.4] | 19.1 | 16 | 64 | 0 | 0 | 0 | 0 | 1.51 |
-| 64Mi | 75/s | 3 | 21.1 | [20.7, 21.4] | 21.1 | 16 | 100 | 0 | 0 | 0 | 0 | 1.66 |
-| 64Mi | 75/s, rate limit | 3 | 21.5 | [21.1, 21.8] | 21.6 | 16 | 100 | 0 | 0 | 1084 | 0 | 7.67 |
-| 128Mi | C=4 | 3 | 15.5 | [15.1, 15.8] | 15.6 | 12 | 4 | 0 | 0 | 0 | 0 | 5.62 |
-| 128Mi | C=8 | 3 | 15.6 | [15.6, 15.6] | 15.6 | 12 | 8 | 0 | 0 | 0 | 0 | 5.33 |
-| 128Mi | C=16 | 3 | 16.1 | [16.1, 16.2] | 16.1 | 12 | 16 | 0 | 0 | 0 | 0 | 5.40 |
-| 128Mi | C=32 | 3 | 17.2 | [16.8, 17.6] | 17.4 | 12 | 32 | 0 | 0 | 0 | 0 | 2.19 |
-| 128Mi | C=64 | 3 | 19.2 | [18.9, 19.6] | 19.4 | 16 | 64 | 0 | 0 | 0 | 0 | 1.82 |
-| 128Mi | 75/s | 3 | 21.1 | [21.1, 21.1] | 21.1 | 16 | 100 | 0 | 0 | 0 | 0 | 1.64 |
-| 128Mi | 75/s, rate limit | 3 | 21.5 | [21.2, 21.9] | 21.6 | 16 | 100 | 0 | 0 | 1020 | 0 | 7.24 |
+| limit | load             | n | peak Mi | 95% CI       | max  | heap Mi | connections | overload | 5xx | 429  | OOM | signups/s |
+| ----- | ---------------- | - | ------- | ------------ | ---- | ------- | ----------- | -------- | --- | ---- | --- | --------- |
+| none  | C=4              | 3 | 15.2    | [14.9, 15.6] | 15.4 | 10      | 4           | 0        | 0   | 0    | 0   | 5.52      |
+| none  | C=8              | 3 | 15.6    | [15.2, 15.9] | 15.6 | 12      | 8           | 0        | 0   | 0    | 0   | 5.29      |
+| none  | C=16             | 3 | 16.1    | [15.7, 16.4] | 16.1 | 12      | 16          | 0        | 0   | 0    | 0   | 5.30      |
+| none  | C=32             | 3 | 17.1    | [17.1, 17.1] | 17.1 | 12      | 32          | 0        | 0   | 0    | 0   | 2.12      |
+| none  | C=64             | 3 | 19.3    | [19.0, 19.7] | 19.4 | 16      | 64          | 0        | 0   | 0    | 0   | 1.75      |
+| none  | 75/s             | 3 | 21.1    | [20.7, 21.4] | 21.1 | 16      | 100         | 0        | 0   | 0    | 0   | 1.68      |
+| none  | 75/s, rate limit | 3 | 21.4    | [21.4, 21.4] | 21.4 | 16      | 100         | 0        | 0   | 976  | 0   | 6.89      |
+| 64Mi  | C=4              | 3 | 15.2    | [14.9, 15.6] | 15.4 | 12      | 4           | 0        | 0   | 0    | 0   | 5.55      |
+| 64Mi  | C=8              | 3 | 15.6    | [15.6, 15.6] | 15.6 | 12      | 8           | 0        | 0   | 0    | 0   | 5.46      |
+| 64Mi  | C=16             | 3 | 16.3    | [16.0, 16.7] | 16.4 | 12      | 16          | 0        | 0   | 0    | 0   | 5.45      |
+| 64Mi  | C=32             | 3 | 17.2    | [16.9, 17.6] | 17.4 | 12      | 32          | 0        | 0   | 0    | 0   | 2.17      |
+| 64Mi  | C=64             | 3 | 19.1    | [18.7, 19.4] | 19.1 | 16      | 64          | 0        | 0   | 0    | 0   | 1.51      |
+| 64Mi  | 75/s             | 3 | 21.1    | [20.7, 21.4] | 21.1 | 16      | 100         | 0        | 0   | 0    | 0   | 1.66      |
+| 64Mi  | 75/s, rate limit | 3 | 21.5    | [21.1, 21.8] | 21.6 | 16      | 100         | 0        | 0   | 1084 | 0   | 7.67      |
+| 128Mi | C=4              | 3 | 15.5    | [15.1, 15.8] | 15.6 | 12      | 4           | 0        | 0   | 0    | 0   | 5.62      |
+| 128Mi | C=8              | 3 | 15.6    | [15.6, 15.6] | 15.6 | 12      | 8           | 0        | 0   | 0    | 0   | 5.33      |
+| 128Mi | C=16             | 3 | 16.1    | [16.1, 16.2] | 16.1 | 12      | 16          | 0        | 0   | 0    | 0   | 5.40      |
+| 128Mi | C=32             | 3 | 17.2    | [16.8, 17.6] | 17.4 | 12      | 32          | 0        | 0   | 0    | 0   | 2.19      |
+| 128Mi | C=64             | 3 | 19.2    | [18.9, 19.6] | 19.4 | 16      | 64          | 0        | 0   | 0    | 0   | 1.82      |
+| 128Mi | 75/s             | 3 | 21.1    | [21.1, 21.1] | 21.1 | 16      | 100         | 0        | 0   | 0    | 0   | 1.64      |
+| 128Mi | 75/s, rate limit | 3 | 21.5    | [21.2, 21.9] | 21.6 | 16      | 100         | 0        | 0   | 1020 | 0   | 7.24      |
 
 The limit changed nothing. Across the 15 closed-loop trials with no limit,
 
@@ -655,10 +655,10 @@ so with two routes at $r$ each, $\lambda = B = 2r$:
 **Table 15.** The limit against the bound.
 
 | $r$ per route | $\lambda$, $B$ | $\rho$ at $\mu = 5.1$ | $\bar W$ | $C_{\text{worst}}$ at $\mu = 5.1$ | at $\mu = 7.6$ |
-| --- | --- | --- | --- | --- | --- |
-| 1 | 2 | 0.39 | 0.32 s | 2.6 | 2.4 |
-| 2 | 4 | 0.78 | 0.91 s | 7.6 | 5.1 |
-| 3 | 6 | 1.18 | unstable | unbounded | 9.8 |
+| ------------- | -------------- | --------------------- | -------- | --------------------------------- | -------------- |
+| 1             | 2              | 0.39                  | 0.32 s   | 2.6                               | 2.4            |
+| 2             | 4              | 0.78                  | 0.91 s   | 7.6                               | 5.1            |
+| 3             | 6              | 1.18                  | unstable | unbounded                         | 9.8            |
 
 $r = 2$ is the largest integer under 8 on the slow host, and 4 per second
 is what the open-loop trials ran with 0 kills in 6 across phases 7 and 9.
@@ -722,22 +722,22 @@ Table 16 is the state of this branch.
 **Table 16.** Memory requests as this branch sets them. Request equals
 limit unless stated.
 
-| pod, container | this branch | source |
-| --- | --- | --- |
-| kanae | 640Mi | `templates/kanae.yml`; measured peak 385 Mi |
-| postgres | 1024Mi (the plan's table says 512Mi) | `templates/postgres.yml` |
-| kratos | 1024Mi, `GOMEMLIMIT=750MiB`, hasher 64MB/6/p3 | `templates/kratos.yml`; Tables 11 and 13 |
-| keto | 128Mi | `templates/keto.yml`; measured peak 32 Mi |
-| valkey | 256Mi | `templates/valkey.yml` |
-| envoy proxy, `envoy` | 64Mi | `envoy.yml`; Table 14 |
-| envoy proxy, `shutdown-manager` | 32Mi request, no limit | not settable through `EnvoyProxy` |
-| envoy gateway control plane | 128Mi, `GOMEMLIMIT=110MiB` | `helmfile.yaml`; the 61 Mi reading |
-| cert-manager, three pods | 224Mi | `helmfile.yaml` |
-| **kanae and controllers** | **3520Mi (3.44Gi)** | |
-| CoreDNS | 70Mi request, 170Mi limit | k3s `manifests/coredns.yaml` |
-| metrics-server | 70Mi request | k3s `manifests/metrics-server/` |
-| Cilium agent and operator | no request, about 200Mi in use | `helmfile.yaml`; `DECISIONS.md` |
-| **everything the scheduler counts** | **3660Mi (3.57Gi)** | |
+| pod, container                      | this branch                                   | source                                      |
+| ----------------------------------- | --------------------------------------------- | ------------------------------------------- |
+| kanae                               | 640Mi                                         | `templates/kanae.yml`; measured peak 385 Mi |
+| postgres                            | 1024Mi (the plan's table says 512Mi)          | `templates/postgres.yml`                    |
+| kratos                              | 1024Mi, `GOMEMLIMIT=750MiB`, hasher 64MB/6/p3 | `templates/kratos.yml`; Tables 11 and 13    |
+| keto                                | 128Mi                                         | `templates/keto.yml`; measured peak 32 Mi   |
+| valkey                              | 256Mi                                         | `templates/valkey.yml`                      |
+| envoy proxy, `envoy`                | 64Mi                                          | `envoy.yml`; Table 14                       |
+| envoy proxy, `shutdown-manager`     | 32Mi request, no limit                        | not settable through `EnvoyProxy`           |
+| envoy gateway control plane         | 128Mi, `GOMEMLIMIT=110MiB`                    | `helmfile.yaml`; the 61 Mi reading          |
+| cert-manager, three pods            | 224Mi                                         | `helmfile.yaml`                             |
+| **kanae and controllers**           | **3520Mi (3.44Gi)**                           |                                             |
+| CoreDNS                             | 70Mi request, 170Mi limit                     | k3s `manifests/coredns.yaml`                |
+| metrics-server                      | 70Mi request                                  | k3s `manifests/metrics-server/`             |
+| Cilium agent and operator           | no request, about 200Mi in use                | `helmfile.yaml`; `DECISIONS.md`             |
+| **everything the scheduler counts** | **3660Mi (3.57Gi)**                           |                                             |
 
 Deploy time adds the three migration Jobs, which run together: 128Mi for
 Atlas and 64Mi each for Kratos and Keto, measured at 66, 48 and 21 Mi
@@ -748,10 +748,10 @@ offers is the `Allocatable` the plan says to copy from
 the kubelet's default eviction threshold of `memory.available<100Mi` (The
 Kubernetes Authors, 2026b) and no other reservation:
 
-| node | allocatable | headroom at steady state | during migrations | Kratos at 1.5Gi |
-| --- | --- | --- | --- | --- |
-| 4 GiB (4096Mi) | 3996Mi | 336Mi | 80Mi | 176Mi short, Pending |
-| 4 GB decimal (3815Mi) | 3715Mi | 55Mi | 201Mi short, Pending at deploy | 457Mi short |
+| node                  | allocatable | headroom at steady state | during migrations              | Kratos at 1.5Gi      |
+| --------------------- | ----------- | ------------------------ | ------------------------------ | -------------------- |
+| 4 GiB (4096Mi)        | 3996Mi      | 336Mi                    | 80Mi                           | 176Mi short, Pending |
+| 4 GB decimal (3815Mi) | 3715Mi      | 55Mi                     | 201Mi short, Pending at deploy | 457Mi short          |
 
 Physical headroom is smaller by what no request covers: Cilium's 200 Mi,
 the sidecar's use above 32Mi, and the k3s server process. Kratos at 1.5Gi

@@ -35,19 +35,19 @@ behaviour further down.
 
 ### The pieces
 
-| Kubernetes term | What it actually is |
-| --- | --- |
-| **Pod** | One running instance of your app. Usually one container. The smallest thing k8s manages. |
-| **Deployment** | "Keep N pods of this image running." Handles restarts and rolling updates. Use for stateless things — the API, Kratos, Keto. |
-| **StatefulSet** | Same, but for things with a disk and an identity that must survive restarts. Used here for Postgres. |
-| **Service** | A stable internal hostname + load balancer. Pods come and go with changing IPs; the Service name doesn't. `database:5432` works because of a Service called `database`. |
-| **PersistentVolumeClaim (PVC)** | "I need a 20 GB disk." Survives the pod being destroyed. |
-| **ConfigMap** | A config file, injected into a container as a file or env var. |
-| **Secret** | The same, for passwords and keys. |
-| **Job** | Run this container **once**, to completion, then stop. Used for database migrations. |
-| **Init container** | Runs *before* the main container in a pod, and must exit successfully first. A gate. |
-| **Readiness probe** | A health check k8s runs repeatedly. Failing means "don't send this pod traffic yet." |
-| **Namespace** | A folder to group all of the above. Everything here lives in one called `kanae`. |
+| Kubernetes term                 | What it actually is                                                                                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pod**                         | One running instance of your app. Usually one container. The smallest thing k8s manages.                                                                                |
+| **Deployment**                  | "Keep N pods of this image running." Handles restarts and rolling updates. Use for stateless things — the API, Kratos, Keto.                                            |
+| **StatefulSet**                 | Same, but for things with a disk and an identity that must survive restarts. Used here for Postgres.                                                                    |
+| **Service**                     | A stable internal hostname + load balancer. Pods come and go with changing IPs; the Service name doesn't. `database:5432` works because of a Service called `database`. |
+| **PersistentVolumeClaim (PVC)** | "I need a 20 GB disk." Survives the pod being destroyed.                                                                                                                |
+| **ConfigMap**                   | A config file, injected into a container as a file or env var.                                                                                                          |
+| **Secret**                      | The same, for passwords and keys.                                                                                                                                       |
+| **Job**                         | Run this container **once**, to completion, then stop. Used for database migrations.                                                                                    |
+| **Init container**              | Runs *before* the main container in a pod, and must exit successfully first. A gate.                                                                                    |
+| **Readiness probe**             | A health check k8s runs repeatedly. Failing means "don't send this pod traffic yet."                                                                                    |
+| **Namespace**                   | A folder to group all of the above. Everything here lives in one called `kanae`.                                                                                        |
 
 ### Two more you need for the findings
 
@@ -95,13 +95,13 @@ Five services. This is unchanged from Docker Compose — that was deliberate.
                      └───────────┘
 ```
 
-| Service | Job |
-| --- | --- |
-| **kanae** | The actual API. Python, FastAPI-shaped. Everything else exists to support it. |
-| **database** | One Postgres holding **three** logical databases: `kanae`, `kratos`, `keto`. |
-| **valkey** | A Redis-compatible cache. Presigned upload URLs and rate-limit counters. Pure cache — safe to lose. |
-| **kratos** | Ory Kratos. Owns *who you are*: signup, login, sessions, password resets. |
-| **keto** | Ory Keto. Owns *what you may do*: "user X is a lead on project Y". |
+| Service      | Job                                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------------------- |
+| **kanae**    | The actual API. Python, FastAPI-shaped. Everything else exists to support it.                       |
+| **database** | One Postgres holding **three** logical databases: `kanae`, `kratos`, `keto`.                        |
+| **valkey**   | A Redis-compatible cache. Presigned upload URLs and rate-limit counters. Pure cache — safe to lose. |
+| **kratos**   | Ory Kratos. Owns *who you are*: signup, login, sessions, password resets.                           |
+| **keto**     | Ory Keto. Owns *what you may do*: "user X is a lead on project Y".                                  |
 
 ### The bit that surprises people
 

@@ -67,12 +67,12 @@ The worst of it is not an administrative command. It is a plain `GET`.
 
 `ValkeyCache` holds four caches, and three of them back authentication:
 
-| Namespace | Built at | Holds |
-| --- | --- | --- |
-| `media:get-url` | `src/core.py:592` | Presigned S3 GET URLs |
-| `ory:whoami:` | `src/utils/ory.py:129` | Kratos session lookups |
-| `ory:identity` | `src/utils/ory.py:135` | Kratos identities |
-| `ory:check` | `src/utils/ory.py:141` | Keto permission decisions |
+| Namespace       | Built at               | Holds                     |
+| --------------- | ---------------------- | ------------------------- |
+| `media:get-url` | `src/core.py:592`      | Presigned S3 GET URLs     |
+| `ory:whoami:`   | `src/utils/ory.py:129` | Kratos session lookups    |
+| `ory:identity`  | `src/utils/ory.py:135` | Kratos identities         |
+| `ory:check`     | `src/utils/ory.py:141` | Keto permission decisions |
 
 A presigned URL is a bearer credential with a clock on it. `KEYS 'media:get-url:*'` followed by
 `MGET` returns working links to private media. The reader never touches Kanae, Kratos, or Keto, and
@@ -573,8 +573,17 @@ filenames, so under `set -o pipefail` the case where every file lost the token p
 `deploy/kubernetes/src/templates/valkey.yml:69` passes the file and mounts it:
 
 ```yaml
-args: ["valkey-server", "--aclfile", "/run/secrets/users.acl", "--protected-mode", "no",
-       "--maxmemory", "{{ .Values.valkey.maxmemory }}", "--maxmemory-policy", "volatile-ttl"]
+args: [
+  "valkey-server",
+  "--aclfile",
+  "/run/secrets/users.acl",
+  "--protected-mode",
+  "no",
+  "--maxmemory",
+  "{{ .Values.valkey.maxmemory }}",
+  "--maxmemory-policy",
+  "volatile-ttl",
+]
 ```
 
 The mount is a projected volume at `/run/secrets` with `defaultMode: 0440`, matching what
