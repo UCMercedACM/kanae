@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: borg-server
+  namespace: kanae
+  labels:
+    app: borg-server
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: sshd
+      image: kanae-borg-server:test
+      imagePullPolicy: Never
+      ports:
+        - name: ssh
+          containerPort: 10022
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 250m
+          ephemeral-storage: 64Mi
+        limits:
+          memory: 256Mi
+          ephemeral-storage: 512Mi
+      volumeMounts:
+        - name: keys
+          mountPath: /etc/ssh/ssh_host_ed25519_key
+          subPath: ssh_host_ed25519_key
+          readOnly: true
+        - name: keys
+          mountPath: /etc/ssh/authorized_keys
+          subPath: authorized_keys
+          readOnly: true
+        - name: repo
+          mountPath: /home/borg/repo
+  volumes:
+    - name: keys
+      secret:
+        secretName: borg-server
+        items:
+          - key: ssh_host_ed25519_key
+            path: ssh_host_ed25519_key
+            mode: 256
+          - key: authorized_keys
+            path: authorized_keys
+            mode: 292
+    - name: repo
+      emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: borg-server
+  namespace: kanae
+spec:
+  selector:
+    app: borg-server
+  ports:
+    - name: ssh
+      port: 10022
+      targetPort: ssh
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: borg-server
+  namespace: kanae
+spec:
+  podSelector:
+    matchLabels:
+      app: borg-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: kanae-backup
+      ports:
+        - protocol: TCP
+          port: 10022
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kanae-backup-to-borg-server
+  namespace: kanae
+spec:
+  podSelector:
+    matchLabels:
+      app: kanae-backup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: borg-server
+      ports:
+        - protocol: TCP
+          port: 10022

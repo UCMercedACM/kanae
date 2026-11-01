@@ -70,7 +70,7 @@ kubectl apply -f deploy/kubernetes/envoy.yml -f deploy/kubernetes/gateway.yml
 log "rendering $VALUES into $RENDER"
 rm -f "$RENDER"/*.yml
 helm template kanae "$CHART" --namespace "$NAMESPACE" --values "$VALUES" \
-	| yq --no-doc 'select(.kind != null and .kind != "Secret")' \
+	| yq --no-doc 'select(.kind != null and .kind != "Secret" and .metadata.name != "kanae-snapshot" and (.kind != "CronJob" or .metadata.name != "kanae-backup"))' \
 		-s "\"$RENDER/\(.kind | downcase)-\(.metadata.name).yml\""
 
 log "rendering throwaway Secrets from deploy/kubernetes/init.sh --local"

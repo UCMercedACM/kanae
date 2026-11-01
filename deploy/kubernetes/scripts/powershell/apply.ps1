@@ -21,6 +21,9 @@ $secrets = sops --decrypt deploy/kubernetes/secrets.sops.yml |
     helm template kanae deploy/kubernetes/src --namespace kanae `
         --set renderSecrets=true --values - --show-only templates/secrets.yml
 
+kubectl -n kanae delete jobs -l app.kubernetes.io/component=snapshot `
+    --field-selector status.successful=0 --ignore-not-found
+
 Write-Host "==> handing them to kapp beside deploy/kubernetes/dist"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "kanae-secrets-$([guid]::NewGuid()).yml"
 try {
