@@ -57,13 +57,7 @@ USER kanae
 
 EXPOSE 8000
 
-CMD ["granian", "main:app", \
-     "--host", "0.0.0.0", \
-     "--interface", "asgi", \
-     "--loop", "uvloop", \
-     "--log-config", "logging.conf.json", \
-     "--access-log", \
-     "--metrics"]
+CMD ["granian", "main:app", "--host", "0.0.0.0", "--interface", "asgi", "--loop", "uvloop", "--log-config", "logging.conf.json", "--access-log", "--metrics"]
 
 LABEL org.opencontainers.image.title="Kanae"
 LABEL org.opencontainers.image.description="Internal backend server for ACM @ UC Merced"

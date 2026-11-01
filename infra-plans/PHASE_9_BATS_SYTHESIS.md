@@ -12,12 +12,12 @@ One fresh k3d cluster from `deploy/kubernetes/tests/init.sh`, one
 `secrets.local.yml` symlinked into every worktree, hurl run once before any
 bats. Each candidate ran file by file against the same stack.
 
-| Candidate | Pass | Failures |
-|---|---|---|
-| Opus | 12/12 | none |
-| Fable | 23/27 | 3 migrate ownership tests and the seeded-row count: `kubectl exec` without `-c postgres` puts `Defaulted container ...` in `$output` |
-| Sonnet | 15/19 | 4 Valkey ACL refusals assert a non-zero exit; `valkey-cli` exits 0 on NOPERM |
-| Haiku | 6/6 | none, but calls `mise exec -- helm`, which CI does not have |
+| Candidate | Pass  | Failures                                                                                                                             |
+| --------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Opus      | 12/12 | none                                                                                                                                 |
+| Fable     | 23/27 | 3 migrate ownership tests and the seeded-row count: `kubectl exec` without `-c postgres` puts `Defaulted container ...` in `$output` |
+| Sonnet    | 15/19 | 4 Valkey ACL refusals assert a non-zero exit; `valkey-cli` exits 0 on NOPERM                                                         |
+| Haiku     | 6/6   | none, but calls `mise exec -- helm`, which CI does not have                                                                          |
 
 Then the Keto NetworkPolicy was widened to `ingress: [{}]` and every
 `netpol.bats` run again. Opus went red on 4466 and 4467, Fable on 4466.
@@ -30,15 +30,15 @@ policy. The policy was restored with `apply-local.sh`.
 Base is Opus: the only candidate green everywhere and red under the mutation
 on both Keto ports.
 
-| File | From | Change |
-|---|---|---|
-| `credentials.bats` | Opus | none |
-| `netpol.bats` | Opus | none |
-| `pods.bats` | Opus | header notes that `credentials.bats` sorts first and replaces kanae's pod |
-| `prune.bats` | Opus | none |
-| `pvc.bats` | Opus | adds Fable's check that the `kanae-db` Secret keeps its UID across `kapp delete` |
-| `migrate.bats` | Fable | `-c postgres` on its four psql execs; guard message matches the others |
-| `valkey-acl.bats` | Fable | guard message matches the others |
+| File               | From  | Change                                                                           |
+| ------------------ | ----- | -------------------------------------------------------------------------------- |
+| `credentials.bats` | Opus  | none                                                                             |
+| `netpol.bats`      | Opus  | none                                                                             |
+| `pods.bats`        | Opus  | header notes that `credentials.bats` sorts first and replaces kanae's pod        |
+| `prune.bats`       | Opus  | none                                                                             |
+| `pvc.bats`         | Opus  | adds Fable's check that the `kanae-db` Secret keeps its UID across `kapp delete` |
+| `migrate.bats`     | Fable | `-c postgres` on its four psql execs; guard message matches the others           |
+| `valkey-acl.bats`  | Fable | guard message matches the others                                                 |
 
 ## Left out
 
