@@ -143,7 +143,12 @@ jobs:
             x86_64) ARCH="amd64";;
           esac
 
-          curl --proto "=https" -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.${ARCH}.tar.gz" \
+          case "$OS-$ARCH" in
+            darwin-amd64 | darwin-arm64 | linux-amd64 | linux-arm64) ;;
+            *) echo "no pre-built binaries for $OS-$ARCH" >&2; exit 1 ;;
+          esac
+
+          curl --proto "=https" -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.$(uname -m).tar.gz" \
             | tar -xz -C /tmp --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           curl --proto "=https" -fsSL "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_${ARCH}" \
             -o /tmp/shfmt
