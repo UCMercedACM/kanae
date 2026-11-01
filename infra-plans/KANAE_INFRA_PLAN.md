@@ -1738,30 +1738,39 @@ are six real messages that will happen again.
       load. Set request and limit equal and above the observed peak, and
       re-total the node budget.
 - [x] Re-total the CPU budget from the templates, and leave CPU limits unset.
-- [ ] Write `deploy/kubernetes/RUNBOOK.md`, keyed on exact error strings. Start
+- [x] Write `deploy/kubernetes/docs/RUNBOOK.md`, keyed on exact error strings. Start
       with the six findings in POC_FINDINGS.md, since each one is a real error
       message somebody will see again: `Init:Error`, `ImagePullBackOff`, `chown:
       .: Operation not permitted`, `did not resolve an identity`, a Kratos boot
       failure on a malformed SMTP URI, and a name that does not resolve.
       `Init:Error` now means a real fault: the apply order holds kanae back
       until its schema exists, so a crash loop is no longer normal.
-- [ ] Add the kapp ownership entry, keyed on `is already associated with a
+      `did not resolve an identity` is left out, because only the seed script
+      prints it and the seed does not run in production. kanae has no init
+      container any more, so `Init:Error` is keyed on the `check-version` init
+      container of `database-0`. The values schema now rejects a malformed SMTP
+      URI at render time, so that entry is keyed on the render error.
+- [x] Add the kapp ownership entry, keyed on `is already associated with a
       different app`. A re-apply after `kapp delete` re-adopts the orphaned
       claim on its own; this error means the app name changed, not that the data
       is gone.
-- [ ] Write the rotation entries. Routine rotation goes through a pull request.
+- [x] Write the rotation entries. Routine rotation goes through a pull request.
       Emergency rotation does not: change the Secret against the cluster, run
       `kubectl rollout restart`, then reconcile `secrets.sops.yml` and let
       CI re-render. The drift check nags until git matches.
-- [ ] Say in both entries that the restart is not optional. Secrets reach these
+      Written differently: emergency rotation deploys the rotation branch before
+      its pull request merges. A Secret changed on the cluster is put back by
+      the next deploy from main, and kapp undoes `kubectl rollout restart` on
+      the next deploy, so the runbook restarts pods with `kubectl delete pod`.
+- [x] Say in both entries that the restart is not optional. Secrets reach these
       pods as files and environment variables fixed at container start, and
       Phase 7's checksum covers config changes rather than rotations, so
       nothing rolls the pod on its own.
-- [ ] Write the officer handover entry. `.sops.yaml` lists four age recipients,
+- [x] Write the officer handover entry. `.sops.yaml` lists four age recipients,
       and `sops updatekeys` re-encrypts to a new list without touching the
       values. This is the entry that matters most: losing every key loses every
       backup.
-- [ ] Keep one break-glass age key, passphrase-wrapped and held outside any
+- [x] Keep one break-glass age key, passphrase-wrapped and held outside any
       officer's laptop. It is what survives four officers graduating in the same
       year.
 - [x] Decide what protects uploaded media. The 3-2-1 layout covers Postgres
@@ -1857,7 +1866,7 @@ from Phase 5 is what you are really testing.
       worth having done once with time to spare.
 - [ ] Cut over from whatever serves the API today, and keep the old thing
       running until signup works against the new one.
-- [ ] Hand operations to `deploy/kubernetes/RUNBOOK.md`. This plan ends at the
+- [ ] Hand operations to `deploy/kubernetes/docs/RUNBOOK.md`. This plan ends at the
       first successful deploy. Deploying, rotating keys, handing over to next
       year's officers, and restoring belong there.
 

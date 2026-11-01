@@ -66,7 +66,7 @@ Do these steps once, before the first `mise run k8s:apply`. The first deploy tak
 
 Do these steps once, after the first `mise run k8s:apply`.
 
-1. List the archives with `deploy/kubernetes/scripts/borg.sh list --short`. It shows one `kanae-db-snapshot-...` archive.
+1. List the archives. See [Open the backup repository](#open-the-backup-repository). It shows one `kanae-db-snapshot-...` archive.
 
 2. Do [Test a backup](#test-a-backup).
 
@@ -78,7 +78,7 @@ The `kanae-backup` CronJob backs up the `kanae`, `kratos`, and `keto` databases 
 
 - See the last runs: `kubectl -n kanae get jobs -l app=kanae-backup`
 - Read a run's output: `kubectl -n kanae logs job/<name>`
-- List the archives: `deploy/kubernetes/scripts/borg.sh list --short`
+- List the archives: see [Open the backup repository](#open-the-backup-repository)
 - Back up now:
 
   ```sh
@@ -88,6 +88,37 @@ The `kanae-backup` CronJob backs up the `kanae`, `kratos`, and `keto` databases 
   ```
 
 Nothing alerts on a failed run. Check the last runs once a week.
+
+### Open the backup repository
+
+1. Start a `borg` pod from the `kanae-backup` CronJob:
+
+   ```sh
+   kubectl -n kanae get cronjob kanae-backup -o yaml \
+   	| yq '{
+   		"apiVersion": "v1",
+   		"kind": "Pod",
+   		"metadata": {"name": "borg", "namespace": .metadata.namespace, "labels": .spec.jobTemplate.spec.template.metadata.labels},
+   		"spec": .spec.jobTemplate.spec.template.spec
+   	} | .spec.containers[0].command = ["sleep"] | .spec.containers[0].args = ["3600"] | .spec.terminationGracePeriodSeconds = 0' \
+   	| kubectl apply -f -
+   kubectl -n kanae wait --for=condition=Ready pod/borg --timeout=180s
+   ```
+
+   It prints `condition met`.
+
+2. Run what you need:
+
+   - List the archives: `kubectl -n kanae exec borg -c borgmatic -- borgmatic --verbosity -1 borg list --short`
+   - Break a stale lock: `kubectl -n kanae exec borg -c borgmatic -- borgmatic break-lock`
+
+3. Delete the pod:
+
+   ```sh
+   kubectl -n kanae delete pod borg
+   ```
+
+   `restore.sh` won't start while the pod is running.
 
 ### Test a backup
 
@@ -118,7 +149,7 @@ Do this once a month, and after any change to the backups.
    deploy/kubernetes/scripts/restore.sh
    ```
 
-   To restore from an older archive, copy its name from `deploy/kubernetes/scripts/borg.sh list --short` and run `restore.sh --archive <name>`. To restore one database, add `--database kanae`, `kratos`, or `keto`.
+   To restore from an older archive, copy its name from the archive list in [Open the backup repository](#open-the-backup-repository) and run `restore.sh --archive <name>`. To restore one database, add `--database kanae`, `kratos`, or `keto`.
 
    It asks before it changes anything. It stops kanae, Kratos, and Keto, takes a `kanae-db-pre-restore-...` archive, restores, then starts them again. It prints `success: ...` when it's done.
 
@@ -163,11 +194,10 @@ Do this once a month, and after any change to the backups.
 
    The next backup reads the new value.
 
+To replace `postgresBackupPassword`, see [Rotate a secret](RUNBOOK.md#rotate-a-secret).
+
 > [!WARNING]
-> Never replace these values:
->
-> - `borgPassphrase`. Every backup becomes unreadable.
-> - `postgresBackupPassword`. Postgres keeps its own copy, and the backups lose access to the database.
+> Never replace `borgPassphrase`. Every backup becomes unreadable.
 
 ## When something breaks
 
@@ -183,8 +213,8 @@ Do this once a month, and after any change to the backups.
 | `error: ... is not a BorgBase repository URL`                                 | Copy the URL from the **Name** column in BorgBase and run `borg.sh` again.                                                                                                              |
 | `error: ... did not return an ed25519 host key`                               | Check the URL, then run `borg.sh` again.                                                                                                                                                |
 | `error: the host key does not match, nothing was saved`                       | Stop. Check the URL. If it's correct, don't run `borg.sh` again until BorgBase confirms its fingerprint.                                                                                |
-| `Failed to create/acquire the lock`                                           | If `kubectl -n kanae get pods -l app=kanae-backup` shows no `Running` pod, run `deploy/kubernetes/scripts/borg.sh break-lock`.                                                          |
+| `Failed to create/acquire the lock`                                           | If `kubectl -n kanae get pods -l app=kanae-backup` shows no `Running` pod, break the lock. See [Open the backup repository](#open-the-backup-repository).                               |
 | `error: a backup or snapshot is running ...`                                  | Wait until `kubectl -n kanae get pods -l app=kanae-backup` shows no `Running` pod, then run `restore.sh` again.                                                                         |
-| `error: ... is not in the repository`                                         | Copy the archive name from `deploy/kubernetes/scripts/borg.sh list --short`.                                                                                                            |
-| `error: ... holds no dump of <database>`                                      | Pick another archive from `deploy/kubernetes/scripts/borg.sh list --short`.                                                                                                             |
+| `error: ... is not in the repository`                                         | Copy the archive name from the archive list. See [Open the backup repository](#open-the-backup-repository).                                                                             |
+| `error: ... holds no dump of <database>`                                      | Pick another archive from the archive list. See [Open the backup repository](#open-the-backup-repository).                                                                              |
 | `error: <database> did not restore, so every database was put back as it was` | Read the `pg_restore` error above it. The services are running again on the old data.                                                                                                   |
