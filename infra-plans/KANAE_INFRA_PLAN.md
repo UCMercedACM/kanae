@@ -1919,7 +1919,7 @@ Tick a phase only when its exit gate has passed on a real cluster.
 
 - [x] Phase 9. `init.sh`, hurl and bats run against a cluster `init.sh` built,
       and `credentials.bats` goes red on a broken password
-- [ ] Phase 10. A restore from a real backup matches the source, memory limits
+- [x] Phase 10. A restore from a real backup matches the source, memory limits
       set from measurements, backup layout recorded against 3-2-1, runbook
       written
 - [ ] Phase 11. Signup works through the real domain, and a git revert rollback
