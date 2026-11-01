@@ -143,6 +143,7 @@ jobs:
           case $ARCH in
             aarch64) ARCH="arm64";;
             x86_64) ARCH="amd64";;
+            *) echo "no prebuilt binaries are available" >&2; exit 1 ;;
           esac
 
           case "$OS-$ARCH" in
