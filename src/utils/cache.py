@@ -73,7 +73,7 @@ class _CachedMethodWrapper[S, **P, R]:
     ) -> "Self | _BoundCachedMethod[S, P, R]":
         if instance is None:
             return self
-        return _BoundCachedMethod(self, instance)
+        return _BoundCachedMethod[S, P, R](self, instance)
 
     async def _invoke(self, instance: S, *args: P.args, **kwargs: P.kwargs) -> R:
         token = self._dec._current_cache.set(
