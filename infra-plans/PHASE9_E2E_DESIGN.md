@@ -43,12 +43,12 @@ deploy/kubernetes/tests/
 └── *.bats               committed   7 cluster-internal test files
 ```
 
-| File | What it does |
-|---|---|
-| `init.sh` | Creates the k3d cluster from `deploy/kubernetes/k3d.yml`. Installs Cilium, Envoy Gateway, cert-manager and the Gateway. Renders the chart into `.k8s-local` without Secrets. Renders the Secrets from `deploy/kubernetes/init.sh --local`. Applies both as the kapp app `kanae-local`, then waits for `certificate/kanae-tls` Ready and `gateway/kanae` Programmed. Creates six identities through the Kratos admin API, upserts their `members` rows and writes their Keto role tuples, all with `kubectl exec deploy/kanae -- curl` or `psql`. Writes `secrets.env` and prints the hurl command. |
-| `vars.env` | `KANAE_URL`, `KANAE_HTTP_URL` and `KRATOS_URL` through the Gateway. `KRATOS_ADMIN_URL` and `KETO_WRITE_URL` at ClusterIP names, for `init.sh` only. The six `*_EMAIL`. |
-| `secrets.env` | `PASSWORD` and `ROOT_ID` to `SCRATCH_ID`, for `hurl --secrets-file`. `init.sh` reuses `PASSWORD` if the file exists. |
-| `deploy/kubernetes/secrets.local.yml` | Every chart secret, written by `deploy/kubernetes/init.sh --local`, which reads the file back and keeps its values. Postgres is initialised with these once; every later apply has to render the same values. This is the same file your local stack uses. |
+| File                                  | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init.sh`                             | Creates the k3d cluster from `deploy/kubernetes/k3d.yml`. Installs Cilium, Envoy Gateway, cert-manager and the Gateway. Renders the chart into `.k8s-local` without Secrets. Renders the Secrets from `deploy/kubernetes/init.sh --local`. Applies both as the kapp app `kanae-local`, then waits for `certificate/kanae-tls` Ready and `gateway/kanae` Programmed. Creates six identities through the Kratos admin API, upserts their `members` rows and writes their Keto role tuples, all with `kubectl exec deploy/kanae -- curl` or `psql`. Writes `secrets.env` and prints the hurl command. |
+| `vars.env`                            | `KANAE_URL`, `KANAE_HTTP_URL` and `KRATOS_URL` through the Gateway. `KRATOS_ADMIN_URL` and `KETO_WRITE_URL` at ClusterIP names, for `init.sh` only. The six `*_EMAIL`.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `secrets.env`                         | `PASSWORD` and `ROOT_ID` to `SCRATCH_ID`, for `hurl --secrets-file`. `init.sh` reuses `PASSWORD` if the file exists.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `deploy/kubernetes/secrets.local.yml` | Every chart secret, written by `deploy/kubernetes/init.sh --local`, which reads the file back and keeps its values. Postgres is initialised with these once; every later apply has to render the same values. This is the same file your local stack uses.                                                                                                                                                                                                                                                                                                                                         |
 
 ## hurl scenarios
 
@@ -56,40 +56,40 @@ Put every HTTP assertion in hurl. Send every request through the Gateway; no sce
 admin URL. Make every file re-runnable against a stack that stays up: mint emails and
 passwords with `{{newUuid}}`, and delete what you create.
 
-| File | Covers |
-|---|---|
-| `01_client_to_envoy` | Envoy's https and http listeners, the 308 redirect |
-| `02_envoy_to_kratos_rewrite` | Kratos's public port through the `/auth` rewrite |
-| `03_envoy_to_kanae` | kanae:8000 through the `/` route |
-| `04_kratos_to_kanae_webhooks` | the registration and settings webhooks writing `members`; **the exit gate** |
-| `05_password_change_revokes_sessions` | password change revoking other sessions |
-| `06_kanae_to_kratos_sessions_logout` | kanae to Kratos whoami and admin logout |
-| `07_kanae_to_valkey_cache` | the whoami cache in Valkey |
-| `08_kanae_to_keto_grants` | kanae to Keto read and write |
-| `09_seeded_role_matrix` | the seeded roles against the role gates |
-| `10_kanae_to_postgres` | kanae's write path to Postgres |
-| `11_leads_event_attendance` | the event journey for LEADS |
-| `12_manager_project_journey` | the project journey for MANAGER |
-| `13_kratos_to_internet_hibp_and_csrf` | Kratos's internet egress (HIBP) and CSRF |
-| `14_two_factor_backup_codes` | two-factor with backup codes |
-| `15_promotion_step_up_sudo` | promotion and step-up sudo |
-| `16_self_delete_account` | account self-deletion |
-| `17_sequential_argon2_load` | sequential argon2 load on Kratos |
-| `18_one_member_start_to_finish` | one member through every flow |
+| File                                  | Covers                                                                      |
+| ------------------------------------- | --------------------------------------------------------------------------- |
+| `01_client_to_envoy`                  | Envoy's https and http listeners, the 308 redirect                          |
+| `02_envoy_to_kratos_rewrite`          | Kratos's public port through the `/auth` rewrite                            |
+| `03_envoy_to_kanae`                   | kanae:8000 through the `/` route                                            |
+| `04_kratos_to_kanae_webhooks`         | the registration and settings webhooks writing `members`; **the exit gate** |
+| `05_password_change_revokes_sessions` | password change revoking other sessions                                     |
+| `06_kanae_to_kratos_sessions_logout`  | kanae to Kratos whoami and admin logout                                     |
+| `07_kanae_to_valkey_cache`            | the whoami cache in Valkey                                                  |
+| `08_kanae_to_keto_grants`             | kanae to Keto read and write                                                |
+| `09_seeded_role_matrix`               | the seeded roles against the role gates                                     |
+| `10_kanae_to_postgres`                | kanae's write path to Postgres                                              |
+| `11_leads_event_attendance`           | the event journey for LEADS                                                 |
+| `12_manager_project_journey`          | the project journey for MANAGER                                             |
+| `13_kratos_to_internet_hibp_and_csrf` | Kratos's internet egress (HIBP) and CSRF                                    |
+| `14_two_factor_backup_codes`          | two-factor with backup codes                                                |
+| `15_promotion_step_up_sudo`           | promotion and step-up sudo                                                  |
+| `16_self_delete_account`              | account self-deletion                                                       |
+| `17_sequential_argon2_load`           | sequential argon2 load on Kratos                                            |
+| `18_one_member_start_to_finish`       | one member through every flow                                               |
 
 ## bats files
 
 Put in bats only what hurl cannot see from outside the Gateway.
 
-| File | Mutates | Asserts |
-|---|---|---|
-| `credentials.bats` | yes, restores | a poisoned `kanaePassword` fails kanae's rollout with `password authentication failed for user "kanae"` in its logs |
-| `migrate.bats` | no | the three migrate Jobs succeeded with no failed pod; every table belongs to its `*_migrate` role; the `kanae` role cannot create a table |
-| `netpol.bats` | no | from `envoy-gateway-system`, kanae:8000 and kratos:4433 open, and Kratos admin, both Keto ports, Valkey and Postgres closed; an unlabelled pod in `kanae` gets DNS and nothing else |
-| `pods.bats` | no | no container has restarted and no pod has failed |
-| `prune.bats` | yes, restores | kapp deletes the `postgres-checksum` CronJob when it is dropped from a copy of `.k8s-local` |
-| `pvc.bats` | yes, restores | after `kapp delete`, the claim stays Bound; after the re-apply, the claim and the `kanae-db` Secret keep their UIDs and the `members` rows keep their count and id digest |
-| `valkey-acl.bats` | no | the `default` user gets PING and nothing else; `kanae` authenticates, and is refused keys outside its patterns and admin commands |
+| File               | Mutates       | Asserts                                                                                                                                                                             |
+| ------------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `credentials.bats` | yes, restores | a poisoned `kanaePassword` fails kanae's rollout with `password authentication failed for user "kanae"` in its logs                                                                 |
+| `migrate.bats`     | no            | the three migrate Jobs succeeded with no failed pod; every table belongs to its `*_migrate` role; the `kanae` role cannot create a table                                            |
+| `netpol.bats`      | no            | from `envoy-gateway-system`, kanae:8000 and kratos:4433 open, and Kratos admin, both Keto ports, Valkey and Postgres closed; an unlabelled pod in `kanae` gets DNS and nothing else |
+| `pods.bats`        | no            | no container has restarted and no pod has failed                                                                                                                                    |
+| `prune.bats`       | yes, restores | kapp deletes the `postgres-checksum` CronJob when it is dropped from a copy of `.k8s-local`                                                                                         |
+| `pvc.bats`         | yes, restores | after `kapp delete`, the claim stays Bound; after the re-apply, the claim and the `kanae-db` Secret keep their UIDs and the `members` rows keep their count and id digest           |
+| `valkey-acl.bats`  | no            | the `default` user gets PING and nothing else; `kanae` authenticates, and is refused keys outside its patterns and admin commands                                                   |
 
 Follow these rules when you add or change a bats file:
 
@@ -188,18 +188,18 @@ Run it after hurl and before bats. `pvc.bats` and `credentials.bats` recreate po
 
 ## Deviations from the plan's task list
 
-| Plan task | Here |
-|---|---|
-| Widen `e2e.sh` to the full scenario directory | 18 scenarios in `scenarios/`, one per edge or journey |
-| `vars.env` with admin URLs at ClusterIP names | Yes, used by `init.sh` only |
-| Run hurl from a pod | Run it from the host through the Gateway |
-| Kubernetes version of the integration `init.sh` | `init.sh`, using `kubectl exec` |
-| `--secrets-file` as well as `--variables-file` | Yes |
-| Garage in Docker | Not needed; no scenario touches object storage |
-| Start with 01/02/22 | Superseded by the 18 scenarios |
-| Negative test: `e2e.sh` fails on a wrong password | `credentials.bats` |
-| Test deletion both ways | `prune.bats` and `pvc.bats` |
-| Tear down whether it passed or failed | Not done; a failed run keeps its cluster |
-| `k8s:measure` before the cluster is deleted | Run on its own, see Measuring |
-| Print events and non-Ready pod logs on failure | The "Dump cluster state" step |
-| CI job on `kubernetes.yml` | The `Test` job, plus a nightly `schedule:` |
+| Plan task                                         | Here                                                  |
+| ------------------------------------------------- | ----------------------------------------------------- |
+| Widen `e2e.sh` to the full scenario directory     | 18 scenarios in `scenarios/`, one per edge or journey |
+| `vars.env` with admin URLs at ClusterIP names     | Yes, used by `init.sh` only                           |
+| Run hurl from a pod                               | Run it from the host through the Gateway              |
+| Kubernetes version of the integration `init.sh`   | `init.sh`, using `kubectl exec`                       |
+| `--secrets-file` as well as `--variables-file`    | Yes                                                   |
+| Garage in Docker                                  | Not needed; no scenario touches object storage        |
+| Start with 01/02/22                               | Superseded by the 18 scenarios                        |
+| Negative test: `e2e.sh` fails on a wrong password | `credentials.bats`                                    |
+| Test deletion both ways                           | `prune.bats` and `pvc.bats`                           |
+| Tear down whether it passed or failed             | Not done; a failed run keeps its cluster              |
+| `k8s:measure` before the cluster is deleted       | Run on its own, see Measuring                         |
+| Print events and non-Ready pod logs on failure    | The "Dump cluster state" step                         |
+| CI job on `kubernetes.yml`                        | The `Test` job, plus a nightly `schedule:`            |

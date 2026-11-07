@@ -3,6 +3,8 @@
 
 atlas.hcl|atlas.hcl
 config.dist.yml|config.dist.yml
+borgmatic/config.yml|docker/borgmatic/config.yml
+borgmatic/ssh/config|docker/borgmatic/ssh/config
 postgres/init.sh|docker/postgres/init.sh
 postgres/pg_hba.conf|docker/postgres/pg_hba.conf
 schema.sql|src/schema.sql

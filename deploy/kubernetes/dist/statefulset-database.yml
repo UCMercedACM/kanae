@@ -45,7 +45,7 @@ spec:
           type: container_t
       initContainers:
         - name: check-version
-          image: "postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722"
+          image: "postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81"
           imagePullPolicy: IfNotPresent
           command: ["bash", "-c"]
           args:
@@ -88,7 +88,7 @@ spec:
               mountPath: /var/lib/postgresql
       containers:
         - name: postgres
-          image: "postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722"
+          image: "postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81"
           imagePullPolicy: IfNotPresent
           args:
             - postgres
@@ -111,6 +111,8 @@ spec:
               value: /run/secrets/KETO_PASSWORD
             - name: POSTGRES_MONITOR_PASSWORD_FILE
               value: /run/secrets/POSTGRES_MONITOR_PASSWORD
+            - name: POSTGRES_BACKUP_PASSWORD_FILE
+              value: /run/secrets/POSTGRES_BACKUP_PASSWORD
             - name: KANAE_MIGRATE_PASSWORD_FILE
               value: /run/secrets/KANAE_MIGRATE_PASSWORD
             - name: KRATOS_MIGRATE_PASSWORD_FILE
@@ -198,6 +200,11 @@ spec:
                   items:
                     - key: POSTGRES_MONITOR_PASSWORD
                       path: POSTGRES_MONITOR_PASSWORD
+              - secret:
+                  name: postgres-backup-db
+                  items:
+                    - key: POSTGRES_BACKUP_PASSWORD
+                      path: POSTGRES_BACKUP_PASSWORD
               - secret:
                   name: kanae-migrate-db
                   items:

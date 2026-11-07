@@ -48,6 +48,6 @@ Ideally the style needs to be consistent but this is fine if it is not met. This
 
 1. Use present tense and imperative mood when writing commit messages. For example, `Add new feature` instead of `Added new feature`.
 2. Reference issues or pull requests outside of the first line.
-    a. Please use the shorthand ``#123`` and not the full URL.
+   a. Please use the shorthand `#123` and not the full URL.
 
 If these guidelines are not met, chances are they will be fixed during the review process.

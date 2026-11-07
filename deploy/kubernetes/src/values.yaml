@@ -39,14 +39,14 @@ gateway:
 postgres:
   image:
     repository: postgres
-    tag: "18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722"
-  storageClass: scw-bssd-retain
+    tag: "18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81"
+  storageClass: kanae-retain
   storage: 10Gi
 
 valkey:
   image:
     repository: valkey/valkey
-    tag: "9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"
+    tag: "9-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b"
   maxmemory: 128mb
 
 ory:
@@ -67,7 +67,14 @@ migrate:
   atlas:
     image:
       repository: arigaio/atlas
-      tag: "1.3.3-distroless@sha256:07f3f92fa46e684ed789d5ef344a25494a4fa6844ef1ea1fa4e138522c2c37ac"
+      tag: "1.3.6-distroless@sha256:c7a07e78f968ea33e68f9912ea3337ab9d34ee0d21a2228e19c46163f2c1c4e0"
+
+backup:
+  borgmatic:
+    schedule: "47 10 * * *"
+    image:
+      repository: ghcr.io/borgmatic-collective/borgmatic
+      tag: "2.1.10@sha256:25a97d84a2371c385c0031a02b64f7167de85631a85b84ef46dc01a80010d19e"
 
 # We do not render any secrets as we would be commiting secrets
 # Rendering the secrets is the last step, and we pipe in our decrypted
@@ -81,6 +88,7 @@ secrets:
   kratosPassword: ""
   ketoPassword: ""
   postgresMonitorPassword: ""
+  postgresBackupPassword: ""
   kanaeMigratePassword: ""
   kratosMigratePassword: ""
   ketoMigratePassword: ""
@@ -93,5 +101,6 @@ secrets:
   storageKeyId: ""
   storageSecretKey: ""
   borgPassphrase: ""
-  borgS3AccessKey: ""
-  borgS3SecretKey: ""
+  borgRepo: ""
+  borgSshKey: ""
+  borgKnownHosts: ""

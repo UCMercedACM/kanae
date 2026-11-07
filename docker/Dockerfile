@@ -3,7 +3,7 @@ FROM ghcr.io/astral-sh/uv:python3.15-trixie-slim AS build
 # Compile bytecode and enable caching
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#caching
-ENV UV_COMPILE_BYTECODE=1 
+ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 # Disable Python downloads as the system Python interpreter instead
@@ -13,7 +13,7 @@ ENV UV_PYTHON_DOWNLOADS=0
 ENV UV_NO_DEV=1
 
 # "kanae" is used here because we are copying venvs
-# So we need both stages to be consistent to prevent broken-shebangs 
+# So we need both stages to be consistent to prevent broken-shebangs
 WORKDIR /kanae/
 
 COPY pyproject.toml uv.lock logging.conf.json /kanae/
@@ -57,13 +57,7 @@ USER kanae
 
 EXPOSE 8000
 
-CMD ["granian", "main:app", \
-     "--host", "0.0.0.0", \
-     "--interface", "asgi", \
-     "--loop", "uvloop", \
-     "--log-config", "logging.conf.json", \
-     "--access-log", \
-     "--metrics"]
+CMD ["granian", "main:app", "--host", "0.0.0.0", "--interface", "asgi", "--loop", "uvloop", "--log-config", "logging.conf.json", "--access-log", "--metrics"]
 
 LABEL org.opencontainers.image.title="Kanae"
 LABEL org.opencontainers.image.description="Internal backend server for ACM @ UC Merced"
