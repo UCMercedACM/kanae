@@ -2,9 +2,13 @@ version = 1
 revision = 5
 requires-python = ">=3.13, <4.0"
 resolution-markers = [
-    "python_full_version >= '3.14'",
+    "python_full_version >= '3.15'",
+    "python_full_version == '3.14.*'",
     "python_full_version < '3.14'",
 ]
+
+[manifest]
+overrides = [{ name = "pyyaml", marker = "python_full_version < '3.15'", specifier = "==6.0.3" }]
 
 [[package]]
 name = "aiobotocore"
@@ -1201,7 +1205,8 @@ dependencies = [
     { name = "pybase62" },
     { name = "python-dateutil" },
     { name = "pyvips", extra = ["binary"] },
-    { name = "pyyaml" },
+    { name = "pyyaml", marker = "python_full_version < '3.15'" },
+    { name = "pyyaml-cp315", marker = "python_full_version >= '3.15'" },
     { name = "uvloop", marker = "sys_platform != 'win32'" },
     { name = "valkey-glide" },
     { name = "winloop", marker = "sys_platform == 'win32'" },
@@ -1263,7 +1268,8 @@ requires-dist = [
     { name = "pybase62", specifier = "~=1.0.0" },
     { name = "python-dateutil", specifier = "==2.9.0.post0" },
     { name = "pyvips", extras = ["binary"], specifier = "~=3.2.0" },
-    { name = "pyyaml", specifier = "~=6.0.3" },
+    { name = "pyyaml", marker = "python_full_version < '3.15'", specifier = "==6.0.3" },
+    { name = "pyyaml-cp315", marker = "python_full_version >= '3.15'", specifier = "==6.0.3" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = "~=0.23.0" },
     { name = "valkey-glide", specifier = "==2.6.0" },
     { name = "winloop", marker = "sys_platform == 'win32'", specifier = "~=0.8.0" },
@@ -2137,6 +2143,26 @@ wheels = [
 ]
 
 [[package]]
+name = "pyyaml-cp315"
+version = "6.0.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/19/ea2571a4c285d1300a66a4fb79437d187437761912b21611e3a564cd7a7b/pyyaml_cp315-6.0.3.tar.gz", hash = "sha256:4141925d7a55963ca35d5da9609c683fc8ca2f32ec6bffb95998b949cce2e94b", size = 306138, upload-time = "2026-10-28T20:40:08.785Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/3c/912bae41d0a82709b05c8862d05d5ed5bc0601ba31ea7418170a1c24935e/pyyaml_cp315-6.0.3-cp315-cp315-macosx_10_15_x86_64.whl", hash = "sha256:e956a7645d27913ab4bb37520753e30a510f1ef5d9d752590b20817d8b55d575", size = 201909, upload-time = "2026-10-28T20:39:50.229Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/c4/bd06f623caa7a266f5504a455b1977026594a4ed68811b2da7330cf8fa96/pyyaml_cp315-6.0.3-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:21a82b18909acf7dfc1b3885d09aadda1a39177c8a40a217d2ab05dc81de45b3", size = 196336, upload-time = "2026-10-28T20:39:51.74Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/b7/90e331c726a11154eea36131af791682303a1304f64f7091bbb35cb97957/pyyaml_cp315-6.0.3-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6251fd78f6eaa82ea77615735ca878677ee592822fb6f00c8c663948108b7a05", size = 198513, upload-time = "2026-10-28T20:39:53.33Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/47/cb50139590e3b3a3c8a83ade52313b838b40cc757f7b106095fa70771d6f/pyyaml_cp315-6.0.3-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2e7254084617e9dab002e94c048b67a6cd5d65fcd4f1a5d26779e1c183719378", size = 212026, upload-time = "2026-10-28T20:39:54.783Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/3f/c08cccb03ce3f6dc7cd111179512c1344c3bd1f609b8f9de84f06177a28e/pyyaml_cp315-6.0.3-cp315-cp315-musllinux_1_2_aarch64.whl", hash = "sha256:8b7b1b422397dcb1061e329de3b0e16caaedc0d2766c32cada420556a37233d1", size = 199788, upload-time = "2026-10-28T20:39:56.186Z" },
+    { url = "https://files.pythonhosted.org/packages/49/c3/425ec4790581254ec1e3d7947673ea4d656bd1d2ca15a90ffc07cdd4fc10/pyyaml_cp315-6.0.3-cp315-cp315-musllinux_1_2_x86_64.whl", hash = "sha256:8499d48eb6bbf40cc7b991d6f1ed412587163b3066ac5c7ff015f22a7e5bddc5", size = 215551, upload-time = "2026-10-28T20:39:57.655Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/31/78d42ce0ea2e5ab7955c70d123ee822045943c4748c75b4d218e85a37894/pyyaml_cp315-6.0.3-cp315-cp315t-macosx_10_15_x86_64.whl", hash = "sha256:47a0b2625e03da909a0ead9e4e21baa685fa86b58ba0c09a545cf01a3786a01e", size = 203155, upload-time = "2026-10-28T20:40:00.08Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/b1/947cc45034d4b444b2f77fb8e5f595354ca0402b428e448e7a99d30f2143/pyyaml_cp315-6.0.3-cp315-cp315t-macosx_11_0_arm64.whl", hash = "sha256:7cc25254045a70b4ff52c019bf44886bb7977f5055787ee7abac2984c1402cce", size = 196954, upload-time = "2026-10-28T20:40:01.596Z" },
+    { url = "https://files.pythonhosted.org/packages/78/91/6d91a9dae664ce6a18c7ef6978dfcc1434ef55a9077c0d0410248a159a10/pyyaml_cp315-6.0.3-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f279d96363b1b9f38fa146709c6b26020d1f67ee000a0982913489a880284915", size = 195570, upload-time = "2026-10-28T20:40:03.032Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/24/80353442afaa1287a872d9a42f842b109009009ce5b988492f3b448539f3/pyyaml_cp315-6.0.3-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:89363031ad8daadcbcd02e837e52e418ea802a229a4d1065ac32a60211b98cf0", size = 209437, upload-time = "2026-10-28T20:40:04.475Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/87/c45d22c6d94e58db83b1ec09cd674c8780bf61f5c83d583b1f9c157d95e4/pyyaml_cp315-6.0.3-cp315-cp315t-musllinux_1_2_aarch64.whl", hash = "sha256:8a1e227e252573cce654d55d3339477947729f9cdb4b413e832ffd51bff37ff9", size = 197039, upload-time = "2026-10-28T20:40:05.935Z" },
+    { url = "https://files.pythonhosted.org/packages/78/ca/deba8a38f9a4127b798f49271cf32aea0f162e514d1b1b9153cdbe81e194/pyyaml_cp315-6.0.3-cp315-cp315t-musllinux_1_2_x86_64.whl", hash = "sha256:5784f3e026bdf58c4fb7782d2830a839459c93f6f90f7b061f91705da1f060b9", size = 212811, upload-time = "2026-10-28T20:40:07.42Z" },
+]
+
+[[package]]
 name = "requests"
 version = "2.34.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2202,7 +2228,7 @@ dependencies = [
     { name = "jsonschema-rs" },
     { name = "pyrate-limiter" },
     { name = "pytest" },
-    { name = "pyyaml" },
+    { name = "pyyaml", marker = "python_full_version < '3.15'" },
     { name = "requests" },
     { name = "rich" },
     { name = "typing-extensions" },
@@ -2338,15 +2364,15 @@ wheels = [
 
 [[package]]
 name = "types-boto3"
-version = "1.43.126"
+version = "1.43.127"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/08/7f411c5af07a246434a54537f5c4d71ee46b34e999cdc5b7582e0316a927/types_boto3-1.43.126.tar.gz", hash = "sha256:33345c227b3a71efbd6b535674eb121cb2216139a86f9c05eaa29a0042e17265", size = 105934, upload-time = "2026-11-06T21:01:55.673Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/37/ba22482785571e71c317eaefffd1a3b6d4b944f87a0e3f3355d7bdd641d6/types_boto3-1.43.127.tar.gz", hash = "sha256:4e5b98d49154e08e8369e521f472b383a384c575633aece6136e1d697cae64db", size = 105987, upload-time = "2026-11-10T02:16:05.263Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/36/a25692c0b0a66d147364a9e30d62de8db4107f71d0066867be25019e11e6/types_boto3-1.43.126-py3-none-any.whl", hash = "sha256:af1e13512b4165026cb81aec4a3d18cdaa077b0abd22c8bf61ddab09cf107e3f", size = 71986, upload-time = "2026-11-06T21:01:47.937Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/27/979bca1c1bd2e941fbc8cbfd9fa3e85a49ad3cf6d5ce207cc7194439937f/types_boto3-1.43.127-py3-none-any.whl", hash = "sha256:82d80d9044ab13efe08425ad7d18c634aa3103b58f600d90e4613ee7542ab809", size = 71988, upload-time = "2026-11-10T02:15:58.127Z" },
 ]
 
 [package.optional-dependencies]
@@ -2601,7 +2627,7 @@ version = "1.38.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pathspec" },
-    { name = "pyyaml" },
+    { name = "pyyaml", marker = "python_full_version < '3.15'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/28/a0/8fc2d68e132cf918f18273fdc8a1b8432b60d75ac12fdae4b0ef5c9d2e8d/yamllint-1.38.0.tar.gz", hash = "sha256:09e5f29531daab93366bb061e76019d5e91691ef0a40328f04c927387d1d364d", size = 142446, upload-time = "2026-01-13T07:47:53.276Z" }
 wheels = [

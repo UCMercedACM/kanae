@@ -20,7 +20,8 @@ dependencies = [
   "pybase62~=1.0.0",
   "python-dateutil==2.9.0.post0",
   "pyvips[binary]~=3.2.0",
-  "pyyaml~=6.0.3",
+  "pyyaml==6.0.3; python_version < '3.15'",
+  "pyyaml-cp315==6.0.3; python_version >= '3.15'",
   "uvloop~=0.23.0; sys_platform != 'win32'",
   "valkey-glide==2.6.0",
   "winloop~=0.8.0; sys_platform == 'win32'",
@@ -52,6 +53,9 @@ test = [
   "hypothesis~=6.170.2",
   "schemathesis~=4.33.0",
 ]
+
+[tool.uv]
+override-dependencies = ["pyyaml==6.0.3; python_version < '3.15'"]
 
 [tool.ty.src]
 include = ["src"]
