@@ -11,7 +11,7 @@ dependencies = [
   "argon2-cffi~=25.1.0",
   "asyncpg~=0.32.0",
   "blake3~=1.0.8",
-  "fastapi~=0.162.0",
+  "fastapi~=0.163.1",
   "fastapi-pagination~=0.16.0",
   "granian~=2.8.1",
   "limits~=5.8.0",
@@ -35,19 +35,19 @@ dev = [
 lint = [
   "yamllint~=1.38.0",
   "ruff~=0.17.0",
-  "ty==0.0.99",
+  "ty==0.0.104",
   { include-group = "types" },
 ]
 types = [
   "types-aiobotocore[s3]~=3.10.0",
-  "types-boto3[s3]~=1.43.14",
+  "types-boto3[s3]~=1.44.3",
 ]
 test = [
   "asgi-lifespan~=2.1.0",
   "hiro~=1.1.1",
   "httpx~=0.28.1",
   "pytest~=9.2.0",
-  "pytest-asyncio~=1.4.0",
+  "pytest-asyncio~=1.5.0",
   "testcontainers~=4.15.0",
   "hypothesis~=6.170.2",
   "schemathesis~=4.33.0",
