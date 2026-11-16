@@ -1091,8 +1091,8 @@ class PrometheusMiddleware:
         if response_start_time:
             duration_without_streaming = max(response_start_time - start_time, 0.0)
 
-        if self.should_instrument_requests_in_progress:
-            in_progress.dec()  # ty: ignore[unresolved-attribute]
+        if in_progress and self.should_instrument_requests_in_progress:
+            in_progress.dec()
 
         if self.should_round_latency_decimals:
             duration = round(duration, self.round_latency_decimals)

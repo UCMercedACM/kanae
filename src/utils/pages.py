@@ -54,7 +54,7 @@ class KanaePages[T](AbstractPage[T]):
     __params_type__ = KanaeParams
 
     @classmethod
-    def create(  # ty: ignore[invalid-method-override]
+    def create(  # ty: ignore[incompatible-method-override]
         cls,
         items: Sequence[T],
         params: KanaeParams,

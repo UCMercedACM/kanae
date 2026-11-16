@@ -163,7 +163,7 @@ async def list_members(
         """
         args.append(query)
 
-    return await paginate(request.app.pool, member_query, *args, params=params)  # ty: ignore[invalid-return-type]
+    return await paginate(request.app.pool, member_query, *args, params=params)  # ty: ignore[invalid-explicit-return]
 
 
 @router.get(
