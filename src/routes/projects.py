@@ -214,7 +214,7 @@ async def list_projects(
     {constraint}
     """
 
-    return await paginate(request.app.pool, query, *args, params=params)  # ty: ignore[invalid-return-type]
+    return await paginate(request.app.pool, query, *args, params=params)  # ty: ignore[invalid-explicit-return]
 
 
 @router.get(

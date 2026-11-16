@@ -170,7 +170,7 @@ async def list_events(
         """
         args.append(name)
 
-    return await paginate(request.app.pool, query, *args, params=params)  # ty: ignore[invalid-return-type]
+    return await paginate(request.app.pool, query, *args, params=params)  # ty: ignore[invalid-explicit-return]
 
 
 @router.get(
@@ -886,7 +886,7 @@ async def list_event_attendance(
     WHERE events_members.event_id = $1
     ORDER BY members.name
     """
-    return await paginate(request.app.pool, query, event_id, params=params)  # ty: ignore[invalid-return-type]
+    return await paginate(request.app.pool, query, event_id, params=params)  # ty: ignore[invalid-explicit-return]
 
 
 class AttendanceCodeResponse(BaseModel, frozen=True):
