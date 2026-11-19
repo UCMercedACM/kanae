@@ -5,7 +5,9 @@
     "helpers:pinGitHubActionDigests",
     "abandonments:recommended"
   ],
-  "dependencyDashboard": false,
+  "dependencyDashboard": {
+    "enabled": false
+  },
   "separateMajorMinor": false,
   "ignoreDeps": ["kapp", "python-dateutil", "ubuntu"],
   "kubernetes": {
@@ -25,7 +27,6 @@
     {
       "matchManagers": [
         "pep621",
-        "uv",
         "mise"
       ],
       "groupName": "uv dependencies",
