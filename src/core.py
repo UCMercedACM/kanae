@@ -1480,7 +1480,7 @@ class Kanae(FastAPI):
 
             yield
 
-    def get_db(self) -> Generator[asyncpg.Pool, None, None]:
+    def get_db(self) -> Generator[asyncpg.Pool]:
         yield self.pool
 
     def openapi(self) -> dict[str, Any]:
