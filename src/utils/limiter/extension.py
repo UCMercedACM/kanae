@@ -506,7 +506,7 @@ class KanaeLimiter:
         view_func = endpoint_func
 
         endpoint_func_name = (
-            f"{view_func.__module__}.{view_func.__name__}" if view_func else ""  # ty: ignore[unresolved-attribute]
+            f"{view_func.__module__}.{view_func.__name__}" if view_func else ""  # ty: ignore[missing-attribute]
         )
         _endpoint_key = endpoint_url if self._key_style == "url" else endpoint_func_name
         # cases where we don't need to check the limits
@@ -674,7 +674,7 @@ class KanaeLimiter:
 
         def decorator(func: Callable[P, T]) -> Callable[P, T]:
             limit_key_func = key_func or self._key_func
-            name = f"{func.__module__}.{func.__name__}"  # ty: ignore[unresolved-attribute]
+            name = f"{func.__module__}.{func.__name__}"  # ty: ignore[missing-attribute]
             dynamic_limit = None
             static_limits: list[LimitItem] = []
             if callable(limit_value):
@@ -749,7 +749,7 @@ class KanaeLimiter:
                         if not isinstance(response, Response):
                             # get the response object from the decorated endpoint function
                             await self._inject_asgi_headers(
-                                kwargs["response"].headers,  # ty: ignore[unresolved-attribute]
+                                kwargs["response"].headers,  # ty: ignore[missing-attribute]
                                 request.state.view_rate_limit,
                             )
                             return response
@@ -759,7 +759,7 @@ class KanaeLimiter:
                         )
                     return response
 
-                return async_wrapper  # ty: ignore[invalid-return-type]
+                return async_wrapper  # ty: ignore[invalid-explicit-return]
             return func
 
         return decorator
@@ -853,7 +853,7 @@ class KanaeLimiter:
         Returns:
             Callable[P, T]: A decorator that injects an exempt clause and returns the original function
         """
-        name = f"{func.__module__}.{func.__name__}"  # ty: ignore[unresolved-attribute]
+        name = f"{func.__module__}.{func.__name__}"  # ty: ignore[missing-attribute]
 
         self._exempt_routes.add(name)
 
@@ -863,7 +863,7 @@ class KanaeLimiter:
             async def __async_inner(*a: P.args, **k: P.kwargs) -> T:
                 return await func(*a, **k)
 
-            return __async_inner  # ty: ignore[invalid-return-type]
+            return __async_inner  # ty: ignore[invalid-explicit-return]
 
         @wraps(func)
         def __inner(*a: P.args, **k: P.kwargs) -> T:
